@@ -6,6 +6,7 @@ import { UI_DESIGNER_NODE_SCRIPT_COMPLETIONS } from '@contract/ui-designer-scrip
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 import UiCodeMirrorEditor from './UiCodeMirrorEditor.vue'
 import UiScriptContextHint from './UiScriptContextHint.vue'
+import UiResourceReferenceControl from './UiResourceReferenceControl.vue'
 import { reorderEventActions } from '../models/actions'
 import { uiDesignerSeNameFromResourcePath } from '../models/audioResource'
 
@@ -137,9 +138,17 @@ const sceneOptionsFor = (action: UiEventAction) => {
         </template>
         <el-input v-else-if="action.type === 'toggleNode'" :model-value="actionField(action, 'targetNodeId')" size="small" :placeholder="t('targetNodePlaceholder')" @update:model-value="updateAction(index, { targetNodeId: $event })" />
         <div v-else-if="action.type === 'playSe'" class="action-resource-control">
-          <el-input :model-value="actionField(action, 'seName')" readonly size="small" :placeholder="props.resourcePickerDisabled ? t('noProject') : t('chooseResource')" />
-          <el-button :data-ui-id="`ui-designer-event-${activeEvent}-${index}-select-se`" size="small" :disabled="!props.pickAudioResource || props.resourcePickerDisabled" @click="void choosePlaySe(index)">{{ t('chooseResource') }}</el-button>
-          <el-button :data-ui-id="`ui-designer-event-${activeEvent}-${index}-clear-se`" size="small" text :disabled="!actionField(action, 'seName')" @click="updateAction(index, { seName: '' })">{{ t('clearResource') }}</el-button>
+          <UiResourceReferenceControl
+            :model-value="String(actionField(action, 'seName'))"
+            :placeholder="props.resourcePickerDisabled ? t('noProject') : t('chooseAudioResource')"
+            :select-label="t('chooseAudioResource')"
+            :clear-label="t('clearResource')"
+            :select-disabled="!props.pickAudioResource || props.resourcePickerDisabled"
+            :select-ui-id="`ui-designer-event-${activeEvent}-${index}-select-se`"
+            :clear-ui-id="`ui-designer-event-${activeEvent}-${index}-clear-se`"
+            @select="void choosePlaySe(index)"
+            @clear="updateAction(index, { seName: '' })"
+          />
         </div>
         <el-input v-else-if="action.type === 'url'" :model-value="actionField(action, 'url')" size="small" :placeholder="t('urlPlaceholder')" @update:model-value="updateAction(index, { url: $event })" />
         <template v-else-if="action.type === 'script'">
@@ -196,5 +205,5 @@ const sceneOptionsFor = (action: UiEventAction) => {
 .action-head .el-select { flex: 1; }
 .hint { margin: 2px 0 0; color: var(--app-ink-soft); font-size: 10px; line-height: 1.4; }
 .action-warning { margin: 0; color: var(--el-color-warning); font-size: 10px; }
-.action-resource-control { display: flex; align-items: center; min-width: 0; gap: 4px; }.action-resource-control .el-input { min-width: 0; flex: 1; }
+.action-resource-control { min-width: 0; }.action-resource-control > * { width: 100%; min-width: 0; }
 </style>

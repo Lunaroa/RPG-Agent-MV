@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import type { UiFrame, UiResourceEntry } from '@contract/ui-designer'
 import { useUiDesignerI18n } from '../i18n'
+import UiResourceReferenceControl from './UiResourceReferenceControl.vue'
 
 const props = defineProps<{ value: UiFrame[]; resources?: UiResourceEntry[]; pickResource?: (currentPath?: string) => Promise<string | null>; pickResources?: () => Promise<string[] | null>; resourcePickerDisabled?: boolean }>()
 const emit = defineEmits<{ update: [value: UiFrame[]] }>()
@@ -65,7 +66,7 @@ const chooseResource = async (index: number) => {
     <div v-for="(frame, index) in value" :key="frame.id || index" class="frame-row">
       <el-input :model-value="frame.id" size="small" :placeholder="t('frameId')" @update:model-value="update(index, { id: $event })" />
       <img v-if="resourceForPath(frame.path)?.thumbnailUrl || resourceForPath(frame.path)?.previewUrl" class="frame-thumb" :src="resourceForPath(frame.path)?.thumbnailUrl ?? resourceForPath(frame.path)?.previewUrl" :alt="frame.id" />
-      <div class="frame-resource-control"><el-input :model-value="frame.path" readonly size="small" :placeholder="props.resourcePickerDisabled ? t('noProject') : t('chooseResource')" /><el-button :data-ui-id="`ui-designer-frame-${index}-select`" size="small" :disabled="!props.pickResource || props.resourcePickerDisabled" @click="void chooseResource(index)">{{ t('chooseResource') }}</el-button><el-button :data-ui-id="`ui-designer-frame-${index}-clear`" size="small" text :disabled="!frame.path" @click="update(index, { path: '' })">{{ t('clearResource') }}</el-button></div>
+      <div class="frame-resource-control"><UiResourceReferenceControl :model-value="frame.path" :placeholder="props.resourcePickerDisabled ? t('noProject') : t('chooseImageResource')" :select-label="t('chooseImageResource')" :clear-label="t('clearResource')" :select-disabled="!props.pickResource || props.resourcePickerDisabled" :select-ui-id="`ui-designer-frame-${index}-select`" :clear-ui-id="`ui-designer-frame-${index}-clear`" @select="void chooseResource(index)" @clear="update(index, { path: '' })" /></div>
       <el-input-number :model-value="frame.duration" :min="0" size="small" @update:model-value="update(index, { duration: $event ?? 0 })" />
       <el-button-group><el-button size="small" text :disabled="index === 0" @click="move(index, -1)">↑</el-button><el-button size="small" text :disabled="index === value.length - 1" @click="move(index, 1)">↓</el-button><el-button size="small" text @click="copy(index)">{{ t('copyFrame') }}</el-button><el-button size="small" text type="danger" @click="remove(index)">×</el-button></el-button-group>
     </div>
@@ -76,5 +77,5 @@ const chooseResource = async (index: number) => {
 </template>
 
 <style scoped>
-.frames-editor { display: flex; flex-direction: column; gap: 5px; }.frames-head { display: flex; justify-content: space-between; align-items: center; color: var(--app-ink-soft); font-size: 11px; }.frame-row { display: grid; grid-template-columns: 24px 70px minmax(0, 1fr) 75px auto; gap: 4px; align-items: center; }.frame-row .el-button { padding: 3px; }.frame-thumb { width: 22px; height: 20px; object-fit: contain; border-radius: 2px; background: #0002; }.frame-resource-control { display: flex; align-items: center; min-width: 0; gap: 3px; }.frame-resource-control .el-input { min-width: 0; flex: 1; }.resource-picker-hint { color: var(--app-ink-soft); font-size: 10px; }.empty { color: var(--app-ink-soft); font-size: 10px; }.error-detail { color: var(--app-ink-soft); font-size: 10px; }
+.frames-editor { display: flex; flex-direction: column; gap: 5px; }.frames-head { display: flex; justify-content: space-between; align-items: center; color: var(--app-ink-soft); font-size: 11px; }.frame-row { display: grid; grid-template-columns: 24px 70px minmax(0, 1fr) 75px auto; gap: 4px; align-items: center; }.frame-row .el-button { padding: 3px; }.frame-thumb { width: 22px; height: 20px; object-fit: contain; border-radius: 2px; background: #0002; }.frame-resource-control { min-width: 0; }.frame-resource-control > * { width: 100%; min-width: 0; }.resource-picker-hint { color: var(--app-ink-soft); font-size: 10px; }.empty { color: var(--app-ink-soft); font-size: 10px; }.error-detail { color: var(--app-ink-soft); font-size: 10px; }
 </style>

@@ -152,7 +152,7 @@
       sceneFilters: [],
       focusedNodeId: null,
       executionMode: 'full-preview',
-      allowsUserExecution: function allowsUserExecution() { return this.executionMode === 'full-preview'; },
+      allowsUserExecution: function allowsUserExecution() { return this.executionMode !== 'authoring'; },
       makeInvocationArgs: function makeInvocationArgs(node, event, props) {
         var runtime = this;
         var context = this.context || {};
@@ -195,7 +195,7 @@
         this.cleanup();
         scene = canonicalizeRuntimeScene(scene);
         var executionMode = options && options.executionMode ? String(options.executionMode) : 'full-preview';
-        if (executionMode !== 'authoring' && executionMode !== 'full-preview') throw new Error('UI Runtime execution mode is unsupported.');
+        if (executionMode !== 'authoring' && executionMode !== 'editor-preview' && executionMode !== 'full-preview') throw new Error('UI Runtime execution mode is unsupported.');
         this.executionMode = executionMode;
         this.scene = scene;
         this.sceneName = scene && scene.meta ? scene.meta.sceneName : null;
@@ -643,7 +643,13 @@
           self.updateButtonDisabled(node);
           applyNodeProps(node, self.nodeViews[node.id], self.scene, visible);
         });
-        return this.getNodeBounds(affectedBoundsNodeIds(this, changedNodeIds));
+        var affectedNodeIds = affectedBoundsNodeIds(this, changedNodeIds);
+        affectedNodeIds.forEach(function (nodeId) {
+          if (changedNodeSet[nodeId]) return;
+          var node = self.nodeIndex[nodeId];
+          applyNodeTransform(node, self.nodeViews[nodeId], self.scene);
+        });
+        return this.getNodeBounds(affectedNodeIds);
       },
       getNodeBounds: function getNodeBounds(nodeIds) {
         var self = this;
@@ -980,7 +986,7 @@
       var nineBitmap = loadBitmap(props.path);
       var nineTexture = textureFromBitmap(nineBitmap);
       var nineFallback = nineTexture || PIXI.Texture && PIXI.Texture.EMPTY || null;
-      var nineView = new NineSlicePlane(nineFallback, finite(props.borderLeft, 0), finite(props.borderTop, 0), finite(props.borderRight, 0), finite(props.borderBottom, 0));
+      var nineView = new NineSlicePlane(nineFallback, 0, 0, 0, 0);
       nineView.__mzuiSourceBitmap = nineBitmap;
       nineView.__mzuiSourceTexture = nineFallback;
       nineView.__mzuiNineSlice = true;
@@ -1132,19 +1138,17 @@
     if (!view || view.__mzuiDestroyed || !node) return;
     var props = node.props || {};
     applyNodeDimensions(view, props);
-    if (node.type === 'sprite') applySpriteFill(view, props);
-    if (node.type === 'frameAnimation') applyFillMode(view, finite(props.width, view.width || 0), finite(props.height, view.height || 0), props.fillMode, props.scaleX, props.scaleY);
+    if (node.type === 'sprite') { applySpriteFill(view, props); rememberNodeWorldScale(view); }
+    if (node.type === 'frameAnimation') { applyFillMode(view, finite(props.width, view.width || 0), finite(props.height, view.height || 0), props.fillMode, props.scaleX, props.scaleY); rememberNodeWorldScale(view); }
     if (node.type === 'button') renderButtonState(view, props);
     if (node.type === 'progressBar') {
       var ratio = Math.max(0, Math.min(1, finite(props.currentValue, 0) / Math.max(1, finite(props.maxValue, 1))));
       applyProgressImages(view, props, ratio);
     }
     if (node.type === 'nineSlice') {
-      view.leftWidth = finite(props.borderLeft, 0);
-      view.topHeight = finite(props.borderTop, 0);
-      view.rightWidth = finite(props.borderRight, 0);
-      view.bottomHeight = finite(props.borderBottom, 0);
+      applyNineSliceBorders(view, props);
     }
+    applyNodeTransform(node, view, runtime && runtime.scene);
     if (runtime && runtime.updateButtonDisabled && node.type === 'button') runtime.updateButtonDisabled(node);
   }
 
@@ -1511,13 +1515,10 @@
   function applyNodeProps(node, view, scene, conditionVisible) {
     if (!view) return;
     var props = node.props || {};
-    var local = localPosition(node, scene);
-    view.x = local.x; view.y = local.y;
     applyNodeDimensions(view, props);
-    view.rotation = finite(props.rotate, 0) * Math.PI / 180;
     view.alpha = Math.max(0, Math.min(255, finite(props.opacity, 255))) / 255;
     view.visible = props.visible !== false && conditionVisible !== false;
-    if (view.anchor && typeof view.anchor === 'object') { view.anchor.x = finite(props.anchorX, 0); view.anchor.y = finite(props.anchorY, 0); }
+    applyNodeAnchor(view, props);
     view.zIndex = finite(props.zIndex, 0);
     if (node.type === 'sprite') {
       if ('tint' in view && typeof props.tint === 'string') view.tint = parseColor(props.tint, 0xffffff);
@@ -1525,6 +1526,7 @@
       if ('blendMode' in view) view.blendMode = resolveBlendMode(props.blendMode);
       if (view.tilePosition && !view.__mzuiScrollInitialized) { view.tilePosition.x = 0; view.tilePosition.y = 0; view.__mzuiScrollInitialized = true; }
       applySpriteFill(view, props);
+      rememberNodeWorldScale(view);
     }
     if (node.type === 'container') applyContainerVisual(view, props);
     if (node.type === 'text') {
@@ -1601,8 +1603,32 @@
       view.__mzuiVideo = video;
     }
     if (node.type === 'nineSlice' && view) {
-      view.leftWidth = finite(props.borderLeft, 0); view.topHeight = finite(props.borderTop, 0); view.rightWidth = finite(props.borderRight, 0); view.bottomHeight = finite(props.borderBottom, 0);
+      applyNineSliceBorders(view, props);
     }
+    applyNodeTransform(node, view, scene);
+  }
+
+  function fitNineSliceBorderPair(start, end, limit) {
+    var safeStart = Math.max(0, finite(start, 0));
+    var safeEnd = Math.max(0, finite(end, 0));
+    var safeLimit = Math.max(0, finite(limit, 0));
+    var total = safeStart + safeEnd;
+    if (total <= safeLimit || total === 0) return [safeStart, safeEnd];
+    var ratio = safeLimit / total;
+    return [safeStart * ratio, safeEnd * ratio];
+  }
+
+  function applyNineSliceBorders(view, props) {
+    if (!view) return;
+    var source = sourceDimensions(view);
+    var horizontalLimit = Math.min(Math.max(0, finite(props.width, view.width || 0)), source ? source.width : Number.MAX_VALUE);
+    var verticalLimit = Math.min(Math.max(0, finite(props.height, view.height || 0)), source ? source.height : Number.MAX_VALUE);
+    var horizontal = fitNineSliceBorderPair(props.borderLeft, props.borderRight, horizontalLimit);
+    var vertical = fitNineSliceBorderPair(props.borderTop, props.borderBottom, verticalLimit);
+    view.leftWidth = horizontal[0];
+    view.rightWidth = horizontal[1];
+    view.topHeight = vertical[0];
+    view.bottomHeight = vertical[1];
   }
 
   function applyNodeDimensions(view, props) {
@@ -1618,6 +1644,8 @@
       view.scale.y = scaleY;
       view.__mzuiDesignerScaleX = scaleX;
       view.__mzuiDesignerScaleY = scaleY;
+      view.__mzuiWorldScaleX = scaleX;
+      view.__mzuiWorldScaleY = scaleY;
       view.__mzuiDimensions = { width: width, height: height, scaleX: scaleX, scaleY: scaleY };
       return;
     }
@@ -1628,6 +1656,8 @@
       view.scale.y = scaleY;
       view.__mzuiDesignerScaleX = scaleX;
       view.__mzuiDesignerScaleY = scaleY;
+      view.__mzuiWorldScaleX = scaleX;
+      view.__mzuiWorldScaleY = scaleY;
       view.__mzuiDimensions = { width: width, height: height, scaleX: scaleX, scaleY: scaleY };
       return;
     }
@@ -1646,7 +1676,109 @@
     }
     view.__mzuiDesignerScaleX = view.scale.x;
     view.__mzuiDesignerScaleY = view.scale.y;
+    view.__mzuiWorldScaleX = view.scale.x;
+    view.__mzuiWorldScaleY = view.scale.y;
     view.__mzuiDimensions = { width: width, height: height, scaleX: scaleX, scaleY: scaleY };
+  }
+
+  function rememberNodeWorldScale(view) {
+    if (!view || !view.scale) return;
+    view.__mzuiDesignerScaleX = finite(view.scale.x, 1);
+    view.__mzuiDesignerScaleY = finite(view.scale.y, 1);
+    view.__mzuiWorldScaleX = view.__mzuiDesignerScaleX;
+    view.__mzuiWorldScaleY = view.__mzuiDesignerScaleY;
+  }
+
+  function applyNodeAnchor(view, props) {
+    var anchorX = finite(props.anchorX, 0);
+    var anchorY = finite(props.anchorY, 0);
+    if (view.anchor && typeof view.anchor === 'object') {
+      view.anchor.x = anchorX;
+      view.anchor.y = anchorY;
+      if (view.pivot && typeof view.pivot === 'object') { view.pivot.x = 0; view.pivot.y = 0; }
+      return;
+    }
+    if (view.pivot && typeof view.pivot === 'object') {
+      view.pivot.x = finite(props.width, 0) * anchorX;
+      view.pivot.y = finite(props.height, 0) * anchorY;
+    }
+  }
+
+  function nodeWorldMatrix(node, scaleX, scaleY) {
+    var props = node && node.props ? node.props : {};
+    var rotation = finite(props.rotate, 0) * Math.PI / 180;
+    var cosine = Math.cos(rotation);
+    var sine = Math.sin(rotation);
+    var a = cosine * finite(scaleX, finite(props.scaleX, 1));
+    var b = sine * finite(scaleX, finite(props.scaleX, 1));
+    var c = -sine * finite(scaleY, finite(props.scaleY, 1));
+    var d = cosine * finite(scaleY, finite(props.scaleY, 1));
+    var pivotX = finite(props.width, 0) * finite(props.anchorX, 0);
+    var pivotY = finite(props.height, 0) * finite(props.anchorY, 0);
+    var worldX = finite(props.x, 0);
+    var worldY = finite(props.y, 0);
+    return {
+      a: a, b: b, c: c, d: d,
+      tx: worldX - a * pivotX - c * pivotY,
+      ty: worldY - b * pivotX - d * pivotY,
+    };
+  }
+
+  function decomposeNodeLinearTransform(a, b, c, d) {
+    var epsilon = 1e-10;
+    var scaleX = Math.sqrt(a * a + b * b);
+    var columnY = Math.sqrt(c * c + d * d);
+    if (scaleX <= epsilon) {
+      if (columnY <= epsilon) return { rotation: 0, skewX: 0, skewY: 0, scaleX: 0, scaleY: 0 };
+      return { rotation: Math.atan2(-c, d), skewX: 0, skewY: 0, scaleX: 0, scaleY: columnY };
+    }
+    var determinant = a * d - b * c;
+    var scaleY = determinant < 0 ? -columnY : columnY;
+    var rotation = Math.atan2(b, a);
+    var secondAngle = columnY <= epsilon ? rotation : Math.atan2(-c / scaleY, d / scaleY);
+    return { rotation: rotation, skewX: rotation - secondAngle, skewY: 0, scaleX: scaleX, scaleY: scaleY };
+  }
+
+  function applyNodeTransform(node, view, scene) {
+    if (!node || !view) return;
+    var props = node.props || {};
+    var worldScaleX = finite(view.__mzuiWorldScaleX, finite(props.scaleX, 1));
+    var worldScaleY = finite(view.__mzuiWorldScaleY, finite(props.scaleY, 1));
+    var desired = nodeWorldMatrix(node, worldScaleX, worldScaleY);
+    var parent = node.parentId ? findNode(scene, node.parentId) : null;
+    var local = desired;
+    var localX = finite(props.x, 0);
+    var localY = finite(props.y, 0);
+    if (parent) {
+      var parentProps = parent.props || {};
+      var parentWorld = nodeWorldMatrix(parent, finite(parentProps.scaleX, 1), finite(parentProps.scaleY, 1));
+      var determinant = parentWorld.a * parentWorld.d - parentWorld.b * parentWorld.c;
+      if (Math.abs(determinant) <= 1e-10) throw new Error('UI renderer cannot place a child inside a container with a zero scale.');
+      var inverseA = parentWorld.d / determinant;
+      var inverseB = -parentWorld.b / determinant;
+      var inverseC = -parentWorld.c / determinant;
+      var inverseD = parentWorld.a / determinant;
+      var dx = finite(props.x, 0) - parentWorld.tx;
+      var dy = finite(props.y, 0) - parentWorld.ty;
+      localX = inverseA * dx + inverseC * dy;
+      localY = inverseB * dx + inverseD * dy;
+      local = {
+        a: inverseA * desired.a + inverseC * desired.b,
+        b: inverseB * desired.a + inverseD * desired.b,
+        c: inverseA * desired.c + inverseC * desired.d,
+        d: inverseB * desired.c + inverseD * desired.d,
+      };
+    }
+    var decomposed = decomposeNodeLinearTransform(local.a, local.b, local.c, local.d);
+    view.x = localX;
+    view.y = localY;
+    view.rotation = decomposed.rotation;
+    view.scale = view.scale || { x: 1, y: 1 };
+    view.scale.x = decomposed.scaleX;
+    view.scale.y = decomposed.scaleY;
+    view.skew = view.skew || { x: 0, y: 0 };
+    view.skew.x = decomposed.skewX;
+    view.skew.y = decomposed.skewY;
   }
 
   function renderTextBackground(view, props) {
@@ -1870,8 +2002,9 @@
     }
     if (view.scale && typeof view.__mzuiDesignerScaleX === 'number') {
       var pressedScale = state === 'pressed' ? finite(props.pressedScale, 1) : 1;
-      view.scale.x = view.__mzuiDesignerScaleX * pressedScale;
-      view.scale.y = view.__mzuiDesignerScaleY * pressedScale;
+      view.__mzuiWorldScaleX = view.__mzuiDesignerScaleX * pressedScale;
+      view.__mzuiWorldScaleY = view.__mzuiDesignerScaleY * pressedScale;
+      applyNodeTransform(view.__mzuiNode, view, view.__mzuiRuntime && view.__mzuiRuntime.scene);
     }
     if (view.__mzuiFocusFrame) view.__mzuiFocusFrame.visible = Boolean(view.__mzuiFocused);
     if (view.__mzuiFocused && global.PIXI && typeof global.PIXI.Graphics === 'function' && !view.__mzuiFocusFrame) {
@@ -1960,21 +2093,6 @@
     var text = value.trim().replace(/^#/, '');
     if (/^[0-9a-f]{4}$/i.test(text)) text = text.split('').map(function (part) { return part + part; }).join('');
     return /^[0-9a-f]{8}$/i.test(text) ? parseInt(text.slice(6), 16) / 255 : 1;
-  }
-
-  function localPosition(node, scene) {
-    var props = node && node.props ? node.props : {};
-    var worldX = finite(props.x, 0);
-    var worldY = finite(props.y, 0);
-    var parent = node && node.parentId ? findNode(scene, node.parentId) : null;
-    var guard = 0;
-    while (parent && guard++ < 128) {
-      var parentProps = parent.props || {};
-      worldX -= finite(parentProps.x, 0);
-      worldY -= finite(parentProps.y, 0);
-      parent = parent.parentId ? findNode(scene, parent.parentId) : null;
-    }
-    return { x: worldX, y: worldY };
   }
 
   function resolveTextFontFamily(props) {
@@ -2189,8 +2307,8 @@
     var props = node && node.props ? node.props : {};
     var width = Math.max(0, finite(dimensions.width, finite(props.width, 0)));
     var height = Math.max(0, finite(dimensions.height, finite(props.height, 0)));
-    var viewScaleX = Math.abs(finite(view.scale && view.scale.x, 1));
-    var viewScaleY = Math.abs(finite(view.scale && view.scale.y, 1));
+    var viewScaleX = Math.abs(finite(view.__mzuiWorldScaleX, finite(view.scale && view.scale.x, 1)));
+    var viewScaleY = Math.abs(finite(view.__mzuiWorldScaleY, finite(view.scale && view.scale.y, 1)));
     var requestedScaleX = Math.abs(finite(dimensions.scaleX, finite(props.scaleX, 1)));
     var requestedScaleY = Math.abs(finite(dimensions.scaleY, finite(props.scaleY, 1)));
     var localWidth = viewScaleX > 0 && requestedScaleX > 0 ? width * requestedScaleX / viewScaleX : width;
@@ -2224,6 +2342,7 @@
       try { pixiBounds = finiteBoundsRectangle(view.getBounds(false)); } catch (_) { pixiBounds = null; }
     }
     var transformed = transformLogicalNodeAabb(view, node);
+    if (node && node.type === 'container' && transformed) return transformed;
     if (transformed) {
       var expectedWidth = Math.abs(finite(node && node.props && node.props.width, 0) * finite(node && node.props && node.props.scaleX, 1));
       var expectedHeight = Math.abs(finite(node && node.props && node.props.height, 0) * finite(node && node.props && node.props.scaleY, 1));

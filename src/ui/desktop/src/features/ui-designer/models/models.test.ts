@@ -19,14 +19,19 @@ import {
   exportRuntimeDocument,
   importRuntimeSceneDocument,
   groupNodes,
+  localResizeNodeRect,
   moveNodeStep,
   moveNodeToEdge,
+  nodeVisualCenter,
   normalizeDocumentGeometry,
   normalizePaneSize,
   nodeRect,
   pasteClipboard,
   parseUiDocument,
+  pointerResizeDelta,
   reparentNode,
+  rotateSubtreeTransforms,
+  scaleSubtreeRects,
   serializeDocument,
   shortestRotationDelta,
   snapPoint,
@@ -611,6 +616,79 @@ describe('ui designer history, geometry and performance', () => {
     assert.deepEqual([disabled.width, disabled.snapped, disabled.guides.length], [117, false, 0])
     assert.equal(resizeCursor('e', 0), 'ew-resize')
     assert.equal(resizeCursor('e', 90), 'ns-resize')
+  })
+
+  test('pointer-driven resize keeps the min-1 floor recoverable without gesture state', () => {
+    const node = createDefaultNode('sprite', { id: 'node_drag', name: 'Drag', parentId: 'node_root' })
+    node.props.x = 100
+    node.props.y = 100
+    node.props.width = 160
+    node.props.height = 80
+    const origin = nodeRect(node)
+    const modifiers = { preserveAspect: false, fromCenter: false }
+    const dragWest = (pointerX: number) => resizeRect(origin, 'w', pointerResizeDelta(node, origin, 'w', { x: pointerX, y: 130 }, false), modifiers)
+    assert.deepEqual(dragWest(60), { x: 60, y: 100, width: 200, height: 80 })
+    assert.equal(dragWest(250).width, 10)
+    assert.equal(dragWest(259).width, 1)
+    assert.equal(dragWest(400).width, 1)
+    assert.equal(dragWest(240).width, 20)
+  })
+
+  test('rebuilds resized rects in the node local frame so rotated nodes grow along their own axes', () => {
+    const node = createDefaultNode('sprite', { id: 'node_rot', name: 'Rotated', parentId: 'node_root' })
+    node.props.x = 500
+    node.props.y = 500
+    node.props.width = 100
+    node.props.height = 50
+    node.props.rotate = 90
+    const origin = nodeRect(node)
+    assert.deepEqual(localResizeNodeRect(node, origin, 'w', 140, 50, false), { x: 500, y: 460, width: 140, height: 50 })
+  })
+
+  test('scales subtree rects through the container local frame for rotated containers', () => {
+    const document = createUiDocument()
+    const container = createDefaultNode('container', { id: 'rot_container', name: 'Rotated', parentId: 'node_root' })
+    container.props.x = 500
+    container.props.y = 500
+    container.props.width = 100
+    container.props.height = 50
+    container.props.rotate = 90
+    const child = createDefaultNode('sprite', { id: 'rot_child', name: 'Child', parentId: 'rot_container' })
+    child.props.x = 510
+    child.props.y = 510
+    document.nodes.push(container, child)
+    document.nodes[0].children.push(container.id)
+    container.children.push(child.id)
+    const origin = nodeRect(container)
+    const final = { x: origin.x, y: origin.y, width: 120, height: 50 }
+    const subtreeIds = collectNodeSubtreeIds(document, [container.id]).filter((id) => id !== container.id)
+    assert.deepEqual(scaleSubtreeRects(document, subtreeIds, container.id, origin, final, 'w', false), {
+      rot_child: { x: 510, y: 492, width: 192, height: 80 },
+    })
+  })
+
+  test('rotates a nested subtree rigidly around the selection visual center for any anchor', () => {
+    const document = createUiDocument()
+    const container = createDefaultNode('container', { id: 'nest_container', name: 'Nest', parentId: 'node_root' })
+    container.props.width = 240
+    container.props.height = 160
+    container.props.anchorX = 0.5
+    container.props.anchorY = 0.5
+    container.props.x = 360
+    container.props.y = 260
+    const nested = createDefaultNode('container', { id: 'nest_inner', name: 'Inner', parentId: 'nest_container' })
+    nested.props.x = 264
+    nested.props.y = 212
+    const leaf = createDefaultNode('text', { id: 'nest_leaf', name: 'Leaf', parentId: 'nest_inner' })
+    leaf.props.x = 300
+    leaf.props.y = 240
+    document.nodes.push(container, nested, leaf)
+    document.nodes[0].children.push(container.id)
+    container.children.push(nested.id)
+    nested.children.push(leaf.id)
+    const drafts = rotateSubtreeTransforms(document, collectNodeSubtreeIds(document, [container.id]), container.id, 180)
+    assert.deepEqual(drafts.positions, { nest_container: { x: 360, y: 260 }, nest_inner: { x: 456, y: 308 }, nest_leaf: { x: 420, y: 280 } })
+    assert.deepEqual(drafts.rotations, { nest_container: 180, nest_inner: 180, nest_leaf: 180 })
   })
 
   test('limits smart resize snap targets to visible unlocked siblings in the same local space', () => {

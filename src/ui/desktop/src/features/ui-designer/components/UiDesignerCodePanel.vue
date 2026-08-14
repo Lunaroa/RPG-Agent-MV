@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, isRef, onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
+import { computed, isRef, nextTick, onBeforeUnmount, onMounted, ref, type Ref, watch } from 'vue'
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import type { UiRuntimeDiagnostic, UiValidationIssue, UiValidationReport } from '@contract/ui-designer'
 import { UI_DESIGNER_SCENE_SCRIPT_COMPLETIONS } from '@contract/ui-designer-script'
@@ -29,8 +29,14 @@ const runtimeCodeDiagnostics = computed<UiRuntimeDiagnostic[]>(() => {
     return /ready|update|code|script|property|expression|condition|event/.test(fields)
   })
 })
-const editorRef = ref<{ format: () => void }>()
+const editorRef = ref<{ format: () => void, refreshLayout: () => void }>()
 const formatCode = () => editorRef.value?.format()
+const activeSceneId = computed(() => unwrap(designer.activeSceneId))
+const isCodeMode = computed(() => unwrap(designer.editingMode) === 'code')
+const refreshEditorLayout = async () => {
+  await nextTick()
+  editorRef.value?.refreshLayout()
+}
 const completionItems = computed(() => [...UI_DESIGNER_SCENE_SCRIPT_COMPLETIONS, ...document.value.nodes.flatMap((node) => [node.id, node.name])])
 
 const updateCode = (value: string, sourceSceneId?: string) => {
@@ -39,7 +45,13 @@ const updateCode = (value: string, sourceSceneId?: string) => {
   designer.commitSourceCode(sceneId)
 }
 const handleFormatShortcut = () => formatCode()
-onMounted(() => window.addEventListener('agent-rpg:ui-designer-format', handleFormatShortcut))
+onMounted(() => {
+  window.addEventListener('agent-rpg:ui-designer-format', handleFormatShortcut)
+  if (isCodeMode.value) void refreshEditorLayout()
+})
+watch([isCodeMode, activeSceneId], ([visible]) => {
+  if (visible) void refreshEditorLayout()
+}, { flush: 'post' })
 onBeforeUnmount(() => window.removeEventListener('agent-rpg:ui-designer-format', handleFormatShortcut))
 </script>
 

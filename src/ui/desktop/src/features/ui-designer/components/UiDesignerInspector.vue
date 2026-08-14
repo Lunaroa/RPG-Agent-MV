@@ -465,7 +465,6 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
           :multiple="resourceWorkspaceMultiple"
           @select="settleResourceWorkspace"
           @select-many="settleResourceWorkspace"
-          @clear="settleResourceWorkspace('')"
           @cancel="settleResourceWorkspace(null)"
           @mutated="designer.notifyResourceMutation"
         />

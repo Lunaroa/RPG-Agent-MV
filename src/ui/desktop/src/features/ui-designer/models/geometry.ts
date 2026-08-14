@@ -95,9 +95,15 @@ export interface UiCanvasViewportFrame {
   scrollLeft: number
   scrollTop: number
   stageMargin: number
+  stageOffsetX?: number
+  stageOffsetY?: number
 }
 
 const finiteOr = (value: number, fallback: number) => Number.isFinite(value) ? value : fallback
+const stageOffset = (frame: Pick<UiCanvasViewportFrame, 'stageMargin' | 'stageOffsetX' | 'stageOffsetY'>, axis: 'x' | 'y') => {
+  const offset = axis === 'x' ? frame.stageOffsetX : frame.stageOffsetY
+  return Math.max(0, finiteOr(offset ?? frame.stageMargin, 0))
+}
 
 /** Convert a client-space point into the scroll viewport's content space. */
 export function viewportClientToContent(point: UiPoint, frame: Pick<UiCanvasViewportFrame, 'left' | 'top' | 'scrollLeft' | 'scrollTop'>): UiPoint {
@@ -118,27 +124,25 @@ export function viewportContentToClient(point: UiPoint, frame: Pick<UiCanvasView
 /** Return the transform-space anchor consumed by zoomViewport. */
 export function viewportClientToZoomAnchor(point: UiPoint, frame: UiCanvasViewportFrame): UiPoint {
   const content = viewportClientToContent(point, frame)
-  const margin = Math.max(0, finiteOr(frame.stageMargin, 0))
-  return { x: content.x - margin, y: content.y - margin }
+  return { x: content.x - stageOffset(frame, 'x'), y: content.y - stageOffset(frame, 'y') }
 }
 
 /** Convert a client-space pointer into the document's canvas world space. */
 export function viewportClientToWorld(point: UiPoint, frame: UiCanvasViewportFrame, viewport: UiViewport): UiPoint {
   const zoom = Math.max(0.01, finiteOr(viewport.zoom, 1))
-  const margin = Math.max(0, finiteOr(frame.stageMargin, 0))
   const content = viewportClientToContent(point, frame)
   return {
-    x: (content.x - margin - finiteOr(viewport.panX, 0)) / zoom,
-    y: (content.y - margin - finiteOr(viewport.panY, 0)) / zoom,
+    x: (content.x - stageOffset(frame, 'x') - finiteOr(viewport.panX, 0)) / zoom,
+    y: (content.y - stageOffset(frame, 'y') - finiteOr(viewport.panY, 0)) / zoom,
   }
 }
 
 /** Convert a world-space point into absolute content coordinates of the scroll viewport. */
-export function worldPointToViewport(point: UiPoint, frame: Pick<UiCanvasViewportFrame, 'stageMargin'>, viewport: UiViewport): UiPoint {
+export function worldPointToViewport(point: UiPoint, frame: Pick<UiCanvasViewportFrame, 'stageMargin' | 'stageOffsetX' | 'stageOffsetY'>, viewport: UiViewport): UiPoint {
   const zoom = Math.max(0.01, finiteOr(viewport.zoom, 1))
   return {
-    x: Math.max(0, finiteOr(frame.stageMargin, 0)) + finiteOr(viewport.panX, 0) + finiteOr(point.x, 0) * zoom,
-    y: Math.max(0, finiteOr(frame.stageMargin, 0)) + finiteOr(viewport.panY, 0) + finiteOr(point.y, 0) * zoom,
+    x: stageOffset(frame, 'x') + finiteOr(viewport.panX, 0) + finiteOr(point.x, 0) * zoom,
+    y: stageOffset(frame, 'y') + finiteOr(viewport.panY, 0) + finiteOr(point.y, 0) * zoom,
   }
 }
 
@@ -148,7 +152,7 @@ export function worldPointToClient(point: UiPoint, frame: UiCanvasViewportFrame,
 }
 
 /** Convert a world rect to content coordinates (before scroll clipping). */
-export function worldRectToViewport(rect: UiRect, frame: Pick<UiCanvasViewportFrame, 'stageMargin'>, viewport: UiViewport): UiRect {
+export function worldRectToViewport(rect: UiRect, frame: Pick<UiCanvasViewportFrame, 'stageMargin' | 'stageOffsetX' | 'stageOffsetY'>, viewport: UiViewport): UiRect {
   const topLeft = worldPointToViewport({ x: rect.x, y: rect.y }, frame, viewport)
   const zoom = Math.max(0.01, finiteOr(viewport.zoom, 1))
   return { x: topLeft.x, y: topLeft.y, width: Math.max(0, finiteOr(rect.width, 0) * zoom), height: Math.max(0, finiteOr(rect.height, 0) * zoom) }
@@ -240,6 +244,158 @@ export function clampNodePositionToParent(document: UiDesignerDocument, nodeId: 
     x: clampedX + rect.width * node.props.anchorX,
     y: clampedY + rect.height * node.props.anchorY,
   }, position)
+}
+
+export function nodeRotationRadians(node: UiNode): number {
+  return (Number.isFinite(node.props.rotate) ? node.props.rotate : 0) * Math.PI / 180
+}
+
+/** Exact scene-space center of a node's visual rect, honoring scale, rotation, and anchor. */
+export function nodeVisualCenter(node: UiNode): UiPoint {
+  const width = Math.max(1, Math.abs(node.props.width * (Number.isFinite(node.props.scaleX) ? node.props.scaleX : 1)))
+  const height = Math.max(1, Math.abs(node.props.height * (Number.isFinite(node.props.scaleY) ? node.props.scaleY : 1)))
+  const offsetX = width * (0.5 - node.props.anchorX)
+  const offsetY = height * (0.5 - node.props.anchorY)
+  const theta = nodeRotationRadians(node)
+  const cosine = Math.cos(theta)
+  const sine = Math.sin(theta)
+  return {
+    x: node.props.x + offsetX * cosine - offsetY * sine,
+    y: node.props.y + offsetX * sine + offsetY * cosine,
+  }
+}
+
+export function rotatePointAround(point: UiPoint, center: UiPoint, deltaDegrees: number): UiPoint {
+  const safeDelta = Number.isFinite(deltaDegrees) ? deltaDegrees : 0
+  if (safeDelta % 360 === 0) return { ...point }
+  const theta = safeDelta * Math.PI / 180
+  const dx = point.x - center.x
+  const dy = point.y - center.y
+  const cosine = Math.cos(theta)
+  const sine = Math.sin(theta)
+  return { x: center.x + dx * cosine - dy * sine, y: center.y + dx * sine + dy * cosine }
+}
+
+/**
+ * Translate a scene-space pointer into the resize delta of the node's local frame. The delta
+ * tracks the pointer only, so driving a dimension to its floor of 1 keeps the gesture live and
+ * dragging back out recovers immediately instead of deadlocking on clamped object scale.
+ */
+export function pointerResizeDelta(node: UiNode, origin: UiRect, handle: UiResizeHandle, pointer: UiPoint, fromCenter: boolean): UiPoint {
+  const theta = nodeRotationRadians(node)
+  const cosine = Math.cos(theta)
+  const sine = Math.sin(theta)
+  const dx = pointer.x - node.props.x
+  const dy = pointer.y - node.props.y
+  const localX = dx * cosine + dy * sine + origin.width * node.props.anchorX
+  const localY = -dx * sine + dy * cosine + origin.height * node.props.anchorY
+  const centerX = fromCenter ? origin.width / 2 : origin.width
+  const centerY = fromCenter ? origin.height / 2 : origin.height
+  return {
+    x: handle.includes('e') ? localX - centerX : handle.includes('w') ? localX : 0,
+    y: handle.includes('s') ? localY - centerY : handle.includes('n') ? localY : 0,
+  }
+}
+
+/**
+ * Rebuild a node rect from resized local dimensions. The anchor displacement is computed in the
+ * node's rotated local frame so rotated nodes grow along their own axes instead of drifting
+ * diagonally in scene axes.
+ */
+export function localResizeNodeRect(node: UiNode, origin: UiRect, handle: UiResizeHandle, width: number, height: number, fromCenter: boolean): UiRect {
+  const originWidth = Math.max(1, origin.width)
+  const originHeight = Math.max(1, origin.height)
+  const safeWidth = Math.max(1, width)
+  const safeHeight = Math.max(1, height)
+  const offsetXShift = fromCenter ? (safeWidth - originWidth) / 2 : handle.includes('w') ? safeWidth - originWidth : 0
+  const offsetYShift = fromCenter ? (safeHeight - originHeight) / 2 : handle.includes('n') ? safeHeight - originHeight : 0
+  const theta = nodeRotationRadians(node)
+  const cosine = Math.cos(theta)
+  const sine = Math.sin(theta)
+  const anchorOffsetX = safeWidth * node.props.anchorX - offsetXShift - originWidth * node.props.anchorX
+  const anchorOffsetY = safeHeight * node.props.anchorY - offsetYShift - originHeight * node.props.anchorY
+  const anchorX = node.props.x + anchorOffsetX * cosine - anchorOffsetY * sine
+  const anchorY = node.props.y + anchorOffsetX * sine + anchorOffsetY * cosine
+  return {
+    x: anchorX - safeWidth * node.props.anchorX,
+    y: anchorY - safeHeight * node.props.anchorY,
+    width: safeWidth,
+    height: safeHeight,
+  }
+}
+
+/**
+ * Scale a container's descendants with its resized bounds: positions and dimensions map through
+ * the container's local frame, so children keep their relative placement for any rotation.
+ */
+export function scaleSubtreeRects(document: UiDesignerDocument, subtreeIds: readonly string[], nodeId: string, origin: UiRect, final: UiRect, handle: UiResizeHandle, fromCenter: boolean): Record<string, UiRect> {
+  const node = findDocumentNode(document, nodeId)
+  if (!node) return {}
+  const originWidth = Math.max(1, origin.width)
+  const originHeight = Math.max(1, origin.height)
+  const finalWidth = Math.max(1, final.width)
+  const finalHeight = Math.max(1, final.height)
+  const scaleX = finalWidth / originWidth
+  const scaleY = finalHeight / originHeight
+  const offsetXShift = fromCenter ? (finalWidth - originWidth) / 2 : handle.includes('w') ? finalWidth - originWidth : 0
+  const offsetYShift = fromCenter ? (finalHeight - originHeight) / 2 : handle.includes('n') ? finalHeight - originHeight : 0
+  const theta = nodeRotationRadians(node)
+  const cosine = Math.cos(theta)
+  const sine = Math.sin(theta)
+  const anchorOffsetX = finalWidth * node.props.anchorX - offsetXShift - originWidth * node.props.anchorX
+  const anchorOffsetY = finalHeight * node.props.anchorY - offsetYShift - originHeight * node.props.anchorY
+  const anchorX = node.props.x + anchorOffsetX * cosine - anchorOffsetY * sine
+  const anchorY = node.props.y + anchorOffsetX * sine + anchorOffsetY * cosine
+  const result: Record<string, UiRect> = {}
+  for (const id of subtreeIds) {
+    if (id === nodeId) continue
+    const child = findDocumentNode(document, id)
+    if (!child) continue
+    const dx = child.props.x - node.props.x
+    const dy = child.props.y - node.props.y
+    const localX = (dx * cosine + dy * sine + originWidth * node.props.anchorX) * scaleX
+    const localY = (-dx * sine + dy * cosine + originHeight * node.props.anchorY) * scaleY
+    const relX = localX - finalWidth * node.props.anchorX
+    const relY = localY - finalHeight * node.props.anchorY
+    const childAnchorX = anchorX + relX * cosine - relY * sine
+    const childAnchorY = anchorY + relX * sine + relY * cosine
+    const childRect = nodeRect(child)
+    const width = Math.max(1, childRect.width * scaleX)
+    const height = Math.max(1, childRect.height * scaleY)
+    result[id] = normalizeGeometryRect({
+      x: childAnchorX - width * child.props.anchorX,
+      y: childAnchorY - height * child.props.anchorY,
+      width,
+      height,
+    }, childRect)
+  }
+  return result
+}
+
+export interface UiSubtreeRotationDrafts {
+  positions: Record<string, UiPoint>
+  rotations: Record<string, number>
+}
+
+/**
+ * Rotate a node's subtree around the node's visual center. Every member's anchor rotates rigidly
+ * around that center and gains the same angle delta, matching the runtime's absolute-coordinate
+ * contract while keeping the group visually coherent.
+ */
+export function rotateSubtreeTransforms(document: UiDesignerDocument, subtreeIds: readonly string[], nodeId: string, deltaDegrees: number): UiSubtreeRotationDrafts {
+  const node = findDocumentNode(document, nodeId)
+  const positions: Record<string, UiPoint> = {}
+  const rotations: Record<string, number> = {}
+  if (!node) return { positions, rotations }
+  const center = nodeVisualCenter(node)
+  for (const id of subtreeIds) {
+    const member = findDocumentNode(document, id)
+    if (!member) continue
+    const origin = { x: member.props.x, y: member.props.y }
+    positions[id] = normalizeGeometryPoint(rotatePointAround(origin, center, deltaDegrees), origin)
+    rotations[id] = normalizeUiDesignerInteger(member.props.rotate + deltaDegrees, member.props.rotate)
+  }
+  return { positions, rotations }
 }
 
 /** A clipping container cannot be resized past the current bounds of its direct children. */

@@ -59,7 +59,7 @@ test('editor and in-game preview reuse the canonical iframe with distinct execut
   assert.match(canvas, /v-if="!previewing" class="canvas-toolbar"/)
   assert.match(canvas, /v-if="!previewing && document\.canvas\.rulers"/)
   assert.match(canvas, /const gamePreviewing = computed/)
-  assert.match(canvas, /previewInteractive = computed\(\(\) => gamePreviewing\.value/)
+  assert.match(canvas, /previewInteractive = computed\(\(\) => previewing\.value[\s\S]*executionMode\.value !== 'authoring'/)
   assert.match(canvas, /pointer-events: none/)
   assert.match(canvas, /touch-action: none/)
 })
@@ -76,7 +76,7 @@ test('design and code keep one mounted Fabric canvas while the runtime starts la
   const sceneWatcher = hostLifecycle.slice(hostLifecycle.indexOf('const sceneStop = watch('), hostLifecycle.indexOf('const draftStop = watch('))
   assert.match(sceneWatcher, /if \(rendererRequested\(\)\) syncScene\(sceneChanged\)/)
   assert.match(hostLifecycle, /if \(pendingMountRevision !== null\) \{\s*queueSceneSync\(forceMount\)/)
-  assert.match(hostLifecycle, /const previewNeedsLatestMount = sceneSyncQueued && options\.executionMode\(\) === 'full-preview'/)
+  assert.match(hostLifecycle, /const previewNeedsLatestMount = sceneSyncQueued && options\.executionMode\(\) !== 'authoring'/)
   assert.match(hostLifecycle, /syncScene\(previewNeedsLatestMount\)/)
   assert.match(hostLifecycle, /if \(!previewNeedsLatestMount\) options\.onExecutionModeReady/)
   const selectionSync = hostLifecycle.slice(hostLifecycle.indexOf('const syncSelection ='), hostLifecycle.indexOf('const stopBackend ='))
@@ -87,8 +87,11 @@ test('design and code keep one mounted Fabric canvas while the runtime starts la
   const previewStart = designerController.slice(designerController.indexOf('const startPreview ='), designerController.indexOf('const stopPreview ='))
   assert.ok(previewStart.indexOf('flushDrafts') < previewStart.indexOf("previewExecutionMode.value = 'full-preview'"))
   assert.doesNotMatch(previewStart, /isPreviewing\.value = true/)
+  const editorPreviewStart = designerController.slice(designerController.indexOf('const startEditorPreview ='), designerController.indexOf('const stopEditorPreview ='))
+  assert.ok(editorPreviewStart.indexOf('flushDrafts') < editorPreviewStart.indexOf("previewExecutionMode.value = 'editor-preview'"))
+  assert.doesNotMatch(editorPreviewStart, /isEditorPreviewing\.value = true/)
   const previewReady = designerController.slice(designerController.indexOf('const acknowledgePreviewExecutionMode ='), designerController.indexOf('const failPreview ='))
-  assert.ok(previewReady.indexOf("setEditingMode('design')") < previewReady.indexOf('isPreviewing.value = true'))
+  assert.ok(previewReady.indexOf("setEditingMode('design')") < previewReady.indexOf("isPreviewing.value = mode === 'full-preview'"))
 })
 
 test('resource refresh follows an in-flight edit with the latest complete scene', () => {
@@ -165,11 +168,15 @@ test('canvas pans only with Space plus left drag or middle drag and resizes free
   assert.match(fabricCanvas, /\(event\.e as MouseEvent\)\.shiftKey/)
   assert.match(fabricCanvas, /preserveAspect: shiftKey, fromCenter: altKey/)
   assert.match(fabricCanvas, /accumulateRotationDegrees\([\s\S]*state\.lastFabricRotation = wrappedAngle[\s\S]*state\.accumulatedRotation = accumulatedAngle/)
-  assert.match(fabricCanvas, /if \(shiftKey\) \{[\s\S]*target\.getPositionByOrigin\(node\.props\.anchorX, node\.props\.anchorY\)[\s\S]*target\.setPositionByOrigin\(anchor, node\.props\.anchorX, node\.props\.anchorY\)/)
-  assert.match(fabricFactory, /centeredRotation: false/)
-  assert.match(fabricFactory, /rotationControl\.transformAnchorPoint = \{ x: node\.props\.anchorX, y: node\.props\.anchorY \}/)
+  assert.match(fabricCanvas, /canvas\.getScenePoint\(event\.e\)/)
+  assert.match(fabricCanvas, /pointerResizeDelta\(node, state\.originRect, handle, pointer, altKey\)/)
+  assert.match(fabricCanvas, /const drafts = unwrap\(props\.designer\.draftRects\)/)
+  assert.match(fabricCanvas, /const positions = unwrap\(props\.designer\.draftPositions\)/)
+  assert.match(fabricCanvas, /object\.setPositionByOrigin\(new Point\(draftPosition\.x, draftPosition\.y\)/)
+  assert.match(fabricFactory, /centeredRotation: true/)
+  assert.doesNotMatch(fabricFactory, /transformAnchorPoint/)
   assert.match(designerController, /previewNodeRotation = \(nodeId: string, rotation: number\)/)
-  assert.match(designerController, /updateNodeProperty\(nodeId, 'rotate', rotation\)[\s\S]*return true/)
+  assert.match(designerController, /const commitDraftRotation = \(nodeId: string\)[\s\S]*node\.props\.rotate = normalizeGeometryInteger\(pendingRotation, node\.props\.rotate\)[\s\S]*'Rotate node'/)
 })
 
 test('sprite resource selection carries intrinsic dimensions into one controller transaction', () => {
@@ -238,6 +245,14 @@ test('both ten second renderer watchdogs report distinct fixed codes and stages'
   assert.match(hostLifecycle, /UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES\.mountedWatchdog, 'mounted'/)
 })
 
+test('authenticated pre-mount progress renews the handshake watchdog without extending mounted waits', () => {
+  assert.match(hostLifecycle, /const armHandshakeWatchdog = \(activeSessionId: string\): boolean =>/)
+  assert.match(hostLifecycle, /session\?\.sessionId === activeSessionId && pendingMountRevision === null && !executionModeReady\.value/)
+  assert.match(hostLifecycle, /const advancesHandshake = messageKind === 'receipt'[\s\S]*messageKind === 'hello'[\s\S]*messageKind === 'ready'[\s\S]*messageKind === 'scene-state' && !sceneStateHasDocumentIdentity/)
+  assert.match(hostLifecycle, /if \(advancesHandshake && pendingMountRevision === null && !executionModeReady\.value && !armHandshakeWatchdog\(active\.sessionId\)\) return/)
+  assert.match(hostLifecycle, /pendingMountRevision = revision[\s\S]*cancelHandshake\(\)/)
+})
+
 test('start confirm and iframe terminals enter the shared latch with fixed safe codes', () => {
   assert.match(hostLifecycle, /UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES\.startAdapter, 'start'/)
   assert.match(hostLifecycle, /UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES\.startResult, 'start'/)
@@ -251,6 +266,17 @@ test('start confirm and iframe terminals enter the shared latch with fixed safe 
   assert.match(canvas, /:data-failure-code="rendererFailureCode \|\| undefined"/)
   assert.match(canvas, /:data-failure-stage="rendererStage"/)
   assert.match(canvas, /t\('rendererDisconnected'\)/)
+})
+
+test('canvas exposes bounded renderer lifecycle diagnostics to the hidden desktop bridge', () => {
+  assert.match(canvas, /data-ui-id="ui-designer-canvas"/)
+  assert.match(canvas, /:data-renderer-status="rendererStatus"/)
+  assert.match(canvas, /:data-renderer-stage="rendererStage"/)
+  assert.match(canvas, /:data-renderer-failure-code="rendererFailureCode \|\| undefined"/)
+  assert.match(canvas, /:data-preview-status="unwrap\(designer\.previewStatus\)"/)
+  assert.match(canvas, /:data-preview-mode="requestedExecutionMode"/)
+  assert.match(canvas, /:data-renderer-execution-mode="rendererHost\.executionMode\.value"/)
+  assert.match(canvas, /:data-renderer-mode-ready="rendererHost\.executionModeReady\.value \? 'true' : 'false'"/)
 })
 
 test('stale renderer starts keep an opaque owner for a retryable stop', () => {

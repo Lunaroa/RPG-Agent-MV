@@ -39,7 +39,7 @@ import 'codemirror/addon/fold/foldgutter'
 import 'codemirror/addon/fold/foldgutter.css'
 import 'codemirror/addon/fold/brace-fold'
 import 'codemirror/mode/javascript/javascript'
-import { createUiDesignerCodeMirrorChangeHandler, formatUiDesignerCodeMirrorDocument } from './codeMirrorLifecycle'
+import { createUiDesignerCodeMirrorChangeHandler, formatUiDesignerCodeMirrorDocument, refreshUiDesignerCodeMirrorViewport } from './codeMirrorLifecycle'
 
 const unavailable = (message: string): UiFileResult<never> => ({ status: 'unavailable', message })
 
@@ -290,6 +290,7 @@ export const codeMirrorAdapter: UiCodeEditorAdapter = {
       getValue: () => editor.getValue(),
       setValue: (value: string) => editor.setValue(value),
       focus: () => editor.focus(),
+      refreshLayout: () => refreshUiDesignerCodeMirrorViewport(editor),
       format: () => formatUiDesignerCodeMirrorDocument(editor),
       dispose: () => {
         editor.off('change', onChange)

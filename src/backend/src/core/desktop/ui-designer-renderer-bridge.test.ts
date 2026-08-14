@@ -18,7 +18,7 @@ const baseMessage = () => ({
 })
 
 test('accepts bounded renderer bridge messages for the active session', () => {
-  assert.equal(UI_DESIGNER_RENDERER_BRIDGE_VERSION, '2.0.0')
+  assert.equal(UI_DESIGNER_RENDERER_BRIDGE_VERSION, '3.0.0')
   const message = {
     ...baseMessage(),
     kind: 'bounds',
@@ -41,6 +41,15 @@ test('accepts bounded renderer bridge messages for the active session', () => {
     sessionId: 'session_01', generation: 3, minimumSequence: 8, sceneId: 'Scene_Sample',
   })
   assert.equal(exitRequest.kind, 'exit-request')
+  const editorPreviewMount = validateUiDesignerRendererBridgeMessage({
+    ...baseMessage(), kind: 'mount', payload: {
+      revision: 2,
+      executionMode: 'editor-preview',
+      documentSceneId: 'scene_tab_1',
+      scene: { version: '1.1.0', runtimeVersion: '>=1.1.0', meta: { sceneName: 'Scene_Sample' }, nodes: [], zOrder: [], sceneScript: { version: '1.1.0', source: '' } },
+    },
+  }, { sessionId: 'session_01', generation: 3, minimumSequence: 8, minimumRevision: 2, sceneId: 'Scene_Sample' })
+  assert.equal(editorPreviewMount.kind, 'mount')
   const receipt = validateUiDesignerRendererBridgeMessage({
     ...baseMessage(), kind: 'receipt', payload: { stage: 'iframe-load', status: 'success', message: null },
   }, { sessionId: 'session_01', generation: 3, minimumSequence: 8 })
@@ -100,6 +109,7 @@ test('rejects stale, oversized, unknown-field, and malformed mount messages', ()
     () => validateUiDesignerRendererBridgeMessage({ ...baseMessage(), kind: 'mount', payload: {
       revision: 1,
       executionMode: 'authoring',
+      documentSceneId: 'scene_tab_1',
       scene: { version: '1.1.0', runtimeVersion: '>=1.1.0', meta: { sceneName: 'Scene_Sample' }, nodes: [], zOrder: [], sceneScript: { version: '2.0.0', source: '' } },
     } }),
     /sceneScript/,

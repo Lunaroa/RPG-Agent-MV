@@ -1,5 +1,4 @@
 import {
-  Circle,
   FabricImage,
   type FabricObject,
   Group,
@@ -7,7 +6,7 @@ import {
   Rect,
   Shadow,
   Textbox,
-  Triangle,
+  controlsUtils,
 } from 'fabric'
 import type {
   UiButtonNode,
@@ -19,6 +18,11 @@ import type {
   UiTextNode,
 } from '@contract/ui-designer'
 import { collectNodeSubtreeIds } from '../models/tree'
+import { UiLayoutTextbox } from './uiLayoutTextbox'
+import { UiNineSliceImage } from './uiNineSliceImage'
+import { UiParticleObject } from './uiParticleObject'
+import { UiWindowSkinTextbox } from './uiWindowSkinTextbox'
+import { loadUiFabricFont } from './uiFabricFont'
 
 export interface UiFabricObjectData {
   nodeId: string
@@ -27,6 +31,7 @@ export interface UiFabricObjectData {
   animated?: boolean
   particlePhases?: number[]
   videoElement?: HTMLVideoElement
+  fontFamily?: string
   ownClipPath?: FabricObject['clipPath']
   hierarchyClipPath?: FabricObject['clipPath']
 }
@@ -47,9 +52,38 @@ const previewUrlFor = (catalog: UiProjectResourceCatalog | null | undefined, pat
 }
 
 const geometryKeys = new Set(['x', 'y', 'width', 'height', 'scaleX', 'scaleY', 'rotate', 'opacity', 'visible', 'anchorX', 'anchorY', 'zIndex'])
+const scaleControlKeys = ['tl', 'mt', 'tr', 'mr', 'br', 'mb', 'bl', 'ml'] as const
+
+export function configureFabricScaleControls(object: FabricObject) {
+  for (const key of scaleControlKeys) {
+    const control = object.controls[key]
+    if (!control) continue
+    control.cursorStyleHandler = controlsUtils.scaleCursorStyleHandler
+    control.actionHandler = key === 'ml' || key === 'mr'
+      ? controlsUtils.scalingX
+      : key === 'mt' || key === 'mb'
+        ? controlsUtils.scalingY
+        : controlsUtils.scalingEqually
+    control.actionName = 'scale'
+    control.getActionName = () => 'scale'
+  }
+}
 
 export function fabricNodeVisualSignature(node: UiNode, catalog: UiProjectResourceCatalog | null | undefined): string {
-  if (node.type === 'text' || node.type === 'button') return node.type
+  if (node.type === 'text') return JSON.stringify([node.type, node.props.fontFile, previewUrlFor(catalog, node.props.fontFile) ?? ''])
+  if (node.type === 'button') {
+    const statePath = node.props.imageStates.normal
+    return JSON.stringify([
+      node.type,
+      statePath,
+      previewUrlFor(catalog, statePath) ?? '',
+      previewUrlFor(catalog, 'img/system/Window.png') ?? '',
+      node.props.fontFile,
+      previewUrlFor(catalog, node.props.fontFile) ?? '',
+    ])
+  }
+  if (node.type === 'nineSlice') return JSON.stringify([node.type, node.props.path, previewUrlFor(catalog, node.props.path) ?? ''])
+  if (node.type === 'particle') return JSON.stringify([node.type, node.props.imagePath, previewUrlFor(catalog, node.props.imagePath) ?? ''])
   const visual = Object.fromEntries(Object.entries(node.props).filter(([key]) => !geometryKeys.has(key)))
   const paths = Object.values(visual).flatMap((value) => typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap((item) => typeof item === 'object' && item && 'path' in item ? [String(item.path)] : []) : [])
   const resources = paths.map((path) => previewUrlFor(catalog, path) ?? '')
@@ -90,7 +124,7 @@ const commonObjectOptions = (node: UiNode, document?: UiDesignerDocument) => {
   lockScalingX: locked,
   lockScalingY: locked,
   lockRotation: locked,
-  centeredRotation: false,
+  centeredRotation: true,
   hasControls: !locked,
   hoverCursor: locked ? 'not-allowed' : 'move',
   borderColor: '#d06b42',
@@ -108,6 +142,7 @@ const decorate = <T extends FabricObject>(object: T, node: UiNode, signature: st
   const decorated = object as T & { data: UiFabricObjectData }
   decorated.data = { nodeId: node.id, nodeType: node.type, signature, ownClipPath: object.clipPath, ...extra }
   decorated.set(commonObjectOptions(node, document))
+  configureFabricScaleControls(decorated)
   decorated.setCoords()
   return decorated
 }
@@ -199,11 +234,35 @@ const createImageNode = async (node: UiNode, path: string, fillMode: string, cat
   }
 }
 
+const createNineSliceNode = async (node: Extract<UiNode, { type: 'nineSlice' }>, catalog: UiProjectResourceCatalog | null | undefined) => {
+  const url = previewUrlFor(catalog, node.props.path)
+  if (!url) return placeholder(node, node.props.path ? `九宫格\n双击选择资源\n${node.props.path}` : '九宫格\n双击选择资源')
+  try {
+    const source = await FabricImage.fromURL(url)
+    return new UiNineSliceImage(source.getElement() as HTMLImageElement | HTMLCanvasElement, {
+      width: node.props.width,
+      height: node.props.height,
+      originX: 'center',
+      originY: 'center',
+      objectCaching: false,
+      borders: {
+        top: node.props.borderTop,
+        right: node.props.borderRight,
+        bottom: node.props.borderBottom,
+        left: node.props.borderLeft,
+      },
+      showGuides: node.props.showGuides,
+    })
+  } catch {
+    return placeholder(node, `九宫格\n双击选择资源\n${node.props.path}`, '#2b1d25')
+  }
+}
+
 const textShadow = (node: UiTextNode | UiButtonNode) => node.props.shadowBlur || node.props.shadowOffsetX || node.props.shadowOffsetY
   ? new Shadow({ color: node.props.shadowColor, blur: node.props.shadowBlur, offsetX: node.props.shadowOffsetX, offsetY: node.props.shadowOffsetY })
   : undefined
 
-const applyTextStyle = (object: Textbox, node: UiTextNode | UiButtonNode) => {
+const applyTextStyle = (object: Textbox, node: UiTextNode | UiButtonNode, fontFamily?: string) => {
   object.set({
     text: node.props.content,
     width: Math.max(20, node.props.width),
@@ -211,34 +270,77 @@ const applyTextStyle = (object: Textbox, node: UiTextNode | UiButtonNode) => {
     fontSize: node.props.fontSize,
     fontWeight: node.props.fontWeight,
     fontStyle: node.props.italic ? 'italic' : 'normal',
+    fontFamily: fontFamily || 'sans-serif',
     charSpacing: node.props.letterSpacing * 10,
     fill: node.props.textColor,
     stroke: node.props.strokeWidth > 0 ? node.props.strokeColor : undefined,
     strokeWidth: node.props.strokeWidth,
     textAlign: node.props.align,
-    backgroundColor: node.props.backgroundColor,
+    backgroundColor: node.type === 'button' ? '#00000000' : node.props.backgroundColor,
     shadow: textShadow(node),
     splitByGrapheme: true,
     lineHeight: 1.2,
     editable: !node.locked,
     lockScalingY: node.locked,
+    ...(object instanceof UiLayoutTextbox
+      ? { layoutHeight: Math.max(20, node.props.height), verticalTextAlign: node.props.verticalAlign }
+      : {}),
   })
   object.setCoords()
 }
 
-const createTextNode = (node: UiTextNode | UiButtonNode) => {
-  const object = new Textbox(node.props.content, {
+const createTextNode = (node: UiTextNode | UiButtonNode, fontFamily?: string) => {
+  const object = new UiLayoutTextbox(node.props.content, {
     ...commonObjectOptions(node),
     width: Math.max(20, node.props.width),
-    height: Math.max(20, node.props.height),
+    layoutHeight: Math.max(20, node.props.height),
+    verticalTextAlign: node.props.verticalAlign,
     scaleX: node.props.scaleX,
     scaleY: node.props.scaleY,
     splitByGrapheme: true,
     editable: !node.locked,
     backgroundColor: node.props.backgroundColor,
   })
-  applyTextStyle(object, node)
+  applyTextStyle(object, node, fontFamily)
   return object
+}
+
+const loadFabricImageSource = async (url: string | undefined) => {
+  if (!url) return undefined
+  try {
+    return (await FabricImage.fromURL(url)).getElement() as CanvasImageSource
+  } catch {
+    return undefined
+  }
+}
+
+const createButtonNode = async (node: UiButtonNode, catalog: UiProjectResourceCatalog | null | undefined, fontFamily?: string) => {
+  const [stateImageElement, windowSkinElement] = await Promise.all([
+    loadFabricImageSource(previewUrlFor(catalog, node.props.imageStates.normal)),
+    loadFabricImageSource(previewUrlFor(catalog, 'img/system/Window.png')),
+  ])
+  const object = new UiWindowSkinTextbox(node.props.content, {
+    ...commonObjectOptions(node),
+    width: Math.max(20, node.props.width),
+    layoutHeight: Math.max(20, node.props.height),
+    verticalTextAlign: node.props.verticalAlign,
+    scaleX: node.props.scaleX,
+    scaleY: node.props.scaleY,
+    splitByGrapheme: true,
+    editable: !node.locked,
+    backgroundColor: '#00000000',
+    stateImageElement,
+    windowSkinElement,
+  })
+  applyTextStyle(object, node, fontFamily)
+  return object
+}
+
+const loadNodeFontFamily = async (node: UiTextNode | UiButtonNode, catalog: UiProjectResourceCatalog | null | undefined) => {
+  if (!node.props.fontFile) return undefined
+  const url = previewUrlFor(catalog, node.props.fontFile)
+  if (!url) return undefined
+  try { return await loadUiFabricFont(node.props.fontFile, url) } catch { return undefined }
 }
 
 const createContainer = async (node: Extract<UiNode, { type: 'container' }>, catalog: UiProjectResourceCatalog | null | undefined) => {
@@ -246,20 +348,7 @@ const createContainer = async (node: Extract<UiNode, { type: 'container' }>, cat
   if (url) {
     try { return await imageInBounds(node, url, node.props.backgroundFillMode) } catch { /* show the editable container shell */ }
   }
-  return new Group([
-    boundary(node.props.width, node.props.height, { fill: '#ffffff08', stroke: '#8991a6', dash: [7, 5], radius: 3 }),
-    new Textbox(node.children.length ? `${node.name}\n${node.children.length} 个子节点` : node.name, {
-      left: -node.props.width / 2 + 8,
-      top: -node.props.height / 2 + 8,
-      originX: 'left',
-      originY: 'top',
-      width: Math.max(24, node.props.width - 16),
-      fontSize: 12,
-      fill: '#9ea6b8',
-      selectable: false,
-      evented: false,
-    }),
-  ], { objectCaching: false })
+  return boundary(node.props.width, node.props.height, { fill: '#ffffff08', stroke: '#8991a6', dash: [7, 5], radius: 3 })
 }
 
 const createProgress = (node: Extract<UiNode, { type: 'progressBar' }>) => {
@@ -277,42 +366,10 @@ const createProgress = (node: Extract<UiNode, { type: 'progressBar' }>) => {
   ], { objectCaching: false })
 }
 
-type ParticleVisual = FabricObject & { __uiParticleBaseScale?: number }
-
 const createParticle = async (node: UiParticleNode, catalog: UiProjectResourceCatalog | null | undefined) => {
-  const count = Math.max(4, Math.min(48, node.props.maxParticles))
-  const phases = Array.from({ length: count }, (_, index) => (index * 0.61803398875) % 1)
   const particleUrl = previewUrlFor(catalog, node.props.imagePath)
-  let particleImage: FabricImage | undefined
-  if (particleUrl) {
-    try { particleImage = await FabricImage.fromURL(particleUrl) } catch { particleImage = undefined }
-  }
-  const shapes = phases.map((phase, index): ParticleVisual => {
-    const size = 3 + (index % 4)
-    const options = {
-      left: 0,
-      top: 0,
-      originX: 'center' as const,
-      originY: 'center' as const,
-      fill: node.props.startColor,
-      selectable: false,
-      evented: false,
-      opacity: 1 - phase,
-      shadow: node.props.glow > 0 ? new Shadow({ color: node.props.startColor, blur: node.props.glow }) : undefined,
-      globalCompositeOperation: (node.props.blendMode === 'add' ? 'lighter' : node.props.blendMode === 'screen' ? 'screen' : 'source-over') as GlobalCompositeOperation,
-    }
-    let visual: ParticleVisual
-    if (particleImage) {
-      const sourceWidth = Math.max(1, particleImage.width)
-      visual = new FabricImage(particleImage.getElement(), { ...options }) as ParticleVisual
-      visual.__uiParticleBaseScale = size * 2 / sourceWidth
-      visual.set({ scaleX: visual.__uiParticleBaseScale, scaleY: visual.__uiParticleBaseScale })
-    } else if (node.props.shape === 'square') visual = new Rect({ ...options, width: size * 2, height: size * 2 })
-    else if (node.props.shape === 'star') visual = new Triangle({ ...options, width: size * 2.4, height: size * 2.4 })
-    else visual = new Circle({ ...options, radius: size })
-    return visual
-  })
-  return { object: new Group([boundary(node.props.width, node.props.height, { fill: '#ffffff03', stroke: '#ffffff24', dash: [4, 4] }), ...shapes], { objectCaching: false }), phases }
+  const imageElement = particleUrl ? await loadFabricImageSource(particleUrl) : undefined
+  return new UiParticleObject({ particleProps: node.props, imageElement, objectCaching: false })
 }
 
 const createVideo = async (node: Extract<UiNode, { type: 'video' }>, catalog: UiProjectResourceCatalog | null | undefined) => {
@@ -346,9 +403,18 @@ export async function createFabricNodeObject(node: UiNode, catalog: UiProjectRes
   let extra: Partial<UiFabricObjectData> = {}
   if (node.type === 'container') object = await createContainer(node, catalog)
   else if (node.type === 'sprite') object = await createImageNode(node, node.props.path, node.props.fillMode, catalog, '图片\n双击选择资源')
-  else if (node.type === 'nineSlice') object = await createImageNode(node, node.props.path, 'stretch', catalog, '九宫格\n双击选择资源')
+  else if (node.type === 'nineSlice') object = await createNineSliceNode(node, catalog)
   else if (node.type === 'frameAnimation') object = await createImageNode(node, node.props.frames[node.props.initialFrame]?.path ?? node.props.frames[0]?.path ?? '', node.props.fillMode, catalog, '帧动画\n添加帧后即可播放')
-  else if (node.type === 'text' || node.type === 'button') object = createTextNode(node)
+  else if (node.type === 'text') {
+    const fontFamily = await loadNodeFontFamily(node, catalog)
+    object = createTextNode(node, fontFamily)
+    extra = { fontFamily }
+  }
+  else if (node.type === 'button') {
+    const fontFamily = await loadNodeFontFamily(node, catalog)
+    object = await createButtonNode(node, catalog, fontFamily)
+    extra = { fontFamily }
+  }
   else if (node.type === 'progressBar') object = createProgress(node)
   else if (node.type === 'overlay') object = boundary(node.props.width, node.props.height, { fill: node.props.fillColor })
   else if (node.type === 'video') {
@@ -356,9 +422,8 @@ export async function createFabricNodeObject(node: UiNode, catalog: UiProjectRes
     object = result.object
     extra = { animated: Boolean(result.video), videoElement: result.video }
   } else {
-    const particle = await createParticle(node, catalog)
-    object = particle.object
-    extra = { animated: true, particlePhases: particle.phases }
+    object = await createParticle(node, catalog)
+    extra = { animated: true }
   }
   const decorated = decorate(object, node, signature, document, extra)
   applyFabricNodeGeometry(decorated, node, document)
@@ -402,7 +467,17 @@ const applyHierarchyClipPath = (object: UiFabricNodeObject, node: UiNode, docume
 }
 
 export function applyFabricNodeGeometry(object: UiFabricNodeObject, node: UiNode, document: UiDesignerDocument) {
-  if (object instanceof Textbox && (node.type === 'text' || node.type === 'button') && !object.isEditing) applyTextStyle(object, node)
+  if (object instanceof Textbox && (node.type === 'text' || node.type === 'button') && !object.isEditing) applyTextStyle(object, node, object.data.fontFamily)
+  if (object instanceof UiNineSliceImage && node.type === 'nineSlice') {
+    object.set({ width: Math.max(1, node.props.width), height: Math.max(1, node.props.height) })
+    object.setNineSliceLayout({
+      top: node.props.borderTop,
+      right: node.props.borderRight,
+      bottom: node.props.borderBottom,
+      left: node.props.borderLeft,
+    }, node.props.showGuides)
+  }
+  if (object instanceof UiParticleObject && node.type === 'particle') object.setParticleState(node.props)
   object.set({
     ...commonObjectOptions(node, document),
     left: node.props.x,
@@ -413,8 +488,6 @@ export function applyFabricNodeGeometry(object: UiFabricNodeObject, node: UiNode
     scaleX: node.props.scaleX,
     scaleY: node.props.scaleY,
   })
-  const rotationControl = object.controls.mtr
-  if (rotationControl) rotationControl.transformAnchorPoint = { x: node.props.anchorX, y: node.props.anchorY }
   applyHierarchyClipPath(object, node, document)
   object.setCoords()
 }
@@ -422,39 +495,14 @@ export function applyFabricNodeGeometry(object: UiFabricNodeObject, node: UiNode
 export function positionFabricObjectFromRect(object: UiFabricNodeObject, node: UiNode, rect: { x: number; y: number; width: number; height: number }) {
   const baseWidth = Math.max(1, object.width)
   const baseHeight = Math.max(1, object.height)
-  const scaleXSign = object.scaleX < 0 ? -1 : 1
-  const scaleYSign = object.scaleY < 0 ? -1 : 1
-  object.set({ scaleX: scaleXSign * rect.width / baseWidth, scaleY: scaleYSign * rect.height / baseHeight })
+  object.set({ scaleX: rect.width / baseWidth, scaleY: rect.height / baseHeight, flipX: false, flipY: false })
   object.setPositionByOrigin(new Point(rect.x + rect.width * node.props.anchorX, rect.y + rect.height * node.props.anchorY), node.props.anchorX, node.props.anchorY)
   object.setCoords()
 }
 
 export function animateFabricNode(object: UiFabricNodeObject, node: UiNode, elapsedMs: number) {
-  if (node.type !== 'particle' || !(object instanceof Group) || !object.data.particlePhases) return false
-  const children = object.getObjects().slice(1)
-  const halfWidth = node.props.width / 2
-  const halfHeight = node.props.height / 2
-  children.forEach((shape, index) => {
-    const basePhase = object.data.particlePhases?.[index] ?? 0
-    const lifetimeRandom = Math.sin((index + 1) * 17.213) * node.props.lifetimeRandom
-    const particleLifetimeMs = Math.max(250, (node.props.lifetime + lifetimeRandom) * 16.6667)
-    const emissionOffset = index * Math.max(1, node.props.emissionInterval) * 16.6667 / particleLifetimeMs
-    const phase = ((elapsedMs / particleLifetimeMs) + basePhase + emissionOffset) % 1
-    const spreadX = node.props.emissionArea === 'point' ? 0 : (basePhase * 2 - 1) * halfWidth
-    const spreadY = node.props.emissionArea === 'rectangle' ? (((basePhase * 1.7) % 1) * 2 - 1) * halfHeight : node.props.emissionArea === 'circle' ? Math.sin(basePhase * Math.PI * 2) * halfHeight : 0
-    const seconds = phase * particleLifetimeMs / 1000
-    const scale = node.props.startScale + (node.props.endScale - node.props.startScale) * phase
-    const baseScale = (shape as ParticleVisual).__uiParticleBaseScale ?? 1
-    shape.set({
-      left: spreadX + (node.props.velocityX + Math.sin(index * 12.9898) * node.props.velocityRandomX) * seconds * 32 + node.props.gravityX * seconds * seconds * 16,
-      top: spreadY + (node.props.velocityY + Math.cos(index * 7.233) * node.props.velocityRandomY) * seconds * 32 + node.props.gravityY * seconds * seconds * 16,
-      angle: node.props.rotationSpeed * seconds,
-      opacity: Math.max(0, Math.min(1, (node.props.startOpacity + (node.props.endOpacity - node.props.startOpacity) * phase) / 255)),
-      scaleX: baseScale * scale,
-      scaleY: baseScale * scale,
-      fill: phase < 0.5 ? node.props.startColor : node.props.endColor,
-    })
-  })
+  if (node.type !== 'particle' || !(object instanceof UiParticleObject)) return false
+  object.setParticleState(node.props, elapsedMs)
   return true
 }
 

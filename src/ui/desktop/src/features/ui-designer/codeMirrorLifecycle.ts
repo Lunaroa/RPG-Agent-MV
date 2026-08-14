@@ -8,6 +8,12 @@ export interface UiDesignerCodeMirrorFormattingHandle {
   operation?: (operation: () => void) => void
 }
 
+export interface UiDesignerCodeMirrorViewportHandle {
+  refresh: () => void
+  getScrollInfo: () => { top: number }
+  scrollTo: (left: number | null, top: number | null) => void
+}
+
 /** Read the preference at blur time so toggling auto-format never requires remounting CodeMirror. */
 export function createUiDesignerCodeMirrorBlurHandler(
   isFormatEnabled: () => boolean,
@@ -35,4 +41,11 @@ export function formatUiDesignerCodeMirrorDocument(editor: UiDesignerCodeMirrorF
   }
   if (editor.operation) editor.operation(format)
   else format()
+}
+
+/** Recompute a formerly hidden editor without inheriting an unusable horizontal offset. */
+export function refreshUiDesignerCodeMirrorViewport(editor: UiDesignerCodeMirrorViewportHandle): void {
+  const top = editor.getScrollInfo().top
+  editor.refresh()
+  editor.scrollTo(0, top)
 }

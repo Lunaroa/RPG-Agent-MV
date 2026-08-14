@@ -211,7 +211,7 @@ function registerRendererResultListener(): void {
 
 /** Fixed, read-only diagnostics executed inside the isolated preview frame; no caller-supplied code. */
 const PREVIEW_FRAME_DIAGNOSTIC_SCRIPT = `(async function () {
-  var out = { url: String(location.href), visibility: document.visibilityState, hasFocus: document.hasFocus() };
+  var out = { url: String(location.href), visibility: document.visibilityState, hasFocus: document.hasFocus(), documentReadyState: document.readyState };
   out.raf = await new Promise(function (resolve) {
     var frames = 0;
     var started = performance.now();
@@ -300,6 +300,46 @@ const PREVIEW_FRAME_DIAGNOSTIC_SCRIPT = `(async function () {
   try { out.brightness = window.$gameScreen ? $gameScreen.brightness() : null; } catch (error) { out.brightnessError = String(error); }
   try { out.transferring = Boolean(window.$gamePlayer && $gamePlayer.isTransferring && $gamePlayer.isTransferring()); } catch (error) { out.transferringError = String(error); }
   try { out.imagesReady = !window.ImageManager || !ImageManager.isReady || ImageManager.isReady(); } catch (error) { out.imagesReadyError = String(error); }
+  try {
+    out.gameFont = {
+      cssLoadingSupported: Boolean(window.Graphics && Graphics.canUseCssFontLoading && Graphics.canUseCssFontLoading()),
+      graphicsReady: Boolean(window.Graphics && Graphics.isFontLoaded && Graphics.isFontLoaded('GameFont')),
+      documentStatus: document.fonts ? document.fonts.status : null,
+      documentReady: Boolean(document.fonts && document.fonts.check('10px GameFont')),
+    };
+  } catch (error) { out.gameFontProbeError = String(error).slice(0, 300); }
+  try {
+    var databaseFiles = window.DataManager && Array.isArray(DataManager._databaseFiles) ? DataManager._databaseFiles : [];
+    var loadedDatabaseFiles = databaseFiles.filter(function (entry) {
+      return entry && typeof entry.name === 'string' && window[entry.name] != null;
+    }).length;
+    var dataManagerErrorUrl = window.DataManager && typeof DataManager._errorUrl === 'string' ? DataManager._errorUrl : '';
+    out.database = {
+      available: Boolean(window.DataManager),
+      fileCount: databaseFiles.length,
+      loadedFileCount: loadedDatabaseFiles,
+      missingFileCount: Math.max(0, databaseFiles.length - loadedDatabaseFiles),
+      errorFile: dataManagerErrorUrl ? String(dataManagerErrorUrl).split(/[\\/]/).pop().slice(0, 64) : null,
+    };
+    if (window.DataManager && typeof DataManager.isDatabaseLoaded === 'function') {
+      try { out.database.ready = Boolean(DataManager.isDatabaseLoaded()); }
+      catch (databaseError) { out.database.readyError = String(databaseError && (databaseError.message || databaseError) || '').slice(0, 300); }
+    }
+  } catch (error) { out.databaseProbeError = String(error).slice(0, 300); }
+  try {
+    var bootScene = window.SceneManager && SceneManager._scene;
+    out.sceneManager = window.SceneManager ? {
+      stopped: Boolean(SceneManager._stopped),
+      sceneStarted: Boolean(SceneManager._sceneStarted),
+      exiting: Boolean(SceneManager._exiting),
+      nextScene: SceneManager._nextScene && SceneManager._nextScene.constructor ? String(SceneManager._nextScene.constructor.name).slice(0, 64) : null,
+      previousScene: SceneManager._previousClass ? String(SceneManager._previousClass.name || '').slice(0, 64) : null,
+    } : null;
+    if (bootScene && typeof bootScene.isReady === 'function') {
+      try { out.sceneReady = Boolean(bootScene.isReady()); }
+      catch (sceneReadyError) { out.sceneReadyError = String(sceneReadyError && (sceneReadyError.message || sceneReadyError) || '').slice(0, 300); }
+    }
+  } catch (error) { out.sceneManagerProbeError = String(error).slice(0, 300); }
   try {
     var canvas = document.querySelector('canvas');
     out.canvas = canvas ? { width: canvas.width, height: canvas.height } : null;

@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { UiButtonImageStates, UiResourceEntry } from '@contract/ui-designer'
 import { useUiDesignerI18n } from '../i18n'
+import UiResourceReferenceControl from './UiResourceReferenceControl.vue'
 
 const props = defineProps<{
   value: UiButtonImageStates
@@ -42,14 +43,22 @@ const choose = async (key: keyof UiButtonImageStates) => {
         <span v-else>{{ value[state as keyof UiButtonImageStates] ? t('missing') : t('defaultStyle') }}</span>
       </span>
       <span class="state-resource-control">
-        <el-input :model-value="value[state as keyof UiButtonImageStates]" readonly size="small" :placeholder="resourcePickerDisabled ? t('noProject') : t('chooseImageResource')" />
-        <el-button :data-ui-id="`ui-designer-button-state-${state}-select`" :data-testid="`ui-designer-button-state-${state}-select`" size="small" :disabled="!pickResource || resourcePickerDisabled" @click="void choose(state as keyof UiButtonImageStates)">{{ t('chooseImageResource') }}</el-button>
-        <el-button :data-ui-id="`ui-designer-button-state-${state}-clear`" :data-testid="`ui-designer-button-state-${state}-clear`" size="small" text :disabled="!value[state as keyof UiButtonImageStates]" @click="update(state as keyof UiButtonImageStates, '')">{{ t('clearResource') }}</el-button>
+        <UiResourceReferenceControl
+          :model-value="value[state as keyof UiButtonImageStates]"
+          :placeholder="resourcePickerDisabled ? t('noProject') : t('chooseImageResource')"
+          :select-label="t('chooseImageResource')"
+          :clear-label="t('clearResource')"
+          :select-disabled="!pickResource || resourcePickerDisabled"
+          :select-ui-id="`ui-designer-button-state-${state}-select`"
+          :clear-ui-id="`ui-designer-button-state-${state}-clear`"
+          @select="void choose(state as keyof UiButtonImageStates)"
+          @clear="update(state as keyof UiButtonImageStates, '')"
+        />
       </span>
     </label>
   </div>
 </template>
 
 <style scoped>
-.states-editor { display: flex; flex-direction: column; gap: 5px; }.field-label { color: var(--app-ink-soft); font-size: 11px; }.states-editor label { display: grid; grid-template-columns: 58px 42px minmax(0, 1fr); align-items: center; gap: 5px; color: var(--app-ink-soft); font-size: 10px; }.state-thumbnail { display: grid; place-items: center; width: 38px; height: 32px; overflow: hidden; border: 1px solid var(--app-border); border-radius: 3px; background: var(--app-bg-sunken); color: var(--app-ink-soft); }.state-thumbnail.empty { border-style: dashed; }.state-thumbnail img { width: 100%; height: 100%; object-fit: contain; }.state-resource-control { display: flex; align-items: center; min-width: 0; gap: 4px; }.state-resource-control .el-input { min-width: 0; flex: 1; }
+.states-editor { display: flex; flex-direction: column; gap: 5px; }.field-label { color: var(--app-ink-soft); font-size: 11px; }.states-editor label { display: grid; grid-template-columns: 58px 42px minmax(0, 1fr); align-items: center; gap: 5px; color: var(--app-ink-soft); font-size: 10px; }.state-thumbnail { display: grid; place-items: center; width: 38px; height: 32px; overflow: hidden; border: 1px solid var(--app-border); border-radius: 3px; background: var(--app-bg-sunken); color: var(--app-ink-soft); }.state-thumbnail.empty { border-style: dashed; }.state-thumbnail img { width: 100%; height: 100%; object-fit: contain; }.state-resource-control { min-width: 0; }.state-resource-control > * { width: 100%; min-width: 0; }
 </style>

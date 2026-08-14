@@ -27,6 +27,7 @@ function compiledFrameListComponent(): CompiledFrameList {
   const localRequire = (id: string): unknown => {
     if (id === 'vue') return vueRuntime
     if (id === '../i18n') return { useUiDesignerI18n: () => ({ t: (key: string) => key }) }
+    if (id === './UiResourceReferenceControl.vue') return 'UiResourceReferenceControl'
     throw new Error(`Unexpected compiled import: ${id}`)
   }
   new Function('require', 'module', 'exports', code)(localRequire, module, module.exports)

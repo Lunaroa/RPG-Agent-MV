@@ -881,6 +881,22 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     return tracked
   }
 
+  const armHandshakeWatchdog = (activeSessionId: string): boolean => {
+    cancelHandshake()
+    cancelHandshake = () => undefined
+    try {
+      cancelHandshake = scheduleUiDesignerRendererHandshakeTimeout(() => {
+        if (session?.sessionId === activeSessionId && pendingMountRevision === null && !executionModeReady.value) {
+          void fail(resolveUiDesignerRendererFailure(UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.handshakeTimeout, stage.value))
+        }
+      })
+      return true
+    } catch {
+      void fail(resolveUiDesignerRendererFailure(UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.handshakeWatchdog, 'iframe-load'))
+      return false
+    }
+  }
+
   const start = async () => {
     const epoch = ++startEpoch
     if (pendingStartCleanup || queuedDisposePromise || disposeCoordinatesPendingStarts) return
@@ -973,15 +989,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
         pendingUnboundResource = null
         void syncResourceManifest(queued)
       } else if (pendingUnboundResource) pendingUnboundResource = null
-      try {
-        cancelHandshake = scheduleUiDesignerRendererHandshakeTimeout(() => {
-          if (session?.sessionId === started.sessionId) {
-            void fail(resolveUiDesignerRendererFailure(UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.handshakeTimeout, stage.value))
-          }
-        })
-      } catch {
-        await fail(resolveUiDesignerRendererFailure(UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.handshakeWatchdog, 'iframe-load'))
-      }
+      armHandshakeWatchdog(started.sessionId)
     })()
     pendingStarts.add(pendingStart)
     try { await pendingStart }
@@ -1085,6 +1093,11 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
         if (message.kind === 'disposed' && pendingDispose) pendingDispose.acknowledge()
         return
       }
+      const advancesHandshake = messageKind === 'receipt'
+        || messageKind === 'hello'
+        || messageKind === 'ready'
+        || (messageKind === 'scene-state' && !sceneStateHasDocumentIdentity)
+      if (advancesHandshake && pendingMountRevision === null && !executionModeReady.value && !armHandshakeWatchdog(active.sessionId)) return
       if (messageKind === 'receipt') {
         const payload = (message as unknown as { payload: UiDesignerRendererReceiptPayload }).payload
         applyReceiptStage(payload)
@@ -1174,7 +1187,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
               status.value = 'running'
               cancelDraftSync()
               if (postPendingResourceRefresh()) return
-              const previewNeedsLatestMount = sceneSyncQueued && options.executionMode() === 'full-preview'
+              const previewNeedsLatestMount = sceneSyncQueued && options.executionMode() !== 'authoring'
               if (sceneSyncQueued || previousScene?.meta.sceneName !== activeSceneId()) syncScene(previewNeedsLatestMount)
               if (!previewNeedsLatestMount) options.onExecutionModeReady?.(message.payload.executionMode)
               syncSelection()
@@ -1185,7 +1198,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
           }
         }
       } else if (message.kind === 'exit-request') {
-        if (executionModeReady.value && executionMode.value === 'full-preview') options.onPreviewExitRequest?.(message.payload.key)
+        if (executionModeReady.value && executionMode.value !== 'authoring') options.onPreviewExitRequest?.(message.payload.key)
       } else if (message.kind === 'disposed') {
         if (pendingDispose) pendingDispose.acknowledge()
       }
@@ -1265,7 +1278,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     // authoring mode.  Entering editor preview again must reuse the same
     // owner lifecycle by starting a fresh session instead of leaving the
     // controller in `preparing` with no session to acknowledge it.
-    if (options.executionMode() === 'full-preview' && status.value === 'error' && !session && !disposingSession) {
+    if (options.executionMode() !== 'authoring' && status.value === 'error' && !session && !disposingSession) {
       void retry()
       return
     }

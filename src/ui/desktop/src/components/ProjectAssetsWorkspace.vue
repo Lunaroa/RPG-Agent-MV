@@ -171,7 +171,6 @@ const emit = defineEmits<{
   select: [path: string, details?: { width: number; height: number }]
   selectMany: [paths: string[]]
   cancel: []
-  clear: []
   mutated: [manifest: ProjectAssetChangeManifest]
 }>()
 const isSelectionMode = computed(() => props.mode === 'select')
@@ -244,6 +243,8 @@ const annotationIndex = ref<Map<string, ProjectAssetAnnotation>>(new Map())
 
 /** Frontend-only virtual tree node aggregating favorited files and folders. */
 const FAVORITES_NODE_ID = '__favorites__'
+/** Frontend-only project resource root shared by the tree, grid, and breadcrumbs. */
+const PROJECT_RESOURCES_ROOT_NODE_ID = '__project_resources__'
 
 const isFavoritesSelection = computed(() => selectedCategoryId.value === FAVORITES_NODE_ID)
 
@@ -636,22 +637,38 @@ const treeData = computed<TreeNodeView[]>(() => {
   if (nodes.length === 0) return nodes
   return [
     {
-      id: FAVORITES_NODE_ID,
-      label: t('projectAssets.favoritesNode'),
-      entryCount: favorites.value.size,
-      children: undefined,
+      id: PROJECT_RESOURCES_ROOT_NODE_ID,
+      label: t('projectAssets.projectRoot'),
+      entryCount: nodes.reduce((total, node) => total + node.entryCount, 0),
+      children: [
+        {
+          id: FAVORITES_NODE_ID,
+          label: t('projectAssets.favoritesNode'),
+          entryCount: favorites.value.size,
+          children: undefined,
+        },
+        ...nodes,
+      ],
     },
-    ...nodes,
   ]
 })
 
 const selectedNode = computed(() => findTreeNode(treeNodes.value, selectedCategoryId.value))
 
 const isGroupSelection = computed(() =>
-  Boolean(selectedCategoryId.value && isProjectAssetGroupCategory(selectedCategoryId.value)),
+  selectedCategoryId.value === PROJECT_RESOURCES_ROOT_NODE_ID
+    || Boolean(selectedCategoryId.value && isProjectAssetGroupCategory(selectedCategoryId.value)),
 )
 
 const folderItems = computed<FolderGridItem[]>(() => {
+  if (selectedCategoryId.value === PROJECT_RESOURCES_ROOT_NODE_ID) {
+    return treeData.value[0]?.children?.map((child) => ({
+      kind: 'folder' as const,
+      id: child.id,
+      label: child.label,
+      entryCount: child.entryCount,
+    })) ?? []
+  }
   if (isFavoritesSelection.value) {
     const items: FolderGridItem[] = []
     for (const id of favorites.value) {
@@ -761,7 +778,7 @@ function entryDurationLabel(entry: ProjectAssetBrowseEntry): string {
   return formatPluginAudioClock(cached)
 }
 
-// ── Docked audio player (selection → right-click Play; Stop hides the bar) ──
+// ── Docked audio player (direct selection auditions one entry; Stop hides the bar) ──
 
 const audioPlaylist = ref<AssetsAudioBarItem[] | null>(null)
 
@@ -782,6 +799,15 @@ function playAudioEntries(entries: ProjectAssetBrowseEntry[]): void {
     name: displayAssetName(entry.name),
     url: entry.url as string,
   }))
+}
+
+function auditionAudioSelection(
+  entry: ProjectAssetBrowseEntry,
+  nextSelection: ProjectAssetSelectionState,
+): void {
+  if (!nextSelection.selectedIds.includes(entry.id)) return
+  if (!isAudioEntry(entry) || !entry.url) return
+  playAudioEntries([entry])
 }
 
 function closeAudioPlayer(): void {
@@ -821,14 +847,24 @@ const displayDirectory = computed(() => {
 })
 
 const pathCrumbs = computed(() =>
-  buildProjectAssetPathCrumbs(displayDirectory.value, treeNodes.value),
+  isFavoritesSelection.value
+    ? [
+        { label: t('projectAssets.projectRoot'), directory: '', nodeId: PROJECT_RESOURCES_ROOT_NODE_ID },
+        { label: t('projectAssets.favoritesNode'), directory: FAVORITES_NODE_ID, nodeId: FAVORITES_NODE_ID },
+      ]
+    : buildProjectAssetPathCrumbs(displayDirectory.value, treeNodes.value, {
+        label: t('projectAssets.projectRoot'),
+        nodeId: PROJECT_RESOURCES_ROOT_NODE_ID,
+      }),
 )
 
 /** Absolute on-disk directory for the current node — what "copy path" writes and hover shows. */
 const displayAbsoluteDirectory = computed(() => {
   const project = projectStore.currentProject
   const relative = displayDirectory.value
-  if (!project || !relative) return ''
+  if (!project) return ''
+  if (selectedCategoryId.value === PROJECT_RESOURCES_ROOT_NODE_ID) return project
+  if (!relative) return ''
   const separator = project.includes('\\') ? '\\' : '/'
   const root = project.replace(/[\\/]+$/, '')
   return [root, ...relative.split('/').filter(Boolean)].join(separator)
@@ -838,6 +874,8 @@ const searchPlaceholder = computed(() => {
   // The favorites node is frontend-only; projectAssetCategoryLabel would throw for it.
   const label = isFavoritesSelection.value
     ? t('projectAssets.favoritesNode')
+    : selectedCategoryId.value === PROJECT_RESOURCES_ROOT_NODE_ID
+      ? t('projectAssets.projectRoot')
     : selectedCategoryId.value
       ? projectAssetCategoryLabel(selectedCategoryId.value, language.value)
       : ''
@@ -1357,9 +1395,10 @@ async function loadTree(preferredCategoryId?: string) {
     const requestedCategoryId = preferredCategoryId ?? categoryForCurrentResourcePath(tree.nodes)
     const nextId = requestedCategoryId
       && (requestedCategoryId === FAVORITES_NODE_ID
+        || requestedCategoryId === PROJECT_RESOURCES_ROOT_NODE_ID
         || (findTreeNode(tree.nodes, requestedCategoryId) && categoryAllowedInSelectionMode(requestedCategoryId)))
       ? requestedCategoryId
-      : compatibleNodes[0]?.id || ''
+      : compatibleNodes.length > 0 ? PROJECT_RESOURCES_ROOT_NODE_ID : ''
     selectedCategoryId.value = nextId
     syncTreeCurrentKey(nextId)
     if (nextId) await loadCategory(nextId)
@@ -1386,7 +1425,7 @@ async function loadCategory(categoryId: string, options: { preserveViewState?: b
     await loadFavoritesListing(options)
     return
   }
-  if (isProjectAssetGroupCategory(categoryId)) {
+  if (categoryId === PROJECT_RESOURCES_ROOT_NODE_ID || isProjectAssetGroupCategory(categoryId)) {
     listingCoordinator.invalidate({
       project: projectStore.currentProject,
       categoryId,
@@ -1591,14 +1630,20 @@ function onCellClick(event: MouseEvent, item: GridItem) {
 
   const entryId = item.entry.id
   if (event.shiftKey) {
-    applyFileSelection(selectProjectAssetRange(orderedFileIds.value, selection.value, entryId))
+    const next = selectProjectAssetRange(orderedFileIds.value, selection.value, entryId)
+    applyFileSelection(next)
+    auditionAudioSelection(item.entry, next)
     return
   }
   if (event.ctrlKey || event.metaKey) {
-    applyFileSelection(toggleProjectAssetSelection(selection.value, entryId))
+    const next = toggleProjectAssetSelection(selection.value, entryId)
+    applyFileSelection(next)
+    auditionAudioSelection(item.entry, next)
     return
   }
-  applyFileSelection(selectProjectAssetExclusive(entryId))
+  const next = selectProjectAssetExclusive(entryId)
+  applyFileSelection(next)
+  auditionAudioSelection(item.entry, next)
 }
 
 async function onCellDoubleClick(item: GridItem) {
@@ -1741,7 +1786,9 @@ function selectGridItemAt(index: number): void {
     clearFileSelection()
     selectedFolderId.value = item.id
   } else {
-    applyFileSelection(selectProjectAssetExclusive(item.entry.id))
+    const next = selectProjectAssetExclusive(item.entry.id)
+    applyFileSelection(next)
+    auditionAudioSelection(item.entry, next)
   }
   scrollGridIndexIntoView(index)
   // Roving focus: virtualization unmounts the previously focused cell, which would drop
@@ -1849,7 +1896,7 @@ function openTreeContextMenu(event: MouseEvent, nodeId: string) {
   event.preventDefault()
   event.stopPropagation()
   // The favorites node is virtual — no on-disk directory to reveal, rename or delete.
-  if (nodeId === FAVORITES_NODE_ID) return
+  if (nodeId === FAVORITES_NODE_ID || nodeId === PROJECT_RESOURCES_ROOT_NODE_ID) return
   contextFolderId.value = nodeId
   contextMenuKind.value = 'tree'
   positionContextMenu(event.clientX, event.clientY)
@@ -2885,6 +2932,7 @@ const treeDropTargetId = ref<string | null>(null)
 function treeNodeAcceptsDrop(categoryId: string): boolean {
   return Boolean(projectStore.currentProject)
     && categoryId !== FAVORITES_NODE_ID
+    && categoryId !== PROJECT_RESOURCES_ROOT_NODE_ID
     && !isProjectAssetGroupCategory(categoryId)
     && !mutationBusy.value
 }
@@ -3584,7 +3632,7 @@ watch(gridHost, (el, previous) => {
             type="button"
             class="project-assets-path-copy"
             data-ui-id="project-assets-path-copy"
-            :disabled="!displayDirectory"
+            :disabled="!displayAbsoluteDirectory"
             :title="t('projectAssets.pathCopy')"
             @click="copyCategoryPath"
           >
@@ -4028,7 +4076,6 @@ watch(gridHost, (el, previous) => {
       </div>
       <footer v-if="isSelectionMode" class="project-assets-selection-actions" data-ui-id="project-assets-selection-actions">
         <span class="project-assets-selection-path">{{ selectedResourcePath || currentPath }}</span>
-        <el-button data-ui-id="project-assets-selection-clear" @click="emit('clear')">{{ t('projectAssets.selectionClear') }}</el-button>
         <el-button data-ui-id="project-assets-selection-cancel" @click="emit('cancel')">{{ t('common.cancel') }}</el-button>
         <el-button data-ui-id="project-assets-selection-confirm" type="primary" :disabled="props.multiple ? selectedResourcePaths.length === 0 : !selectedResourcePath" @click="void confirmResourceSelection()">{{ t('projectAssets.selectionUse') }}</el-button>
       </footer>

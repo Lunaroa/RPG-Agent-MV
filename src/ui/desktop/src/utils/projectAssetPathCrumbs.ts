@@ -35,11 +35,14 @@ function findNodeByDirectory(
 export function buildProjectAssetPathCrumbs(
   directory: string,
   nodes: readonly ProjectAssetPathTreeNode[],
+  root?: { label: string; nodeId: string },
 ): ProjectAssetPathCrumb[] {
   const normalized = String(directory || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
-  if (!normalized) return []
+  const crumbs: ProjectAssetPathCrumb[] = root
+    ? [{ label: root.label, directory: '', nodeId: root.nodeId }]
+    : []
+  if (!normalized) return crumbs
   const segments = normalized.split('/').filter(Boolean)
-  const crumbs: ProjectAssetPathCrumb[] = []
   let cumulative = ''
   for (const segment of segments) {
     cumulative = cumulative ? `${cumulative}/${segment}` : segment

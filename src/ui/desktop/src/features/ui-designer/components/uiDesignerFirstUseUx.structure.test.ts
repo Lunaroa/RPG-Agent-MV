@@ -16,11 +16,15 @@ test('first-use entry points and palette feedback stay unambiguous', () => {
   const toolbar = compile('./UiDesignerToolbar.vue')
   const shell = compile('./UiDesignerShell.vue')
   const nodePanel = compile('./UiDesignerNodePanel.vue')
+  const messages = read('../i18n.ts')
   assert.doesNotMatch(toolbar, /ui-designer-new|emit\('newScene'\)/)
   assert.match(shell, /UiDesignerSceneTabs[\s\S]*@new-scene="openNewScene"/)
   assert.match(shell, /UiDesignerWelcome[\s\S]*@new-scene="openNewScene"/)
+  assert.match(shell, /const showWelcome = ref\(false\)/)
+  assert.doesNotMatch(shell, /const showWelcome = ref\(true\)/)
   assert.match(nodePanel, /palette-feedback/)
   assert.match(nodePanel, /designer\.addNode\(type, parentId\)/)
+  assert.doesNotMatch(messages, /start from the welcome screen|从欢迎屏开始/)
 })
 
 test('button inspector prioritizes content, state resources, actions and sound', () => {

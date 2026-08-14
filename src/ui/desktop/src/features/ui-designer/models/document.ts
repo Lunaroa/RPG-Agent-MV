@@ -220,7 +220,7 @@ export function createDefaultNode(type: UiDesignerNodeType, options: CreateNodeO
         shadowBlur: 0,
         align: 'center',
         verticalAlign: 'middle',
-        backgroundColor: '#3b82f6',
+        backgroundColor: '#00000000',
         padding: { top: 8, right: 16, bottom: 8, left: 16 },
         imageStates: { normal: '', hover: '', pressed: '', disabled: '' },
         borderColor: '#ffffff00',

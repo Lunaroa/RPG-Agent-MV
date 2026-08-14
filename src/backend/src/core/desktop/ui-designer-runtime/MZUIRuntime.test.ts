@@ -890,7 +890,7 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     runtime.cleanup();
   });
 
-  test('authoring renders without executing user code while full preview executes the complete action surface', () => {
+  test('authoring stays inert while editor and full preview execute the action surface', () => {
     const context = makeContext();
     vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
     const scene = allNodeScene();
@@ -917,6 +917,14 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.deepEqual({ ...variables }, { setup: 0, ready: 0, update: 0, property: 0, condition: 0, disabled: 0, actionCondition: 0, action: 0 });
     authoring.cleanup();
 
+    const editorPreview = context.MZUIRuntime.create();
+    editorPreview.mount(scene, { root: new context.PIXI.Container(), context: { variables }, executionMode: 'editor-preview' });
+    editorPreview.update();
+    assert.equal(editorPreview.handleRendererInput({ type: 'pointerup', nodeId: button.id, x: 1, y: 1, button: 0, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false }), true);
+    assert.deepEqual({ ...variables }, { setup: 1, ready: 1, update: 1, property: 1, condition: 2, disabled: 2, actionCondition: 1, action: 1 });
+    editorPreview.cleanup();
+
+    Object.assign(variables, { setup: 0, ready: 0, update: 0, property: 0, condition: 0, disabled: 0, actionCondition: 0, action: 0 });
     const fullPreview = context.MZUIRuntime.create();
     fullPreview.mount(scene, { root: new context.PIXI.Container(), context: { variables }, executionMode: 'full-preview' });
     fullPreview.update();
@@ -1369,15 +1377,16 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     runtime.cleanup();
   });
 
-  test('world bounds follow nested parent rotation and scale instead of estimating from node props', () => {
+  test('nested nodes keep their canonical scene bounds inside transformed parents', () => {
     const context = makeContext();
     vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
     const runtime = context.MZUIRuntime.create();
     const scene = nestedBoundsScene();
     runtime.mount(scene, { root: new context.PIXI.Container(), executionMode: 'authoring' });
 
-    const [child] = runtime.getNodeBounds(['child']);
-    assertWorldBounds(child, { x: -20, y: 90, width: 60, height: 80 });
+    const [parent, child] = runtime.getNodeBounds(['parent', 'child']);
+    assertWorldBounds(parent, { x: -140, y: 50, width: 240, height: 200 });
+    assertWorldBounds(child, { x: 120, y: 70, width: 40, height: 20 });
     assert.equal(child.rotation, 0);
     runtime.cleanup();
   });
@@ -1402,7 +1411,7 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     runtime.mount(scene, { root: new context.PIXI.Container(), executionMode: 'authoring' });
 
     const [bounds] = runtime.getNodeBounds(['child']);
-    assertWorldBounds(bounds, { x: 0, y: 80, width: 80, height: 60 });
+    assertWorldBounds(bounds, { x: 110, y: 60, width: 40, height: 20 });
     assert.ok(bounds.width >= 0);
     assert.ok(bounds.height >= 0);
     runtime.cleanup();
@@ -1417,8 +1426,8 @@ describe('MZUIRuntime MV/MZ bridge', () => {
 
     const bounds = runtime.patchNodes([{ nodeId: 'parent', props: { x: 200, scaleX: -1, scaleY: 2, rotate: 0 } }]);
     assert.deepEqual(Array.from(bounds, (entry: any) => entry.nodeId), ['parent', 'child', 'grandchild']);
-    assertWorldBounds(bounds.find((entry: any) => entry.nodeId === 'child'), { x: 140, y: 90, width: 40, height: 40 });
-    assertWorldBounds(bounds.find((entry: any) => entry.nodeId === 'grandchild'), { x: 260, y: 0, width: 10, height: 10 });
+    assertWorldBounds(bounds.find((entry: any) => entry.nodeId === 'child'), { x: 120, y: 70, width: 40, height: 20 });
+    assertWorldBounds(bounds.find((entry: any) => entry.nodeId === 'grandchild'), { x: 130, y: 75, width: 10, height: 5 });
     runtime.cleanup();
   });
 });
@@ -1433,10 +1442,12 @@ function makeContext(): Record<string, any> {
     visible = true;
     alpha = 1;
     scale = { x: 1, y: 1 };
+    skew = { x: 0, y: 0 };
     rotation = 0;
     width = 0;
     height = 0;
     anchor: { x: number; y: number } | undefined;
+    pivot = { x: 0, y: 0 };
     worldTransform = { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 };
     addChild(child: any) { this.children.push(child); child.parent = this; return child; }
     addChildAt(child: any, index: number) { this.children.splice(index, 0, child); child.parent = this; return child; }
@@ -1444,15 +1455,17 @@ function makeContext(): Record<string, any> {
     on() {}
     off() {}
     updateTransform() {
-      const cosine = Math.cos(this.rotation);
-      const sine = Math.sin(this.rotation);
+      const cosineX = Math.cos(this.rotation + this.skew.y);
+      const sineX = Math.sin(this.rotation + this.skew.y);
+      const cosineY = Math.cos(this.rotation - this.skew.x);
+      const sineY = Math.sin(this.rotation - this.skew.x);
       const local = {
-        a: cosine * this.scale.x,
-        b: sine * this.scale.x,
-        c: -sine * this.scale.y,
-        d: cosine * this.scale.y,
-        tx: this.x,
-        ty: this.y,
+        a: cosineX * this.scale.x,
+        b: sineX * this.scale.x,
+        c: -sineY * this.scale.y,
+        d: cosineY * this.scale.y,
+        tx: this.x - (this.pivot.x * cosineX * this.scale.x - this.pivot.y * sineY * this.scale.y),
+        ty: this.y - (this.pivot.x * sineX * this.scale.x + this.pivot.y * cosineY * this.scale.y),
       };
       const parent = this.parent;
       if (parent && typeof parent.updateTransform === 'function') parent.updateTransform();

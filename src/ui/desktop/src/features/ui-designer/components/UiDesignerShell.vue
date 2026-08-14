@@ -30,7 +30,7 @@ const { t } = useUiDesignerI18n()
 let rawDesigner!: ReturnType<typeof useUiDesigner>
 const surface = ref<'settings' | 'help' | 'shortcuts' | 'tour' | 'export' | 'newScene' | null>(null)
 const tourStep = ref(0)
-const showWelcome = ref(true)
+const showWelcome = ref(false)
 const exportPath = ref('')
 const exportCompleted = ref(false)
 const newSceneDraft = reactive({ name: '', width: 816, height: 624, sceneBase: 'Scene_Base' })

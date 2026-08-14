@@ -4,6 +4,7 @@ import {
   createUiDesignerCodeMirrorBlurHandler,
   createUiDesignerCodeMirrorChangeHandler,
   formatUiDesignerCodeMirrorDocument,
+  refreshUiDesignerCodeMirrorViewport,
 } from './codeMirrorLifecycle'
 
 test('CodeMirror blur reads the current auto-format preference without remounting', () => {
@@ -50,4 +51,15 @@ test('CodeMirror formatting covers the complete document in one operation', () =
 
   assert.equal(operationCalls, 1)
   assert.deepEqual(formattedLines, [[0, 'smart'], [1, 'smart'], [2, 'smart'], [3, 'smart']])
+})
+
+test('CodeMirror layout refresh restores the line start without losing vertical reading position', () => {
+  const calls: string[] = []
+  refreshUiDesignerCodeMirrorViewport({
+    refresh: () => calls.push('refresh'),
+    getScrollInfo: () => ({ top: 128 }),
+    scrollTo: (left, top) => calls.push(`scroll:${left}:${top}`),
+  })
+
+  assert.deepEqual(calls, ['refresh', 'scroll:0:128'])
 })

@@ -43,17 +43,18 @@ import {
   applyNodeGeometryTransaction,
   clampNodePositionToParent,
   clampNodeRectToParent,
-  containContainerChildren,
   distributeNodes,
   fitViewport,
+  localResizeNodeRect,
   normalizeGeometryInteger,
   normalizeGeometryPoint,
   nodeRect,
   panViewport,
   resizeRect,
+  rotateSubtreeTransforms,
+  scaleSubtreeRects,
   smartSnapTargetsForNode,
   snapPoint,
-  snapRect,
   updateNodePosition,
   zoomViewport,
   type SnapOptions,
@@ -64,6 +65,7 @@ import { resolveNodeActionPolicy, type UiNodeActionCommand } from '../models/act
 import { UiDesignerHistory } from '../models/history'
 import { analyzePerformance } from '../models/performance'
 import { nextSiblingCascadePosition } from '../models/placement'
+import { normalizeNineSliceBorderValue } from '../models/nine-slice'
 import { collectNodeSubtreeIds, copySelection, groupNodes, moveNodeStep, moveNodeToEdge, pasteClipboard, reparentNode, selectionRootNodeIds, ungroupNodes } from '../models/tree'
 import { isValidUiDesignerSceneName, validateDocument } from '../models/validation'
 import { UI_DESIGNER_BUILT_IN_TEMPLATES, createBuiltInUiDesignerTemplate, isBuiltInUiDesignerTemplate } from '../models/templates'
@@ -878,6 +880,10 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     }
     const sourceNode = findNode(document.value, nodeId)
     if (!sourceNode || !(property in (sourceNode.props as unknown as Record<string, unknown>))) return
+    if (sourceNode.type === 'nineSlice' && ['borderTop', 'borderRight', 'borderBottom', 'borderLeft'].includes(property)) {
+      const props = sourceNode.props as unknown as Record<string, unknown>
+      value = normalizeNineSliceBorderValue(value, Number(props[property]))
+    }
     try {
       value = normalizeUiDesignerResourceProperty(property, value)
     } catch (error) {
@@ -904,6 +910,10 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     } catch (error) {
       actionError.value = error instanceof Error ? error.message : 'Resource properties require project-relative paths.'
       return false
+    }
+    if (sourceNode.type === 'nineSlice' && ['borderTop', 'borderRight', 'borderBottom', 'borderLeft'].includes(property)) {
+      const sourceProps = sourceNode.props as unknown as Record<string, unknown>
+      value = normalizeNineSliceBorderValue(value, Number(sourceProps[property]))
     }
     const next = cloneUiDocument(scene.document)
     const node = findNode(next, nodeId)!
@@ -1579,15 +1589,19 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     if (!canStartEditorPreview.value) return false
     flushDrafts(activeSceneId.value)
     previewModeBefore = editingMode.value
-    setEditingMode('design')
-    isEditorPreviewing.value = true
+    previewExitPending = false
+    previewCleanupPending.value = false
+    previewMessage.value = ''
+    previewExecutionMode.value = 'editor-preview'
+    previewStatus.value = 'preparing'
     return true
   }
 
   const stopEditorPreview = () => {
-    if (!isEditorPreviewing.value) return true
-    isEditorPreviewing.value = false
-    restorePreviewMode()
+    if (!isEditorPreviewing.value && previewExecutionMode.value !== 'editor-preview') return true
+    previewExitPending = true
+    previewExecutionMode.value = 'authoring'
+    previewStatus.value = 'preparing'
     return true
   }
 
@@ -1601,10 +1615,11 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
 
   const acknowledgePreviewExecutionMode = (mode: UiDesignerRendererExecutionMode) => {
     if (mode !== previewExecutionMode.value) return false
-    if (mode === 'full-preview') {
+    if (mode === 'full-preview' || mode === 'editor-preview') {
       if (previewStatus.value !== 'preparing') return false
       setEditingMode('design')
-      isPreviewing.value = true
+      isPreviewing.value = mode === 'full-preview'
+      isEditorPreviewing.value = mode === 'editor-preview'
       previewExitPending = false
       previewCleanupPending.value = false
       previewStatus.value = 'running'
@@ -1622,6 +1637,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     previewExitPending = false
     previewCleanupPending.value = false
     isPreviewing.value = false
+    isEditorPreviewing.value = false
     previewStatus.value = 'stopped'
     previewMessage.value = ''
     restorePreviewMode()
@@ -1722,29 +1738,68 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
 
   const previewNodeResizeWithSnap = (nodeId: string, originRect: UiRect, handle: UiResizeHandle, delta: UiPoint, modifiers: UiResizeModifiers) => {
     if (!resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return undefined
-    const requested = resizeRect(originRect, handle, delta, modifiers)
-    const snapped = snapRect(requested, originRect, handle, modifiers, snapOptionsFor(nodeId))
-    const contained = containContainerChildren(document.value, nodeId, snapped)
-    const result = clampNodeRectToParent(document.value, nodeId, contained, modifiers.preserveAspect)
-    draftRects.value = { ...draftRects.value, [nodeId]: result }
+    const node = findNode(document.value, nodeId)
+    if (!node) return undefined
+    const sized = resizeRect(originRect, handle, delta, modifiers)
+    const result = clampNodeRectToParent(document.value, nodeId, localResizeNodeRect(node, originRect, handle, sized.width, sized.height, modifiers.fromCenter), modifiers.preserveAspect)
+    const nextRects = { ...draftRects.value, [nodeId]: result }
+    const subtreeIds = collectNodeSubtreeIds(document.value, [nodeId]).filter((id) => id !== nodeId)
+    if (subtreeIds.length) Object.assign(nextRects, scaleSubtreeRects(document.value, subtreeIds, nodeId, originRect, result, handle, modifiers.fromCenter))
+    draftRects.value = nextRects
     return result
   }
   const commitDraftRect = (nodeId: string) => {
     const rect = draftRects.value[nodeId]
     if (!rect) return
-    draftRects.value = Object.fromEntries(Object.entries(draftRects.value).filter(([id]) => id !== nodeId))
+    const transformIds = collectNodeSubtreeIds(document.value, [nodeId])
+    const pendingRects = Object.fromEntries(Object.entries(draftRects.value).filter(([id]) => transformIds.includes(id)))
+    draftRects.value = Object.fromEntries(Object.entries(draftRects.value).filter(([id]) => !(id in pendingRects)))
     if (!findNode(document.value, nodeId) || !resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return false
-    replaceActiveDocument(applyNodeGeometryTransaction(document.value, nodeId, { kind: 'rect', rect }), 'Resize node')
-    return true
+    let next = cloneUiDocument(document.value)
+    let changed = false
+    for (const [id, pendingRect] of Object.entries(pendingRects)) {
+      if (!findNode(next, id)) continue
+      next = applyNodeGeometryTransaction(next, id, { kind: 'rect', rect: pendingRect })
+      changed = true
+    }
+    if (changed) replaceActiveDocument(next, 'Resize node')
+    return changed
   }
-  const previewNodeRotation = (nodeId: string, rotation: number) => { draftRotations.value = { ...draftRotations.value, [nodeId]: rotation } }
+  const previewNodeRotation = (nodeId: string, rotation: number) => {
+    const node = findNode(document.value, nodeId)
+    if (!node) return
+    const normalizedRotation = normalizeGeometryInteger(rotation, node.props.rotate)
+    const subtree = rotateSubtreeTransforms(document.value, collectNodeSubtreeIds(document.value, [nodeId]), nodeId, normalizedRotation - node.props.rotate)
+    draftRotations.value = { ...draftRotations.value, ...subtree.rotations }
+    if (Object.keys(subtree.positions).length) draftPositions.value = { ...draftPositions.value, ...subtree.positions }
+    return normalizedRotation
+  }
   const commitDraftRotation = (nodeId: string) => {
     const rotation = draftRotations.value[nodeId]
     if (rotation === undefined) return
-    draftRotations.value = Object.fromEntries(Object.entries(draftRotations.value).filter(([id]) => id !== nodeId))
+    const transformIds = collectNodeSubtreeIds(document.value, [nodeId])
+    const pendingRotations = Object.fromEntries(Object.entries(draftRotations.value).filter(([id]) => transformIds.includes(id)))
+    const pendingPositions = Object.fromEntries(Object.entries(draftPositions.value).filter(([id]) => transformIds.includes(id)))
+    draftRotations.value = Object.fromEntries(Object.entries(draftRotations.value).filter(([id]) => !(id in pendingRotations)))
+    draftPositions.value = Object.fromEntries(Object.entries(draftPositions.value).filter(([id]) => !(id in pendingPositions)))
     if (!findNode(document.value, nodeId) || !resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return false
-    updateNodeProperty(nodeId, 'rotate', rotation)
-    return true
+    const next = cloneUiDocument(document.value)
+    let changed = false
+    for (const [id, pendingRotation] of Object.entries(pendingRotations)) {
+      const node = findNode(next, id)
+      if (!node) continue
+      node.props.rotate = normalizeGeometryInteger(pendingRotation, node.props.rotate)
+      changed = true
+    }
+    for (const [id, pendingPosition] of Object.entries(pendingPositions)) {
+      const node = findNode(next, id)
+      if (!node) continue
+      node.props.x = normalizeGeometryInteger(pendingPosition.x, node.props.x)
+      node.props.y = normalizeGeometryInteger(pendingPosition.y, node.props.y)
+      changed = true
+    }
+    if (changed) replaceActiveDocument(next, 'Rotate node')
+    return changed
   }
 
   const setZoom = (scale: number, anchor?: { x: number; y: number }) => { viewport.value = zoomViewport(viewport.value, scale, anchor) }

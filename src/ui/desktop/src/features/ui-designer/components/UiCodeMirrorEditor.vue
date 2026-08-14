@@ -90,7 +90,8 @@ watch(() => props.modelValue, (value) => {
 onBeforeUnmount(() => { flushPendingChange(); unregisterDraft?.(); editor?.dispose(); editor = undefined })
 
 const format = () => editor?.format?.()
-defineExpose({ format })
+const refreshLayout = () => editor?.refreshLayout?.()
+defineExpose({ format, refreshLayout })
 </script>
 
 <template>

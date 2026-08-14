@@ -198,11 +198,19 @@ test('editor preview and in-game preview keep distinct embedded execution modes'
   designer.editingMode.value = 'code'
 
   assert.equal(designer.startEditorPreview(), true)
-  assert.equal(designer.isEditorPreviewing.value, true)
+  assert.equal(designer.isEditorPreviewing.value, false)
   assert.equal(designer.isPreviewing.value, false)
-  assert.equal(designer.previewExecutionMode.value, 'authoring')
+  assert.equal(designer.previewExecutionMode.value, 'editor-preview')
+  assert.equal(designer.previewStatus.value, 'preparing')
+  assert.equal(designer.editingMode.value, 'code')
+  assert.equal(designer.acknowledgePreviewExecutionMode('editor-preview'), true)
+  assert.equal(designer.isEditorPreviewing.value, true)
   assert.equal(designer.editingMode.value, 'design')
   assert.equal(designer.stopEditorPreview(), true)
+  assert.equal(designer.isEditorPreviewing.value, true)
+  assert.equal(designer.previewExecutionMode.value, 'authoring')
+  assert.equal(designer.previewStatus.value, 'preparing')
+  assert.equal(designer.acknowledgePreviewExecutionMode('authoring'), true)
   assert.equal(designer.isEditorPreviewing.value, false)
   assert.equal(designer.editingMode.value, 'code')
 
@@ -526,9 +534,9 @@ test('selecting an image in an unclipped container keeps its intrinsic size and 
   assert.ok(sprite.props.y + sprite.props.height / 2 > 90 + 160)
 })
 
-test('rotation commits only the angle and keeps the configured anchor position stable', () => {
+test('rotation pivots on the visual center and commits angle plus repositioned anchor', () => {
   const designer = useUiDesigner()
-  const nodeId = designer.addNode('sprite', 'node_root')!
+  const nodeId = designer.addNode('sprite', 'node_root', { x: 100, y: 100 })!
   const original = designer.document.value.nodes.find((node) => node.id === nodeId)!
   const before = designer.activeScene.value.history.availableUndoSteps
 
@@ -537,7 +545,7 @@ test('rotation commits only the angle and keeps the configured anchor position s
   assert.equal(designer.commitDraftRotation(nodeId), true)
 
   const rotated = designer.document.value.nodes.find((node) => node.id === nodeId)!
-  assert.deepEqual([rotated.props.x, rotated.props.y, rotated.props.rotate], [original.props.x, original.props.y, 37])
+  assert.deepEqual([rotated.props.x, rotated.props.y, rotated.props.rotate], [140, 60, 37])
   assert.equal(designer.activeScene.value.history.availableUndoSteps, before + 1)
   designer.undo()
   const restored = designer.document.value.nodes.find((node) => node.id === nodeId)!

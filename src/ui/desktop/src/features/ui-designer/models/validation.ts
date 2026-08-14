@@ -104,6 +104,12 @@ function validateNode(node: UiNode, document: UiDesignerDocument): UiValidationI
   if ((node.type === 'sprite' || node.type === 'nineSlice' || node.type === 'video') && 'path' in node.props && node.props.path === '') {
     issues.push({ severity: 'warning', code: 'missing-resource', message: `Node ${node.name} has no resource path`, nodeId: node.id, nodeName: node.name, path: 'props.path' })
   }
+  if (node.type === 'nineSlice') {
+    for (const property of ['borderTop', 'borderRight', 'borderBottom', 'borderLeft'] as const) {
+      const issue = numericIssue(node.props[property], property, node, `props.${property}`)
+      if (issue) issues.push(issue)
+    }
+  }
   if (node.type === 'frameAnimation' && node.props.frames.length === 0) {
     issues.push({ severity: 'warning', code: 'empty-frame-list', message: `Frame animation ${node.name} has no frames`, nodeId: node.id, nodeName: node.name, path: 'props.frames' })
   }

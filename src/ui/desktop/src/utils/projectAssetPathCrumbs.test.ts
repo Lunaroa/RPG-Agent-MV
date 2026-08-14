@@ -31,4 +31,21 @@ describe('buildProjectAssetPathCrumbs', () => {
   it('returns empty for blank directory', () => {
     assert.deepEqual(buildProjectAssetPathCrumbs('', tree), [])
   })
+
+  it('prepends a navigable project root for resource workspace navigation', () => {
+    assert.deepEqual(buildProjectAssetPathCrumbs('img/pictures', tree, {
+      label: 'Project resources',
+      nodeId: '__project_resources__',
+    }), [
+      { label: 'Project resources', directory: '', nodeId: '__project_resources__' },
+      { label: 'img', directory: 'img', nodeId: 'img' },
+      { label: 'pictures', directory: 'img/pictures', nodeId: 'pictures' },
+    ])
+    assert.deepEqual(buildProjectAssetPathCrumbs('', tree, {
+      label: 'Project resources',
+      nodeId: '__project_resources__',
+    }), [
+      { label: 'Project resources', directory: '', nodeId: '__project_resources__' },
+    ])
+  })
 })

@@ -62,4 +62,16 @@ describe('background UI control wiring', () => {
     assert.match(bridgeSource, /particlePooled/);
     assert.doesNotMatch(bridgeSource, /PREVIEW_FRAME_DIAGNOSTIC_SCRIPT[\s\S]*command\.(?:script|code|expression)/);
   });
+
+  test('reports bounded engine boot diagnostics without exposing database entry names', () => {
+    assert.match(bridgeSource, /documentReadyState: document\.readyState/);
+    assert.match(bridgeSource, /missingFileCount:/);
+    assert.match(bridgeSource, /DataManager\.isDatabaseLoaded\(\)/);
+    assert.match(bridgeSource, /errorFile:[\s\S]*split\(\/\[\\\\\/\]\//);
+    assert.match(bridgeSource, /Graphics\.isFontLoaded\('GameFont'\)/);
+    assert.match(bridgeSource, /document\.fonts\.check\('10px GameFont'\)/);
+    assert.match(bridgeSource, /stopped: Boolean\(SceneManager\._stopped\)/);
+    assert.match(bridgeSource, /sceneReady = Boolean\(bootScene\.isReady\(\)\)/);
+    assert.doesNotMatch(bridgeSource, /missingFiles|databaseFileNames/);
+  });
 });

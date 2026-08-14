@@ -337,6 +337,7 @@ test('generated host rejects unsafe resource and input envelopes before runtime 
       removeEventListener: (name: string) => listeners.delete(name),
       AudioManager: { stopAll: () => undefined },
       Video: {},
+      document: createRendererDocumentFixture(),
     }
     context.window = context
     vm.runInNewContext(storageSource, context, { filename: 'MZUIDesignerSessionStorage.js' })
@@ -453,6 +454,7 @@ test('generated host transition polling is single-shot and disposed-safe', async
       clearTimeout: (id: number) => { cleared.push(id); timers.delete(id) },
       AudioManager: { stopAll: () => undefined },
       Video: {},
+      document: createRendererDocumentFixture(),
     }
     context.window = context
     vm.runInNewContext(storageSource, context, { filename: 'MZUIDesignerSessionStorage.js' })
@@ -730,6 +732,7 @@ test('official MV 1.6.1 loader reaches ready before lazy Window_Message creation
     vm.runInNewContext(storageSource, officialMv.context, { filename: 'MZUIDesignerSessionStorage.js' })
     vm.runInNewContext(hostSource, officialMv.context, { filename: 'MZUIDesignerCanvasHost.js' })
     assert.equal(officialMv.messages.some((message) => message.kind === 'ready'), false)
+    assert.deepEqual(officialMv.gameFontLoadRequests(), ['10px "GameFont"'])
 
     officialMv.runLoader()
 
@@ -781,12 +784,70 @@ test('official MV 1.6.1 loader reaches ready before lazy Window_Message creation
     assert.deepEqual(officialMv.messageWindowTone(), [0, 0, 0])
     assert.deepEqual(officialMv.context.$gameMessage.added, ['session message'])
 
+    onMessage!({
+      source: officialMv.context.parent,
+      data: envelope(session, 1, 'mount', { revision: 2, executionMode: 'editor-preview', documentSceneId: 'scene_tab_1', scene: runtimeScene('') }),
+    })
+    assert.deepEqual(officialMv.runtimeMountModes(), ['authoring', 'editor-preview'])
+    assert.equal(officialMv.setupNewGameCalls(), 1)
+    assert.equal(officialMv.createGameObjectsCalls(), 1)
+
+    onMessage!({
+      source: officialMv.context.parent,
+      data: envelope(session, 2, 'mount', { revision: 3, executionMode: 'full-preview', documentSceneId: 'scene_tab_1', scene: runtimeScene('') }),
+    })
+    assert.deepEqual(officialMv.runtimeMountModes(), ['authoring', 'editor-preview', 'full-preview'])
+    assert.equal(officialMv.setupNewGameCalls(), 2)
+    assert.equal(officialMv.createGameObjectsCalls(), 1)
+    const fullPreviewMounted = officialMv.messages
+      .filter((message) => message.kind === 'mounted')
+      .at(-1)
+    assert.deepEqual(JSON.parse(JSON.stringify(fullPreviewMounted?.payload)), {
+      bounds: [],
+      engineSceneClass: 'Scene_MZUIDesignerCanvasHost',
+      mountedDocumentSceneId: 'scene_tab_1',
+      documentSceneName: 'Scene_CanvasHost',
+      revision: 3,
+      executionMode: 'full-preview',
+    })
+    const fullPreviewSceneState = officialMv.messages
+      .filter((message) => message.kind === 'scene-state')
+      .at(-1)
+    assert.deepEqual(JSON.parse(JSON.stringify(fullPreviewSceneState?.payload)), {
+      phase: 'active',
+      requestedScene: 'Scene_CanvasHost',
+      actualScene: 'Scene_MZUIDesignerCanvasHost',
+      engineSceneClass: 'Scene_MZUIDesignerCanvasHost',
+      mountedDocumentSceneId: 'scene_tab_1',
+      documentSceneName: 'Scene_CanvasHost',
+      revision: 3,
+      executionMode: 'full-preview',
+    })
+    actions.exit()
+    assert.equal(
+      (officialMv.messages.filter((message) => message.kind === 'exit-request').at(-1)?.payload as { key?: string } | undefined)?.key,
+      'action-exit',
+    )
+    let escapePrevented = false
+    let escapeStopped = false
+    officialMv.listeners.get('keydown')?.({
+      key: 'Escape',
+      preventDefault: () => { escapePrevented = true },
+      stopImmediatePropagation: () => { escapeStopped = true },
+    })
+    assert.equal(escapePrevented, true)
+    assert.equal(escapeStopped, true)
+    assert.equal(
+      (officialMv.messages.filter((message) => message.kind === 'exit-request').at(-1)?.payload as { key?: string } | undefined)?.key,
+      'Escape',
+    )
+
     let cachedBitmapDestroyed = 0
     officialMv.context.ImageManager = { _cache: { 'img/pictures/menu.png:0': { destroy: () => { cachedBitmapDestroyed += 1 } } } }
     const mountedBeforeRefresh = officialMv.messages.filter((message) => message.kind === 'mounted').length
     onMessage!({
       source: officialMv.context.parent,
-      data: envelope(session, 1, 'resource-refresh', { revision: 2, resourceRevision: 1, relativePaths: ['img/pictures/menu.png'] }),
+      data: envelope(session, 3, 'resource-refresh', { revision: 4, resourceRevision: 1, relativePaths: ['img/pictures/menu.png'] }),
     })
     assert.equal(cachedBitmapDestroyed, 1)
     assert.equal(Object.keys(officialMv.context.ImageManager._cache).length, 0)
@@ -808,7 +869,7 @@ test('official MV 1.6.1 loader reaches ready before lazy Window_Message creation
     }
     onMessage!({
       source: officialMv.context.parent,
-      data: envelope(session, 2, 'resource-refresh', { revision: 3, resourceRevision: 2, relativePaths: ['img/pictures/menu.png'] }),
+      data: envelope(session, 4, 'resource-refresh', { revision: 5, resourceRevision: 2, relativePaths: ['img/pictures/menu.png'] }),
     })
     assert.equal(cacheMapEntryFreed, 1)
     assert.equal(Object.keys(cacheMapInner).length, 0)
@@ -1087,7 +1148,9 @@ function createOfficialMv161LoaderFixture(options: {
   runLoader: () => void
   createGameObjectsCalls: () => number
   setupNewGameCalls: () => number
+  runtimeMountModes: () => string[]
   messageWindowTone: () => number[] | null
+  gameFontLoadRequests: () => string[]
   stopped: () => boolean
   originalLoad: unknown
   originalBootStart: unknown
@@ -1097,6 +1160,7 @@ function createOfficialMv161LoaderFixture(options: {
   const messages: Array<Record<string, any>> = []
   const lifecycle: string[] = []
   const eventOrder: string[] = []
+  const rendererDocument = createRendererDocumentFixture()
   const fail = () => { throw new Error(options.failureMessage || 'official MV ready fixture failure') }
   const context: Record<string, any> = {
     parent: {
@@ -1113,6 +1177,7 @@ function createOfficialMv161LoaderFixture(options: {
     Graphics: { width: 816, height: 624, resize: (width: number, height: number) => { context.Graphics.width = width; context.Graphics.height = height } },
     AudioManager: { stopAll: () => undefined },
     Video: {},
+    document: rendererDocument,
     $dataSystem: { windowTone: [0, 0, 0, 0] },
   }
   const originalLoad = () => 'original-load'
@@ -1125,6 +1190,7 @@ function createOfficialMv161LoaderFixture(options: {
   }
   let createGameObjectsCalls = 0
   let setupNewGameCalls = 0
+  const runtimeMountModes: string[] = []
   let latestTone: number[] | null = null
   const establishGameObjects = () => {
     const values = ['$gameTemp', '$gameSystem', '$gameScreen', '$gameTimer', '$gameMessage', '$gameSwitches', '$gameVariables', '$gameSelfSwitches', '$gameActors', '$gameParty', '$gameTroop', '$gameMap', '$gamePlayer']
@@ -1220,7 +1286,12 @@ function createOfficialMv161LoaderFixture(options: {
   const runtime: Record<string, any> = {
     VERSION: '1.1.0',
     configure: (options: Record<string, unknown>) => { Object.assign(runtime, options) },
-    create: () => ({ mount: () => undefined, cleanup: () => undefined, update: () => undefined, getNodeBounds: () => [] }),
+    create: () => ({
+      mount: (_scene: unknown, mountOptions: { executionMode?: string } = {}) => { runtimeMountModes.push(String(mountOptions.executionMode || 'full-preview')) },
+      cleanup: () => undefined,
+      update: () => undefined,
+      getNodeBounds: () => [],
+    }),
   }
   Object.assign(context, {
     Scene_Base: SceneBase,
@@ -1249,11 +1320,61 @@ function createOfficialMv161LoaderFixture(options: {
     },
     createGameObjectsCalls: () => createGameObjectsCalls,
     setupNewGameCalls: () => setupNewGameCalls,
+    runtimeMountModes: () => runtimeMountModes.slice(),
     messageWindowTone: () => latestTone,
+    gameFontLoadRequests: () => rendererDocument.fontLoadRequests.slice(),
     stopped: () => sceneManagerStopped,
     originalLoad,
     originalBootStart,
     originalSceneManager,
+  }
+}
+
+function createRendererDocumentFixture(): {
+  body: {
+    children: Array<Record<string, any>>
+    appendChild(node: Record<string, any>): Record<string, any>
+    removeChild(node: Record<string, any>): Record<string, any>
+  }
+  fonts: {
+    load(font: string): Promise<unknown[]>
+  }
+  fontLoadRequests: string[]
+  createElement(tagName: string): Record<string, any>
+} {
+  const children: Array<Record<string, any>> = []
+  const fontLoadRequests: string[] = []
+  const body = {
+    children,
+    appendChild(node: Record<string, any>) {
+      node.parentNode = body
+      children.push(node)
+      return node
+    },
+    removeChild(node: Record<string, any>) {
+      const index = children.indexOf(node)
+      if (index >= 0) children.splice(index, 1)
+      node.parentNode = null
+      return node
+    },
+  }
+  return {
+    body,
+    fonts: {
+      load(font: string) {
+        fontLoadRequests.push(font)
+        return Promise.resolve([])
+      },
+    },
+    fontLoadRequests,
+    createElement: (tagName: string) => ({
+      tagName: tagName.toUpperCase(),
+      textContent: '',
+      parentNode: null,
+      style: {},
+      attributes: {},
+      setAttribute(name: string, value: string) { this.attributes[name] = value },
+    }),
   }
 }
 

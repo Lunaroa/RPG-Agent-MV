@@ -963,6 +963,7 @@ export interface UiCodeEditorHandle {
   getValue: () => string
   setValue: (value: string) => void
   focus: () => void
+  refreshLayout?: () => void
   format?: () => void
   dispose: () => void
 }

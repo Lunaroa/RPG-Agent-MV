@@ -35,7 +35,7 @@ export type UiDesignerRendererBridgeKind =
   | 'dispose'
   | 'disposed'
 
-export type UiDesignerRendererExecutionMode = 'authoring' | 'full-preview'
+export type UiDesignerRendererExecutionMode = 'authoring' | 'editor-preview' | 'full-preview'
 
 export interface UiDesignerRendererBridgeEnvelope<TKind extends UiDesignerRendererBridgeKind = UiDesignerRendererBridgeKind, TPayload = unknown> {
   version: typeof UI_DESIGNER_RENDERER_BRIDGE_VERSION
@@ -399,7 +399,7 @@ function receiptStage(value: unknown): UiDesignerRendererBridgeReceiptStage {
 }
 
 function executionMode(value: unknown): UiDesignerRendererExecutionMode {
-  if (value !== 'authoring' && value !== 'full-preview') fail('Renderer execution mode is unsupported.')
+  if (value !== 'authoring' && value !== 'editor-preview' && value !== 'full-preview') fail('Renderer execution mode is unsupported.')
   return value
 }
 

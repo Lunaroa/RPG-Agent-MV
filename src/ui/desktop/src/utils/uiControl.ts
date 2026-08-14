@@ -87,6 +87,15 @@ interface ElementState {
   disabled: boolean;
   focused: boolean;
   rect: { x: number; y: number; width: number; height: number };
+  diagnostics?: {
+    rendererStatus: string;
+    rendererStage: string;
+    rendererFailureCode: string;
+    previewStatus: string;
+    previewMode: string;
+    rendererExecutionMode: string;
+    rendererModeReady: string;
+  };
 }
 
 let editorHandler: EditorUiControlHandler | null = null;
@@ -458,6 +467,16 @@ function collectElementStates(selector: string): ElementState[] {
 function elementState(element: Element | null): ElementState | null {
   if (!element) return null;
   const rect = element.getBoundingClientRect();
+  const diagnostics = {
+    rendererStatus: element.getAttribute('data-renderer-status') || '',
+    rendererStage: element.getAttribute('data-renderer-stage') || '',
+    rendererFailureCode: element.getAttribute('data-renderer-failure-code') || '',
+    previewStatus: element.getAttribute('data-preview-status') || '',
+    previewMode: element.getAttribute('data-preview-mode') || '',
+    rendererExecutionMode: element.getAttribute('data-renderer-execution-mode') || '',
+    rendererModeReady: element.getAttribute('data-renderer-mode-ready') || '',
+  };
+  const hasDiagnostics = Object.values(diagnostics).some(Boolean);
   return {
     exists: true,
     testId: element.getAttribute('data-ui-id') || '',
@@ -473,6 +492,7 @@ function elementState(element: Element | null): ElementState | null {
     visible: isElementVisible(element),
     disabled: isElementDisabled(element),
     focused: document.activeElement === element,
+    ...(hasDiagnostics ? { diagnostics } : {}),
     rect: {
       x: Math.round(rect.x),
       y: Math.round(rect.y),

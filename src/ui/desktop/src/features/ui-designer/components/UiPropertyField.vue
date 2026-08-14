@@ -4,6 +4,7 @@ import { QuestionFilled } from '@element-plus/icons-vue'
 import type { UiCodeEditorAdapter, UiPropertyMode, UiValidationIssue } from '@contract/ui-designer'
 import { normalizeUiDesignerProjectRelativeResourcePath, type UiDesignerManagedAssetKind } from '@contract/ui-designer-resources'
 import UiCodeMirrorEditor from './UiCodeMirrorEditor.vue'
+import UiResourceReferenceControl from './UiResourceReferenceControl.vue'
 import { useUiDesignerI18n } from '../i18n'
 import type { UiDesignerDraftCoordinator } from '../composables/draftCoordinator'
 import type { UiDesignerMessageKey } from '../i18n'
@@ -203,10 +204,18 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
       @dragover.prevent
       @drop.prevent="dropResource"
     >
-        <el-input :model-value="typeof props.value === 'string' ? props.value : ''" readonly size="small" :data-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-value` : undefined" :data-testid="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-value` : undefined" :placeholder="props.resourcePickerDisabled ? t('noProject') : resourceActionLabel">
-        <template #append><el-button :data-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-select` : undefined" :data-testid="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-select` : undefined" size="small" :disabled="!props.resourcePicker || props.resourcePickerDisabled" @click="void chooseResource()">{{ resourceActionLabel }}</el-button></template>
-      </el-input>
-      <el-button v-if="props.value" :data-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-clear` : undefined" :data-testid="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-clear` : undefined" size="small" text @click="emitValue('')">{{ t('clearResource') }}</el-button>
+      <UiResourceReferenceControl
+        :model-value="typeof props.value === 'string' ? props.value : ''"
+        :placeholder="props.resourcePickerDisabled ? t('noProject') : resourceActionLabel"
+        :select-label="resourceActionLabel"
+        :clear-label="t('clearResource')"
+        :select-disabled="!props.resourcePicker || props.resourcePickerDisabled"
+        :value-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-value` : undefined"
+        :select-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-select` : undefined"
+        :clear-ui-id="props.fieldKey ? `ui-designer-resource-${props.fieldKey}-clear` : undefined"
+        @select="void chooseResource()"
+        @clear="emitValue('')"
+      />
       <span v-if="props.resourcePickerDisabled" class="resource-picker-hint">{{ t('noProject') }}</span>
     </div>
     <el-input
@@ -242,6 +251,6 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
 .code-field { position: relative; }
 .code-note { position: absolute; right: 6px; bottom: 4px; color: var(--app-ink-soft); font-size: 9px; pointer-events: none; }
 .resource-drop-error, .resource-picker-hint { margin: 0; color: var(--app-ink-soft); font-size: 10px; line-height: 1.3; }
-.resource-control { display: flex; align-items: center; gap: 4px; }.resource-control .el-input { min-width: 0; flex: 1; }
+.resource-control { display: flex; flex-direction: column; gap: 4px; }.resource-control > :first-child { width: 100%; min-width: 0; }
 .property-field.has-error :deep(.el-input), .property-field.has-error :deep(.el-input-number), .property-field.has-error :deep(.el-select), .property-field.has-error :deep(.el-color-picker) { outline: 1px solid var(--el-color-danger); border-radius: 4px; }.field-error { margin: 0; color: var(--el-color-danger); font-size: 10px; line-height: 1.3; }.field-error .status-detail { color: var(--app-ink-soft); font-size: 9px; }
 </style>

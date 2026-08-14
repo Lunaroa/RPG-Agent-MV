@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ActiveSelection, Canvas, Textbox, type FabricObject } from 'fabric'
+import { ActiveSelection, Canvas, Point, Textbox, type FabricObject } from 'fabric'
 import { isRef, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
-import type { UiDesignerDocument, UiNode, UiProjectResourceCatalog, UiRect } from '@contract/ui-designer'
+import type { UiDesignerDocument, UiNode, UiPoint, UiProjectResourceCatalog, UiRect } from '@contract/ui-designer'
 import type { UiDesignerController } from '../composables/useUiDesigner'
-import { accumulateRotationDegrees, nodeRect, normalizeRotationDegrees, type UiResizeHandle } from '../models/geometry'
+import { accumulateRotationDegrees, nodeRect, normalizeRotationDegrees, pointerResizeDelta, type UiResizeHandle } from '../models/geometry'
 import { collectNodeSubtreeIds, selectionRootNodeIds } from '../models/tree'
 import {
   animateFabricNode,
@@ -21,6 +21,7 @@ const props = defineProps<{
   document: UiDesignerDocument
   resourceCatalog?: UiProjectResourceCatalog | null
   scopeNodeId: string
+  zoom: number
   active: boolean
 }>()
 const emit = defineEmits<{
@@ -35,10 +36,12 @@ let reconcileGeneration = 0
 let renderFrame = 0
 let syncingSelection = false
 const objects = new Map<string, UiFabricNodeObject>()
+const containerLabels = new Map<string, Textbox>()
 
 interface TransformState {
   action: 'move' | 'scale' | 'rotate'
   nodeIds: string[]
+  subtreeIds: string[]
   origins: Record<string, { x: number; y: number }>
   nodeId?: string
   originRect?: UiRect
@@ -95,10 +98,66 @@ const attachTextEditing = (object: UiFabricNodeObject) => {
 
 const removeObject = (nodeId: string) => {
   const object = objects.get(nodeId)
-  if (!object) return
-  canvas?.remove(object)
-  objects.delete(nodeId)
-  disposeFabricNodeObject(object)
+  if (object) {
+    canvas?.remove(object)
+    objects.delete(nodeId)
+    disposeFabricNodeObject(object)
+  }
+  const label = containerLabels.get(nodeId)
+  if (label) {
+    canvas?.remove(label)
+    containerLabels.delete(nodeId)
+    label.dispose()
+  }
+}
+
+const syncContainerLabel = (nodeId: string) => {
+  if (!canvas) return
+  const node = nodeById(nodeId)
+  const object = objects.get(nodeId)
+  if (!node || node.type !== 'container' || !object) {
+    const existing = containerLabels.get(nodeId)
+    if (existing) {
+      canvas.remove(existing)
+      containerLabels.delete(nodeId)
+      existing.dispose()
+    }
+    return
+  }
+  let label = containerLabels.get(nodeId)
+  if (!label) {
+    label = new Textbox(node.name, {
+      originX: 'left',
+      originY: 'bottom',
+      fill: '#c7cbd6',
+      selectable: false,
+      evented: false,
+      objectCaching: false,
+      excludeFromExport: true,
+    })
+    containerLabels.set(nodeId, label)
+    canvas.add(label)
+  }
+  const zoom = Math.max(0.01, props.zoom)
+  const bounds = object.getBoundingRect()
+  label.set({
+    text: node.name,
+    left: bounds.left,
+    top: bounds.top - 4 / zoom,
+    width: Math.max(bounds.width, 80 / zoom),
+    fontSize: 12 / zoom,
+    angle: 0,
+    visible: object.visible,
+  })
+  label.setCoords()
+}
+
+const syncContainerLabels = () => {
+  for (const nodeId of [...containerLabels.keys()]) if (!objects.has(nodeId)) syncContainerLabel(nodeId)
+  for (const nodeId of objects.keys()) syncContainerLabel(nodeId)
+  const offset = objects.size
+  ;[...containerLabels.values()].forEach((label, index) => canvas?.moveObjectTo(label, offset + index))
+  canvas?.requestRenderAll()
 }
 
 const reconcile = async () => {
@@ -126,13 +185,17 @@ const reconcile = async () => {
       canvas.add(object)
     }
     const current = nodeById(node.id)
-    if (current) applyFabricNodeGeometry(object, current, props.document)
+    if (current) {
+      applyFabricNodeGeometry(object, current, props.document)
+      syncContainerLabel(current.id)
+    }
   }
   if (generation !== reconcileGeneration || !canvas) return
   desiredNodes.forEach((node, index) => {
     const object = objects.get(node.id)
     if (object) canvas?.moveObjectTo(object, index)
   })
+  syncContainerLabels()
   syncFabricSelection()
   canvas.requestRenderAll()
 }
@@ -141,9 +204,10 @@ const startTransform = (event: { transform: { target: FabricObject; action?: str
   const target = event.transform.target
   const ids = selectionRootNodeIds(props.document, selectedObjectIds(target))
   if (!ids.length) return
-  const transformIds = collectNodeSubtreeIds(props.document, ids)
   const actionName = event.transform.action ?? ''
   const action = actionName === 'drag' ? 'move' : actionName.startsWith('rotate') ? 'rotate' : 'scale'
+  const subtreeIds = collectNodeSubtreeIds(props.document, ids)
+  const transformIds = action === 'move' ? subtreeIds : ids
   const origins = Object.fromEntries(transformIds.map((id) => {
     const node = nodeById(id)
     return [id, { x: node?.props.x ?? 0, y: node?.props.y ?? 0 }]
@@ -153,6 +217,7 @@ const startTransform = (event: { transform: { target: FabricObject; action?: str
   transformState = {
     action,
     nodeIds: ids,
+    subtreeIds,
     origins,
     nodeId,
     originRect: node ? nodeRect(node) : undefined,
@@ -175,44 +240,30 @@ const moveObject = (target: FabricObject) => {
     const object = objects.get(id)
     if (!object || target instanceof ActiveSelection && selectedRoots.has(id)) continue
     object.set({ left: position.x, top: position.y }).setCoords()
+    syncContainerLabel(id)
   }
 }
 
 const cornerHandle = (corner: string): UiResizeHandle => ({ tl: 'nw', mt: 'n', tr: 'ne', mr: 'e', br: 'se', mb: 's', bl: 'sw', ml: 'w' } as const)[corner as 'tl'] ?? 'se'
 
-const targetNodeRect = (target: FabricObject, node: UiNode): UiRect => {
-  const width = Math.max(1, Math.abs(target.width * target.scaleX))
-  const height = Math.max(1, Math.abs(target.height * target.scaleY))
-  const anchor = target.getPositionByOrigin(node.props.anchorX, node.props.anchorY)
-  return {
-    x: anchor.x - width * node.props.anchorX,
-    y: anchor.y - height * node.props.anchorY,
-    width,
-    height,
-  }
-}
-
-const scaleObject = (target: FabricObject, shiftKey: boolean, altKey: boolean, corner: string) => {
+const scaleObject = (target: FabricObject, shiftKey: boolean, altKey: boolean, corner: string, pointer: UiPoint) => {
   const state = transformState
   if (!state?.nodeId || !state.originRect || target instanceof ActiveSelection) return
   const node = nodeById(state.nodeId)
   if (!node) return
   const handle = cornerHandle(corner || state.corner || 'br')
-  const requested = targetNodeRect(target, node)
-  const originRight = state.originRect.x + state.originRect.width
-  const originBottom = state.originRect.y + state.originRect.height
-  const deltaX = handle.includes('w')
-    ? requested.x - state.originRect.x
-    : handle.includes('e')
-      ? requested.x + requested.width - originRight
-      : 0
-  const deltaY = handle.includes('n')
-    ? requested.y - state.originRect.y
-    : handle.includes('s')
-      ? requested.y + requested.height - originBottom
-      : 0
-  const rect = props.designer.previewNodeResizeWithSnap(node.id, state.originRect, handle, { x: deltaX, y: deltaY }, { preserveAspect: shiftKey, fromCenter: altKey })
-  if (rect) positionFabricObjectFromRect(target as UiFabricNodeObject, node, rect)
+  const delta = pointerResizeDelta(node, state.originRect, handle, pointer, altKey)
+  const rect = props.designer.previewNodeResizeWithSnap(node.id, state.originRect, handle, delta, { preserveAspect: shiftKey, fromCenter: altKey })
+  if (!rect) return
+  const drafts = unwrap(props.designer.draftRects)
+  for (const id of state.subtreeIds) {
+    const draftRect = drafts[id]
+    const object = id === state.nodeId ? target as UiFabricNodeObject : objects.get(id)
+    const draftNode = nodeById(id)
+    if (!draftRect || !object || !draftNode) continue
+    positionFabricObjectFromRect(object, draftNode, draftRect)
+    if (draftNode.type === 'container') syncContainerLabel(id)
+  }
 }
 
 const rotateObject = (target: FabricObject, shiftKey: boolean) => {
@@ -229,13 +280,20 @@ const rotateObject = (target: FabricObject, shiftKey: boolean) => {
   state.lastFabricRotation = wrappedAngle
   state.accumulatedRotation = accumulatedAngle
   const angle = shiftKey ? Math.round(accumulatedAngle / 15) * 15 : accumulatedAngle
-  if (shiftKey) {
-    const anchor = target.getPositionByOrigin(node.props.anchorX, node.props.anchorY)
-    target.set({ angle })
-    target.setPositionByOrigin(anchor, node.props.anchorX, node.props.anchorY)
-    target.setCoords()
+  if (props.designer.previewNodeRotation(state.nodeId, angle) === undefined) return
+  const rotations = unwrap(props.designer.draftRotations)
+  const positions = unwrap(props.designer.draftPositions)
+  for (const id of state.subtreeIds) {
+    const draftRotation = rotations[id]
+    const draftPosition = positions[id]
+    const object = id === state.nodeId ? target : objects.get(id)
+    const draftNode = nodeById(id)
+    if (draftRotation === undefined || draftPosition === undefined || !object || !draftNode) continue
+    object.set({ angle: draftRotation })
+    object.setPositionByOrigin(new Point(draftPosition.x, draftPosition.y), draftNode.props.anchorX, draftNode.props.anchorY)
+    object.setCoords()
+    if (draftNode.type === 'container') syncContainerLabel(id)
   }
-  props.designer.previewNodeRotation(state.nodeId, angle)
 }
 
 const commitTransform = () => {
@@ -313,7 +371,10 @@ onMounted(() => {
   canvas.on('selection:cleared', () => applyControllerSelection(undefined))
   canvas.on('before:transform', startTransform)
   canvas.on('object:moving', (event) => moveObject(event.target))
-  canvas.on('object:scaling', (event) => scaleObject(event.target, (event.e as MouseEvent).shiftKey, (event.e as MouseEvent).altKey, event.transform.corner))
+  canvas.on('object:scaling', (event) => {
+    if (!canvas) return
+    scaleObject(event.target, (event.e as MouseEvent).shiftKey, (event.e as MouseEvent).altKey, event.transform.corner, canvas.getScenePoint(event.e))
+  })
   canvas.on('object:rotating', (event) => rotateObject(event.target, (event.e as MouseEvent).shiftKey))
   canvas.on('object:modified', commitTransform)
   canvas.on('mouse:dblclick', (event) => activateObject(event.target))
@@ -333,6 +394,7 @@ onMounted(() => {
 })
 
 watch(() => [props.document, props.resourceCatalog, props.scopeNodeId] as const, () => { void reconcile() }, { deep: false })
+watch(() => props.zoom, syncContainerLabels)
 watch(() => unwrap(props.designer.selectedIds), syncFabricSelection, { deep: true })
 watch(() => [props.document.canvas.width, props.document.canvas.height] as const, ([width, height]) => {
   canvas?.setDimensions({ width, height })
@@ -344,6 +406,8 @@ onBeforeUnmount(() => {
   window.cancelAnimationFrame(renderFrame)
   for (const object of objects.values()) disposeFabricNodeObject(object)
   objects.clear()
+  for (const label of containerLabels.values()) label.dispose()
+  containerLabels.clear()
   canvas?.dispose()
   canvas = undefined
 })

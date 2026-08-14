@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, isRef, nextTick, onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
+import { computed, isRef, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import type { UiDesignerDocument, UiNode, UiRuntimeSceneExport, UiViewport } from '@contract/ui-designer'
 import type { UiDesignerRendererExecutionMode } from '@contract/ui-designer-renderer-bridge'
@@ -7,7 +7,9 @@ import type { UiDesignerController } from '../composables/useUiDesigner'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 import { useUiDesignerRendererHost } from '../composables/useUiDesignerRendererHost'
 import UiDesignerFabricCanvas from './UiDesignerFabricCanvas.vue'
-import { viewportClientToWorld, viewportClientToZoomAnchor, worldPointToViewport, type UiCanvasViewportFrame } from '../models/geometry'
+import { viewportClientToWorld, worldPointToViewport, type UiCanvasViewportFrame } from '../models/geometry'
+import { canvasScrollForWorldPoint, createCanvasScrollLayout, fitCanvasZoom, panCanvasScroll } from '../models/viewport-navigation'
+import { fitContextMenuPosition } from '../models/context-menu-position'
 import type { UiNodeActionCommand, UiNodeActionPolicy } from '../models/actions'
 import { exportRuntimeDocument } from '../models/export'
 
@@ -36,12 +38,15 @@ const snapEnabled = computed(() => typeof preferences.value.snapEnabled === 'boo
 const editStack = ref<string[]>([])
 const editingRootId = computed(() => editStack.value.at(-1) ?? 'node_root')
 const editingRoot = computed(() => document.value.nodes.find((node) => node.id === editingRootId.value))
-const panning = ref<{ pointerId: number; startX: number; startY: number }>()
+const panning = ref<{ pointerId: number; mode: 'space' | 'middle'; startX: number; startY: number; scrollLeft: number; scrollTop: number }>()
 const guideDragging = ref<{ id: string; type: 'vertical' | 'horizontal'; pointerId: number }>()
 const guideMenu = ref<{ x: number; y: number; guideId?: string }>()
 const nodeMenu = ref<{ x: number; y: number; nodeId: string }>()
+const guideMenuElement = ref<HTMLElement>()
+const nodeMenuElement = ref<HTMLElement>()
 const spacePressed = ref(false)
 const viewportElement = ref<HTMLElement>()
+const viewportSize = ref({ width: 1, height: 1 })
 const rendererFrame = ref<HTMLIFrameElement>()
 const fabricCanvas = ref<InstanceType<typeof UiDesignerFabricCanvas>>()
 const alignmentLabels: Record<'left' | 'centerX' | 'right' | 'top' | 'centerY' | 'bottom', UiDesignerMessageKey> = {
@@ -75,15 +80,44 @@ const rulerTicks = computed(() => ({
   vertical: Array.from({ length: Math.ceil(document.value.canvas.height / 100) + 1 }, (_, index) => index * 100),
 }))
 
+const canvasViewport = computed<UiViewport>(() => ({ ...viewport.value, panX: 0, panY: 0, width: viewportSize.value.width, height: viewportSize.value.height }))
+const canvasPanRoom = (viewport: number) => Math.round(Math.min(420, Math.max(120, viewport * 0.35)))
+const scrollLayout = computed(() => createCanvasScrollLayout(
+  viewportSize.value.width,
+  viewportSize.value.height,
+  document.value.canvas.width,
+  document.value.canvas.height,
+  previewing.value ? 1 : canvasViewport.value.zoom,
+  previewing.value ? 0 : STAGE_MARGIN,
+  previewing.value ? 0 : canvasPanRoom(viewportSize.value.width),
+  previewing.value ? 0 : canvasPanRoom(viewportSize.value.height),
+))
+const centerCanvasScroll = () => {
+  const element = viewportElement.value
+  if (!element || previewing.value) return
+  element.scrollLeft = scrollLayout.value.centerScrollX
+  element.scrollTop = scrollLayout.value.centerScrollY
+}
 const viewportFrame = (): UiCanvasViewportFrame => {
   const element = viewportElement.value
   const bounds = element?.getBoundingClientRect()
-  return { left: bounds?.left ?? 0, top: bounds?.top ?? 0, scrollLeft: element?.scrollLeft ?? 0, scrollTop: element?.scrollTop ?? 0, stageMargin: STAGE_MARGIN }
+  return {
+    left: bounds?.left ?? 0,
+    top: bounds?.top ?? 0,
+    scrollLeft: element?.scrollLeft ?? 0,
+    scrollTop: element?.scrollTop ?? 0,
+    stageMargin: STAGE_MARGIN,
+    stageOffsetX: scrollLayout.value.stageOffsetX,
+    stageOffsetY: scrollLayout.value.stageOffsetY,
+  }
 }
+const scrollContentStyle = computed(() => ({ width: `${scrollLayout.value.contentWidth}px`, height: `${scrollLayout.value.contentHeight}px` }))
 const stageStyle = computed(() => ({
   width: `${document.value.canvas.width}px`,
   height: `${document.value.canvas.height}px`,
-  transform: previewing.value ? 'none' : `translate(${viewport.value.panX}px, ${viewport.value.panY}px) scale(${viewport.value.zoom})`,
+  left: `${scrollLayout.value.stageOffsetX}px`,
+  top: `${scrollLayout.value.stageOffsetY}px`,
+  transform: previewing.value ? 'none' : `scale(${canvasViewport.value.zoom})`,
   backgroundColor: document.value.canvas.backgroundColor,
 }))
 const runtimeScene = (): UiRuntimeSceneExport => {
@@ -116,17 +150,17 @@ const rendererHost = useUiDesignerRendererHost({
   active: () => rendererRequested.value,
   onExecutionModeReady: (mode) => {
     designer.acknowledgePreviewExecutionMode(mode)
-    if (mode === 'full-preview') void nextTick(() => rendererFrame.value?.focus())
+    if (mode !== 'authoring') void nextTick(() => rendererFrame.value?.focus())
   },
   onExecutionModeError: (message, cleanupPending) => designer.failPreview(message, cleanupPending),
-  onPreviewExitRequest: () => designer.stopPreview(),
+  onPreviewExitRequest: () => { if (unwrap(designer.isEditorPreviewing)) designer.stopEditorPreview(); else designer.stopPreview() },
 })
 const rendererStatus = rendererHost.status
 const rendererFailureCode = rendererHost.failureCode
 const rendererIframeUrl = rendererHost.iframeUrl
 const rendererStage = rendererHost.stage
 const rendererReady = computed(() => rendererStatus.value === 'running')
-const previewInteractive = computed(() => gamePreviewing.value && rendererReady.value && rendererHost.executionModeReady.value && rendererHost.executionMode.value === 'full-preview')
+const previewInteractive = computed(() => previewing.value && rendererReady.value && rendererHost.executionModeReady.value && rendererHost.executionMode.value !== 'authoring')
 
 const isEditableTarget = (target: EventTarget | null) => target instanceof Element && Boolean(target.closest('input, textarea, select, [contenteditable="true"], .CodeMirror'))
 const clearNativeCanvasSelection = (event?: Event) => {
@@ -136,33 +170,70 @@ const clearNativeCanvasSelection = (event?: Event) => {
 const preventNativeCanvasSelection = (event: Event) => { if (!isEditableTarget(event.target)) event.preventDefault() }
 const preventNativeCanvasDrag = (event: DragEvent) => { if (!isEditableTarget(event.target)) event.preventDefault() }
 
+const resetLegacyPan = () => {
+  if (viewport.value.panX || viewport.value.panY) designer.pan({ x: -viewport.value.panX, y: -viewport.value.panY })
+}
+const updateViewportSize = () => {
+  const element = viewportElement.value
+  if (!element) return
+  viewportSize.value = { width: Math.max(1, element.clientWidth), height: Math.max(1, element.clientHeight) }
+}
+const setCanvasZoom = (scale: number, clientPoint?: { x: number; y: number }) => {
+  const element = viewportElement.value
+  const bounds = element?.getBoundingClientRect()
+  if (!element || !bounds) { resetLegacyPan(); designer.setZoom(scale, { x: 0, y: 0 }); return }
+  const anchor = clientPoint ?? { x: bounds.left + element.clientWidth / 2, y: bounds.top + element.clientHeight / 2 }
+  const worldPoint = viewportClientToWorld(anchor, viewportFrame(), canvasViewport.value)
+  resetLegacyPan()
+  designer.setZoom(scale, { x: 0, y: 0 })
+  void nextTick(() => {
+    updateViewportSize()
+    const nextBounds = element.getBoundingClientRect()
+    const scroll = canvasScrollForWorldPoint(scrollLayout.value, worldPoint, { x: anchor.x - nextBounds.left, y: anchor.y - nextBounds.top }, canvasViewport.value.zoom)
+    element.scrollLeft = scroll.x
+    element.scrollTop = scroll.y
+  })
+}
+const fitCanvasView = () => {
+  const element = viewportElement.value
+  if (!element) return
+  resetLegacyPan()
+  designer.setZoom(fitCanvasZoom(element.clientWidth, element.clientHeight, document.value.canvas.width, document.value.canvas.height, STAGE_MARGIN), { x: 0, y: 0 })
+  void nextTick(() => { updateViewportSize(); centerCanvasScroll() })
+}
 const zoom = (event: WheelEvent) => {
   if (previewing.value || (!event.ctrlKey && !event.metaKey)) return
   event.preventDefault()
-  const anchor = viewportClientToZoomAnchor({ x: event.clientX, y: event.clientY }, viewportFrame())
-  designer.setZoom(viewport.value.zoom * (event.deltaY > 0 ? 0.9 : 1.1), anchor)
+  setCanvasZoom(canvasViewport.value.zoom * (event.deltaY > 0 ? 0.9 : 1.1), { x: event.clientX, y: event.clientY })
 }
 const beginPan = (event: PointerEvent) => {
   if (previewing.value) return false
   const spaceDrag = event.button === 0 && spacePressed.value
   if (event.button !== 1 && !spaceDrag) return false
+  const element = viewportElement.value
+  if (!element) return false
   event.preventDefault()
   event.stopPropagation()
   event.stopImmediatePropagation()
-  panning.value = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY }
+  clearNativeCanvasSelection()
+  panning.value = { pointerId: event.pointerId, mode: spaceDrag ? 'space' : 'middle', startX: event.clientX, startY: event.clientY, scrollLeft: element.scrollLeft, scrollTop: element.scrollTop }
   window.addEventListener('pointermove', movePan)
-  window.addEventListener('pointerup', endPan, { once: true })
-  window.addEventListener('pointercancel', endPan, { once: true })
+  window.addEventListener('pointerup', endPan)
+  window.addEventListener('pointercancel', endPan)
   return true
 }
 const movePan = (event: PointerEvent) => {
   const active = panning.value
   if (!active || active.pointerId !== event.pointerId) return
-  designer.pan({ x: event.clientX - active.startX, y: event.clientY - active.startY })
-  active.startX = event.clientX
-  active.startY = event.clientY
+  event.preventDefault()
+  const element = viewportElement.value
+  if (!element) return
+  const scroll = panCanvasScroll(scrollLayout.value, { x: active.scrollLeft, y: active.scrollTop }, { x: event.clientX - active.startX, y: event.clientY - active.startY })
+  element.scrollLeft = scroll.x
+  element.scrollTop = scroll.y
 }
-const endPan = () => {
+const endPan = (event?: PointerEvent) => {
+  if (event && panning.value && panning.value.pointerId !== event.pointerId) return
   panning.value = undefined
   window.removeEventListener('pointermove', movePan)
   window.removeEventListener('pointerup', endPan)
@@ -171,7 +242,7 @@ const endPan = () => {
 const handleViewportPointerDown = (event: PointerEvent) => {
   if (!beginPan(event)) clearNativeCanvasSelection(event)
 }
-const worldFromClient = (event: PointerEvent | MouseEvent) => viewportClientToWorld({ x: event.clientX, y: event.clientY }, viewportFrame(), viewport.value)
+const worldFromClient = (event: PointerEvent | MouseEvent) => viewportClientToWorld({ x: event.clientX, y: event.clientY }, viewportFrame(), canvasViewport.value)
 
 const beginGuideFromRuler = (event: PointerEvent, type: 'vertical' | 'horizontal') => {
   if (previewing.value) return
@@ -202,17 +273,33 @@ const endGuide = (event?: PointerEvent) => {
   window.removeEventListener('pointercancel', cancelGuide)
 }
 const cancelGuide = () => endGuide()
-const guideMenuPosition = (event: MouseEvent) => {
-  const bounds = viewportElement.value?.getBoundingClientRect()
-  return { x: event.clientX - (bounds?.left ?? 0) + (viewportElement.value?.scrollLeft ?? 0), y: event.clientY - (bounds?.top ?? 0) + (viewportElement.value?.scrollTop ?? 0) }
+const contextMenuAnchor = (event: MouseEvent) => ({ x: event.clientX, y: event.clientY })
+const fitOpenContextMenu = async (kind: 'guide' | 'node') => {
+  await nextTick()
+  const element = kind === 'guide' ? guideMenuElement.value : nodeMenuElement.value
+  const state = kind === 'guide' ? guideMenu.value : nodeMenu.value
+  if (!element || !state) return
+  const bounds = element.getBoundingClientRect()
+  const fitted = fitContextMenuPosition(
+    state,
+    { width: bounds.width, height: bounds.height },
+    { width: window.innerWidth, height: window.innerHeight },
+  )
+  if (kind === 'guide' && guideMenu.value) guideMenu.value = { ...guideMenu.value, ...fitted }
+  if (kind === 'node' && nodeMenu.value) nodeMenu.value = { ...nodeMenu.value, ...fitted }
 }
-const openGuideMenu = (event: MouseEvent, guideId?: string) => { nodeMenu.value = undefined; guideMenu.value = { ...guideMenuPosition(event), guideId } }
+const openGuideMenu = (event: MouseEvent, guideId?: string) => {
+  nodeMenu.value = undefined
+  guideMenu.value = { ...contextMenuAnchor(event), guideId }
+  void fitOpenContextMenu('guide')
+}
 const closeGuideMenu = () => { guideMenu.value = undefined }
 const nodeMenuPolicy = computed<UiNodeActionPolicy | undefined>(() => nodeMenu.value ? designer.getNodeActionPolicy(nodeMenu.value.nodeId) as UiNodeActionPolicy : undefined)
 const openNodeMenu = (event: MouseEvent, node: UiNode) => {
   guideMenu.value = undefined
   designer.selectNodeActionTarget(node.id)
-  nodeMenu.value = { ...guideMenuPosition(event), nodeId: node.id }
+  nodeMenu.value = { ...contextMenuAnchor(event), nodeId: node.id }
+  void fitOpenContextMenu('node')
 }
 const openFabricContextMenu = (payload: { event: MouseEvent; node?: UiNode }) => {
   if (payload.node) openNodeMenu(payload.event, payload.node)
@@ -298,7 +385,10 @@ const keyDown = (event: KeyboardEvent) => {
   spacePressed.value = true
 }
 const keyUp = (event: KeyboardEvent) => {
-  if (event.code === 'Space') spacePressed.value = false
+  if (event.code === 'Space') {
+    spacePressed.value = false
+    if (panning.value?.mode === 'space') endPan()
+  }
   if (previewing.value || event.code !== 'Escape' || isEditableTarget(event.target)) return
   exitContainer()
 }
@@ -325,13 +415,30 @@ const dropResource = (event: DragEvent) => {
   const property = preferred && preferred in nodeProps ? preferred : ['path', 'backgroundPath', 'imagePath', 'trackImage', 'fillImage', 'posterPath'].find((key) => key in nodeProps)
   if (property) designer.updateNodeProperty(node.id, property, path)
 }
-const clearSpacePressed = () => { spacePressed.value = false }
+const clearSpacePressed = () => { spacePressed.value = false; if (panning.value?.mode === 'space') endPan() }
+
+let viewportResizeObserver: ResizeObserver | undefined
+let authoringScroll = { x: 0, y: 0 }
+watch(previewing, async (isPreviewing) => {
+  const element = viewportElement.value
+  if (!element) return
+  if (isPreviewing) authoringScroll = { x: element.scrollLeft, y: element.scrollTop }
+  await nextTick()
+  updateViewportSize()
+  element.scrollLeft = isPreviewing ? 0 : authoringScroll.x
+  element.scrollTop = isPreviewing ? 0 : authoringScroll.y
+})
 
 onMounted(() => {
   window.addEventListener('keydown', keyDown)
   window.addEventListener('keyup', keyUp)
   window.addEventListener('blur', clearSpacePressed)
   window.addEventListener('pointerdown', dismissContextMenus, true)
+  resetLegacyPan()
+  updateViewportSize()
+  centerCanvasScroll()
+  viewportResizeObserver = new ResizeObserver(updateViewportSize)
+  if (viewportElement.value) viewportResizeObserver.observe(viewportElement.value)
 })
 onBeforeUnmount(() => {
   endPan()
@@ -341,16 +448,29 @@ onBeforeUnmount(() => {
   window.removeEventListener('keyup', keyUp)
   window.removeEventListener('blur', clearSpacePressed)
   window.removeEventListener('pointerdown', dismissContextMenus, true)
+  viewportResizeObserver?.disconnect()
+  viewportResizeObserver = undefined
 })
 </script>
 
 <template>
-  <section class="canvas-panel" :class="{ 'editor-preview-canvas': previewing }">
+  <section
+    class="canvas-panel"
+    :class="{ 'editor-preview-canvas': previewing }"
+    data-ui-id="ui-designer-canvas"
+    :data-renderer-status="rendererStatus"
+    :data-renderer-stage="rendererStage"
+    :data-renderer-failure-code="rendererFailureCode || undefined"
+    :data-preview-status="unwrap(designer.previewStatus)"
+    :data-preview-mode="requestedExecutionMode"
+    :data-renderer-execution-mode="rendererHost.executionMode.value"
+    :data-renderer-mode-ready="rendererHost.executionModeReady.value ? 'true' : 'false'"
+  >
     <div v-if="!previewing" class="canvas-toolbar">
       <span class="canvas-title">{{ document.meta.sceneName }}</span>
-      <span class="canvas-zoom">{{ Math.round(viewport.zoom * 100) }}%</span>
-      <el-button size="small" text @click="designer.setZoom(1)">{{ t('resetZoom') }}</el-button>
-      <el-button size="small" text @click="designer.fitCanvas()">{{ t('fitCanvas') }}</el-button>
+      <span class="canvas-zoom">{{ Math.round(canvasViewport.zoom * 100) }}%</span>
+      <el-button size="small" text @click="setCanvasZoom(1)">{{ t('resetZoom') }}</el-button>
+      <el-button size="small" text @click="fitCanvasView">{{ t('fitCanvas') }}</el-button>
       <el-checkbox :model-value="gridEnabled" size="small" @update:model-value="designer.setGridEnabled($event)">{{ t('grid') }}</el-checkbox>
       <el-checkbox :model-value="snapEnabled" size="small" @update:model-value="designer.setSnapEnabled($event)">{{ t('snap') }}</el-checkbox>
       <el-dropdown trigger="click" :disabled="selectedIds.length < 2 || !selectedActionPolicy?.canTransform">
@@ -371,22 +491,25 @@ onBeforeUnmount(() => {
       </el-dropdown>
     </div>
     <div ref="viewportElement" class="canvas-viewport" :class="{ 'preview-viewport': previewing, 'pan-ready': spacePressed && !previewing, panning: Boolean(panning) }" @wheel="zoom" @pointerdown.capture="handleViewportPointerDown" @selectstart="preventNativeCanvasSelection" @dragstart="preventNativeCanvasDrag" @dragover.prevent @drop="dropResource">
-      <div v-if="!previewing && document.canvas.rulers" class="canvas-ruler horizontal" aria-hidden="true" @pointerdown.stop="beginGuideFromRuler($event, 'horizontal')"><span v-for="tick in rulerTicks.horizontal" :key="`h-${tick}`" class="ruler-tick" :style="{ left: `${worldPointToViewport({ x: tick, y: 0 }, { stageMargin: STAGE_MARGIN }, viewport).x}px` }">{{ tick }}</span></div>
-      <div v-if="!previewing && document.canvas.rulers" class="canvas-ruler vertical" aria-hidden="true" @pointerdown.stop="beginGuideFromRuler($event, 'vertical')"><span v-for="tick in rulerTicks.vertical" :key="`v-${tick}`" class="ruler-tick" :style="{ top: `${worldPointToViewport({ x: 0, y: tick }, { stageMargin: STAGE_MARGIN }, viewport).y}px` }">{{ tick }}</span></div>
+      <div class="canvas-scroll-content" :style="scrollContentStyle">
+      <div v-if="!previewing && document.canvas.rulers" class="canvas-ruler horizontal" aria-hidden="true" @pointerdown.stop="beginGuideFromRuler($event, 'horizontal')"><span v-for="tick in rulerTicks.horizontal" :key="`h-${tick}`" class="ruler-tick" :style="{ left: `${worldPointToViewport({ x: tick, y: 0 }, viewportFrame(), canvasViewport).x}px` }">{{ tick }}</span></div>
+      <div v-if="!previewing && document.canvas.rulers" class="canvas-ruler vertical" aria-hidden="true" @pointerdown.stop="beginGuideFromRuler($event, 'vertical')"><span v-for="tick in rulerTicks.vertical" :key="`v-${tick}`" class="ruler-tick" :style="{ top: `${worldPointToViewport({ x: 0, y: tick }, viewportFrame(), canvasViewport).y}px` }">{{ tick }}</span></div>
       <template v-if="!previewing && document.canvas.guidesVisible">
-        <div v-for="guide in document.guides" :key="guide.id" class="canvas-guide" :class="[guide.type, { locked: guide.locked }]" :style="guide.type === 'vertical' ? { left: `${worldPointToViewport({ x: guide.position, y: 0 }, { stageMargin: STAGE_MARGIN }, viewport).x}px` } : { top: `${worldPointToViewport({ x: 0, y: guide.position }, { stageMargin: STAGE_MARGIN }, viewport).y}px` }" :title="guide.locked ? `🔒 ${t('guideLocked')}` : t('guide')" @pointerdown.stop="beginGuideDrag($event, guide)" @dblclick.stop="openGuideMenu($event, guide.id); void editGuidePosition()" @contextmenu.prevent.stop="openGuideMenu($event, guide.id)" />
+        <div v-for="guide in document.guides" :key="guide.id" class="canvas-guide" :class="[guide.type, { locked: guide.locked }]" :style="guide.type === 'vertical' ? { left: `${worldPointToViewport({ x: guide.position, y: 0 }, viewportFrame(), canvasViewport).x}px` } : { top: `${worldPointToViewport({ x: 0, y: guide.position }, viewportFrame(), canvasViewport).y}px` }" :title="guide.locked ? `🔒 ${t('guideLocked')}` : t('guide')" @pointerdown.stop="beginGuideDrag($event, guide)" @dblclick.stop="openGuideMenu($event, guide.id); void editGuidePosition()" @contextmenu.prevent.stop="openGuideMenu($event, guide.id)" />
       </template>
-      <div v-if="!previewing && guideMenu" class="guide-context-menu" :style="{ left: `${guideMenu.x}px`, top: `${guideMenu.y}px` }" @pointerdown.stop>
-        <template v-if="selectedGuide">
-          <el-button size="small" text @click="void editGuidePosition()">{{ t('guidePositionTitle') }}</el-button>
-          <el-button size="small" text @click="toggleGuideLock">{{ selectedGuide.locked ? t('guideMenuUnlock') : t('guideMenuLock') }}</el-button>
-          <el-button size="small" text type="danger" @click="deleteGuide">{{ t('guideMenuDelete') }}</el-button>
-        </template>
-        <el-button size="small" text type="danger" @click="clearGuides">{{ t('guideMenuClear') }}</el-button>
-      </div>
-      <div v-if="!previewing && nodeMenu && nodeMenuPolicy" class="node-context-menu" :style="{ left: `${nodeMenu.x}px`, top: `${nodeMenu.y}px` }" :data-ui-id="`ui-designer-node-menu-${nodeMenu.nodeId}`" @pointerdown.stop @contextmenu.prevent>
-        <el-button v-for="item in nodeMenuItems" :key="item.command" size="small" text :type="item.danger ? 'danger' : undefined" :disabled="!nodeMenuPolicy.allowed[item.command]" :data-ui-id="`ui-designer-node-command-${nodeMenu.nodeId}-${item.command}`" @click="runNodeCommand(item.command)">{{ item.label }}</el-button>
-      </div>
+      <Teleport to="body">
+        <div v-if="!previewing && guideMenu" ref="guideMenuElement" class="guide-context-menu" :style="{ left: `${guideMenu.x}px`, top: `${guideMenu.y}px` }" @pointerdown.stop>
+          <template v-if="selectedGuide">
+            <el-button size="small" text @click="void editGuidePosition()">{{ t('guidePositionTitle') }}</el-button>
+            <el-button size="small" text @click="toggleGuideLock">{{ selectedGuide.locked ? t('guideMenuUnlock') : t('guideMenuLock') }}</el-button>
+            <el-button size="small" text type="danger" @click="deleteGuide">{{ t('guideMenuDelete') }}</el-button>
+          </template>
+          <el-button size="small" text type="danger" @click="clearGuides">{{ t('guideMenuClear') }}</el-button>
+        </div>
+        <div v-if="!previewing && nodeMenu && nodeMenuPolicy" ref="nodeMenuElement" class="node-context-menu" :style="{ left: `${nodeMenu.x}px`, top: `${nodeMenu.y}px` }" :data-ui-id="`ui-designer-node-menu-${nodeMenu.nodeId}`" @pointerdown.stop @contextmenu.prevent>
+          <el-button v-for="item in nodeMenuItems" :key="item.command" size="small" text :type="item.danger ? 'danger' : undefined" :disabled="!nodeMenuPolicy.allowed[item.command]" :data-ui-id="`ui-designer-node-command-${nodeMenu.nodeId}-${item.command}`" @click="runNodeCommand(item.command)">{{ item.label }}</el-button>
+        </div>
+      </Teleport>
       <div class="canvas-stage" :class="{ checkerboard: !previewing && document.canvas.backgroundPattern === 'checkerboard', 'preview-stage': previewing }" :style="stageStyle">
         <div v-if="!previewing && editStack.length" class="canvas-edit-breadcrumb" data-ui-id="ui-designer-container-scope" @pointerdown.stop>
           <span>{{ t('editingContainer') }}: {{ editingRoot?.name }}</span>
@@ -414,6 +537,7 @@ onBeforeUnmount(() => {
           :document="document"
           :resource-catalog="resourceCatalog"
           :scope-node-id="editingRootId"
+          :zoom="canvasViewport.zoom"
           :active="!previewing"
           @activate="activateNode"
           @contextmenu="openFabricContextMenu"
@@ -427,6 +551,7 @@ onBeforeUnmount(() => {
           <div v-else-if="rendererStatus !== 'running'" class="canvas-runtime-state" aria-live="polite" data-ui-id="ui-designer-runtime-canvas-status"><span>{{ `${t(designer.previewStatus === 'preparing' ? 'previewPreparing' : 'canvasSyncing')} · ${rendererStage}` }}</span></div>
         </template>
       </div>
+      </div>
     </div>
     <div v-if="!previewing" class="canvas-hint">{{ t('chooseNode') }}</div>
   </section>
@@ -436,12 +561,13 @@ onBeforeUnmount(() => {
 .canvas-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; background: #12141b; }
 .canvas-toolbar { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 5px 10px; border-bottom: 1px solid var(--app-border); color: var(--app-ink-soft); font-size: 11px; }
 .canvas-title { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.canvas-zoom { font-variant-numeric: tabular-nums; }
-.canvas-viewport { position: relative; flex: 1; min-height: 0; overflow: auto; background: #20232c; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }.canvas-viewport * { -webkit-user-drag: none; }.canvas-viewport.pan-ready { cursor: grab; }.canvas-viewport.panning { cursor: grabbing; }
+.canvas-viewport { position: relative; flex: 1; min-height: 0; overflow: auto; background: #20232c; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; scrollbar-width: none; }.canvas-viewport::-webkit-scrollbar { display: none; }.canvas-viewport * { -webkit-user-drag: none; }.canvas-viewport.pan-ready { cursor: grab; }.canvas-viewport.panning { cursor: grabbing; }
 .preview-viewport { display: flex; box-sizing: border-box; align-items: flex-start; justify-content: center; padding: 20px; background: #090a0d; }
+.canvas-scroll-content { position: relative; flex: none; }
 .canvas-ruler { position: absolute; z-index: 5; pointer-events: auto; cursor: crosshair; background: repeating-linear-gradient(to right, #ffffff55 0 1px, transparent 1px 32px); opacity: .35; }.canvas-ruler.horizontal { inset: 0 0 auto; height: 18px; }.canvas-ruler.vertical { inset: 0 auto 0 0; width: 18px; background: repeating-linear-gradient(to bottom, #ffffff55 0 1px, transparent 1px 32px); }.ruler-tick { position: absolute; color: #fff; font-size: 8px; line-height: 12px; pointer-events: none; transform: translateX(-1px); }.canvas-ruler.vertical .ruler-tick { transform: translateY(-1px) rotate(-90deg); transform-origin: left top; }
 .canvas-guide { position: absolute; z-index: 4; pointer-events: auto; cursor: ew-resize; background: var(--el-color-warning); opacity: .55; }.canvas-guide.vertical { top: 0; bottom: 0; width: 3px; margin-left: -1px; }.canvas-guide.horizontal { right: 0; left: 0; height: 3px; margin-top: -1px; cursor: ns-resize; }.canvas-guide.locked { cursor: not-allowed; opacity: .35; }
-.guide-context-menu, .node-context-menu { position: absolute; z-index: 12; display: flex; flex-direction: column; min-width: 150px; max-height: min(480px, calc(100% - 12px)); overflow: auto; padding: 5px; border: 1px solid var(--app-border); border-radius: 5px; background: var(--app-bg); box-shadow: 0 8px 18px #0007; }.guide-context-menu .el-button, .node-context-menu .el-button { justify-content: flex-start; margin: 0; }
-.canvas-stage { position: relative; margin: 46px; overflow: hidden; box-shadow: 0 16px 36px #0007; transform-origin: 0 0; }.canvas-stage.preview-stage { flex: none; margin: 0; box-shadow: 0 16px 48px #000b; }.canvas-edit-breadcrumb { position: absolute; z-index: 8; top: 8px; left: 8px; display: flex; align-items: center; gap: 4px; padding: 3px 5px; border: 1px solid #ffffff1f; border-radius: 4px; color: var(--app-ink-soft); background: #12141be8; font-size: 10px; }.canvas-edit-breadcrumb .el-button { padding: 2px 5px; }.canvas-stage.checkerboard { background-image: conic-gradient(#ffffff09 25%, transparent 0 50%, #ffffff09 0 75%, transparent 0); background-size: 24px 24px; }
+.guide-context-menu, .node-context-menu { position: fixed; z-index: 4000; display: flex; flex-direction: column; min-width: 150px; max-height: min(480px, calc(100vh - 16px)); overflow: auto; padding: 5px; border: 1px solid var(--app-border); border-radius: 5px; background: var(--app-bg); box-shadow: 0 8px 18px #0007; }.guide-context-menu .el-button, .node-context-menu .el-button { justify-content: flex-start; margin: 0; }
+.canvas-stage { position: absolute; overflow: hidden; box-shadow: 0 16px 36px #0007; transform-origin: 0 0; }.canvas-stage.preview-stage { box-shadow: 0 16px 48px #000b; }.canvas-edit-breadcrumb { position: absolute; z-index: 8; top: 8px; left: 8px; display: flex; align-items: center; gap: 4px; padding: 3px 5px; border: 1px solid #ffffff1f; border-radius: 4px; color: var(--app-ink-soft); background: #12141be8; font-size: 10px; }.canvas-edit-breadcrumb .el-button { padding: 2px 5px; }.canvas-stage.checkerboard { background-image: conic-gradient(#ffffff09 25%, transparent 0 50%, #ffffff09 0 75%, transparent 0); background-size: 24px 24px; }
 .canvas-runtime-frame { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; border: 0; background: transparent; pointer-events: none; user-select: none; }.canvas-runtime-frame.preview-interactive { z-index: 3; pointer-events: auto; touch-action: none; user-select: none; }
 .canvas-grid { position: absolute; z-index: 1; inset: 0; opacity: 0; background-image: linear-gradient(to right, var(--grid-color) 1px, transparent 1px), linear-gradient(to bottom, var(--grid-color) 1px, transparent 1px); background-size: var(--grid-size) var(--grid-size); pointer-events: none; }.canvas-grid.active { opacity: .18; }
 .canvas-runtime-state { position: absolute; z-index: 9; top: 8px; right: 8px; display: flex; max-width: min(420px, calc(100% - 16px)); align-items: center; gap: 8px; padding: 6px 9px; border: 1px solid var(--app-border); border-radius: 5px; color: var(--app-ink-soft); background: color-mix(in srgb, #12141b 92%, transparent); box-shadow: 0 5px 14px #0005; font-size: 11px; text-align: left; pointer-events: none; }.canvas-runtime-state .el-button { pointer-events: auto; }

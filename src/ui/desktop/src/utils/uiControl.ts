@@ -36,6 +36,7 @@ export interface UiControlCommand {
   offsetX?: number;
   offsetY?: number;
   button?: number;
+  mouseCompat?: boolean;
 }
 
 export interface UiControlEnvelope {
@@ -170,18 +171,23 @@ function pointerUiElement(command: UiControlCommand, language: ProductLanguage):
     }));
   }
   const type = phase === 'down' ? 'pointerdown' : phase === 'move' ? 'pointermove' : 'pointerup';
+  const mouseType = phase === 'down' ? 'mousedown' : phase === 'move' ? 'mousemove' : 'mouseup';
   const button = Number.isInteger(command.button) ? Number(command.button) : 0;
   const buttons = phase === 'up' ? 0 : 1 << button;
   const clientX = rect.left + offsetX;
   const clientY = rect.top + offsetY;
-  element.dispatchEvent(new PointerEvent(type, {
+  const eventInit: PointerEventInit = {
     bubbles: true,
     cancelable: true,
     clientX,
     clientY,
     button,
     buttons,
-  }));
+  };
+  element.dispatchEvent(new PointerEvent(type, eventInit));
+  // Libraries that listen to mouse events only (fabric with default options)
+  // never see synthetic pointer events; opt in to mirroring the gesture.
+  if (command.mouseCompat) element.dispatchEvent(new MouseEvent(mouseType, eventInit));
   if (phase === 'up' && button === 2) {
     element.dispatchEvent(new MouseEvent('contextmenu', {
       bubbles: true,

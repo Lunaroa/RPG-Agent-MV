@@ -113,6 +113,7 @@ export interface ParsedArgs {
   eventRefs?: EventRef[];
   // boolean 标志
   dryRun?: boolean;
+  mouseCompat?: boolean;
   apply?: boolean;
   applyEventCommandOps?: boolean;
   replaceOutput?: boolean;
@@ -450,6 +451,8 @@ export function parseArgs(args: string[]): ParsedArgs {
       index += 1;
     } else if (arg === "--dry-run") {
       parsed.dryRun = true;
+    } else if (arg === "--mouse-compat") {
+      parsed.mouseCompat = true;
     } else if (arg === "--apply") {
       parsed.apply = true;
     } else if (arg === "--apply-event-command-ops") {

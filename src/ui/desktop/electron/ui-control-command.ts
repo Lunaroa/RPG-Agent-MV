@@ -36,6 +36,7 @@ export interface UiControlCommand {
   offsetX?: number;
   offsetY?: number;
   button?: number;
+  mouseCompat?: boolean;
 }
 
 const ALLOWED_TARGETS = new Set([
@@ -119,6 +120,7 @@ export function normalizeUiControlCommand(raw: unknown): UiControlCommand {
     const button = value.button == null ? 0 : Number(value.button);
     if (!Number.isInteger(button) || button < 0 || button > 2) throw new Error('pointer command button must be 0, 1, or 2.');
     command.button = button;
+    if (value.mouseCompat !== undefined) command.mouseCompat = value.mouseCompat === true;
   }
 
   if (type === 'input') {

@@ -341,7 +341,7 @@ function buildUiControlCommand(args: ParsedArgs): Record<string, unknown> {
     command.phase = args.phase;
     command.offsetX = args.x;
     command.offsetY = args.y;
-  }
+    if (args.mouseCompat) command.mouseCompat = true;  }
   if (type === "input") {
     if (args.text === undefined) throw new Error("--text is required for ui-control --command input");
     command.text = args.text;

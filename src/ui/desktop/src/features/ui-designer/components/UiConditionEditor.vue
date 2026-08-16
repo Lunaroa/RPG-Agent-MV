@@ -4,6 +4,7 @@ import type { UiDesignerController } from '../composables/useUiDesigner'
 import type { UiDesignerDocument, UiNode, UiValidationReport, UiVisibilityCondition } from '@contract/ui-designer'
 import { UI_DESIGNER_NODE_SCRIPT_COMPLETIONS } from '@contract/ui-designer-script'
 import UiCodeMirrorEditor from './UiCodeMirrorEditor.vue'
+import UiNamedEntryField from './UiNamedEntryField.vue'
 import UiScriptContextHint from './UiScriptContextHint.vue'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 
@@ -65,9 +66,9 @@ const addChild = () => {
     <el-select :model-value="condition.type" size="small" @update:model-value="setConditionType">
       <el-option v-for="type in ['none', 'switch_on', 'switch_off', 'variable', 'code', 'and', 'or']" :key="type" :label="t(conditionLabels[type as UiVisibilityCondition['type']])" :value="type" />
     </el-select>
-    <el-input-number v-if="condition.type === 'switch_on' || condition.type === 'switch_off'" :model-value="condition.switchId" :min="1" size="small" @update:model-value="update({ switchId: $event ?? 1 })" />
+    <UiNamedEntryField v-if="condition.type === 'switch_on' || condition.type === 'switch_off'" kind="switch" :model-value="condition.switchId" :ui-id="`ui-designer-condition-${path}-switch`" @update:model-value="update({ switchId: $event })" />
     <div v-else-if="condition.type === 'variable'" class="condition-fields">
-      <el-input-number :model-value="condition.variableId" :min="1" size="small" @update:model-value="update({ variableId: $event ?? 1 })" />
+      <UiNamedEntryField kind="variable" :model-value="condition.variableId" :ui-id="`ui-designer-condition-${path}-variable`" @update:model-value="update({ variableId: $event })" />
       <el-select :model-value="condition.operator" size="small" @update:model-value="update({ operator: $event })"><el-option v-for="operator in ['==', '>=', '<=', '>', '<', '!=']" :key="operator" :label="operator" :value="operator" /></el-select>
       <el-input-number :model-value="condition.value" size="small" @update:model-value="update({ value: $event ?? 0 })" />
     </div>

@@ -5,6 +5,7 @@ import type { UiEventAction, UiEventName, UiNode, UiValidationIssue, UiValidatio
 import { UI_DESIGNER_NODE_SCRIPT_COMPLETIONS } from '@contract/ui-designer-script'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 import UiCodeMirrorEditor from './UiCodeMirrorEditor.vue'
+import UiNamedEntryField from './UiNamedEntryField.vue'
 import UiScriptContextHint from './UiScriptContextHint.vue'
 import UiResourceReferenceControl from './UiResourceReferenceControl.vue'
 import { reorderEventActions } from '../models/actions'
@@ -157,12 +158,12 @@ const sceneOptionsFor = (action: UiEventAction) => {
         </template>
         <el-input v-else-if="action.type === 'showMessage'" :model-value="actionField(action, 'message')" size="small" @update:model-value="updateAction(index, { message: $event })" />
         <div v-else-if="action.type === 'setVariable'" class="action-params">
-          <el-input-number :model-value="Number(actionField(action, 'variableId'))" :min="1" size="small" controls-position="right" @update:model-value="updateAction(index, { variableId: $event ?? 1 })" />
+          <UiNamedEntryField kind="variable" :model-value="Number(actionField(action, 'variableId'))" :ui-id="`ui-designer-event-${activeEvent}-${index}-variable`" @update:model-value="updateAction(index, { variableId: $event })" />
           <el-select :model-value="actionField(action, 'variableOp')" size="small" @update:model-value="updateAction(index, { variableOp: $event })"><el-option v-for="operator in ['=', '+', '-', '*', '/']" :key="operator" :label="operator" :value="operator" /></el-select>
-          <el-input-number :model-value="Number(actionField(action, 'variableVal'))" size="small" @update:model-value="updateAction(index, { variableVal: $event ?? 0 })" />
+          <el-input-number :model-value="Number(actionField(action, 'variableVal'))" :min="0" size="small" @update:model-value="updateAction(index, { variableVal: $event ?? 0 })" />
         </div>
         <div v-else-if="action.type === 'setSwitch'" class="action-params">
-          <el-input-number :model-value="Number(actionField(action, 'switchId'))" :min="1" size="small" controls-position="right" @update:model-value="updateAction(index, { switchId: $event ?? 1 })" />
+          <UiNamedEntryField kind="switch" :model-value="Number(actionField(action, 'switchId'))" :ui-id="`ui-designer-event-${activeEvent}-${index}-switch`" @update:model-value="updateAction(index, { switchId: $event })" />
           <el-select :model-value="actionField(action, 'switchVal')" size="small" @update:model-value="updateAction(index, { switchVal: $event })"><el-option v-for="value in ['on', 'off', 'toggle']" :key="value" :label="t(switchLabels[value as keyof typeof switchLabels])" :value="value" /></el-select>
         </div>
         <div v-else-if="action.type === 'tweenProp'" class="action-params">
@@ -176,9 +177,9 @@ const sceneOptionsFor = (action: UiEventAction) => {
         <div v-if="action.condition" class="action-condition">
           <div class="condition-head"><span>{{ t('condition') }}</span><el-button size="small" text type="danger" @click="removeCondition(index)">×</el-button></div>
           <el-select :model-value="action.condition.type" size="small" @update:model-value="setConditionType(index, $event)"><el-option v-for="type in ['switch', 'variable', 'code']" :key="type" :label="t(conditionLabels[type as keyof typeof conditionLabels])" :value="type" /></el-select>
-          <el-input-number v-if="action.condition.type === 'switch'" :model-value="action.condition.switchId ?? 1" :min="1" size="small" @update:model-value="updateCondition(index, { switchId: $event ?? 1 })" />
+          <UiNamedEntryField v-if="action.condition.type === 'switch'" kind="switch" :model-value="action.condition.switchId ?? 1" :ui-id="`ui-designer-event-${activeEvent}-${index}-condition-switch`" @update:model-value="updateCondition(index, { switchId: $event })" />
           <div v-else-if="action.condition.type === 'variable'" class="action-params">
-            <el-input-number :model-value="action.condition.variableId ?? 1" :min="1" size="small" @update:model-value="updateCondition(index, { variableId: $event ?? 1 })" />
+            <UiNamedEntryField kind="variable" :model-value="action.condition.variableId ?? 1" :ui-id="`ui-designer-event-${activeEvent}-${index}-condition-variable`" @update:model-value="updateCondition(index, { variableId: $event })" />
             <el-select :model-value="action.condition.operator ?? '>='" size="small" @update:model-value="updateCondition(index, { operator: $event })"><el-option v-for="operator in ['==', '>=', '<=', '>', '<', '!=']" :key="operator" :label="operator" :value="operator" /></el-select>
             <el-input-number :model-value="action.condition.value ?? 0" size="small" @update:model-value="updateCondition(index, { value: $event ?? 0 })" />
           </div>

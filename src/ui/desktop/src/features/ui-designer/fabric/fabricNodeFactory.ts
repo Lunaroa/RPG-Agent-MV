@@ -22,7 +22,12 @@ import { UiLayoutTextbox } from './uiLayoutTextbox'
 import { UiNineSliceImage } from './uiNineSliceImage'
 import { UiParticleObject } from './uiParticleObject'
 import { UiWindowSkinTextbox } from './uiWindowSkinTextbox'
-import { loadUiFabricFont } from './uiFabricFont'
+import { installUiFabricFontFamily, loadUiFabricFont } from './uiFabricFont'
+
+export interface UiFabricNativeTextProfile {
+  fontFamily?: string
+  outline?: { color: string; width: number }
+}
 
 export interface UiFabricObjectData {
   nodeId: string
@@ -32,6 +37,7 @@ export interface UiFabricObjectData {
   particlePhases?: number[]
   videoElement?: HTMLVideoElement
   fontFamily?: string
+  nativeTextProfile?: UiFabricNativeTextProfile
   ownClipPath?: FabricObject['clipPath']
   hierarchyClipPath?: FabricObject['clipPath']
 }
@@ -49,6 +55,46 @@ export function resolveFabricResource(catalog: UiProjectResourceCatalog | null |
 const previewUrlFor = (catalog: UiProjectResourceCatalog | null | undefined, path: string) => {
   const resource = resolveFabricResource(catalog, path)
   return resource?.previewUrl ?? resource?.thumbnailUrl
+}
+
+// The engines' native window-text outline defaults; the preview runtime reads
+// the live values from the engine Bitmap, this table mirrors them for design
+// state so both sides render the same stroke.
+const NATIVE_TEXT_OUTLINE: Record<'MV' | 'MZ', { color: string; width: number }> = {
+  MV: { color: 'rgba(0, 0, 0, 0.5)', width: 4 },
+  MZ: { color: 'rgba(0, 0, 0, 0.5)', width: 3 },
+}
+
+const NATIVE_MAIN_FONT_FILES: Record<'MV' | 'MZ', { path: string; family: string }> = {
+  MV: { path: 'fonts/mplus-1m-regular.ttf', family: 'GameFont' },
+  MZ: { path: 'fonts/rmmz-mainfont.ttf', family: 'rmmz-mainfont' },
+}
+
+const catalogEngine = (catalog: UiProjectResourceCatalog | null | undefined): 'MV' | 'MZ' | undefined =>
+  catalog?.engine === 'MZ' ? 'MZ' : catalog?.engine === 'MV' ? 'MV' : undefined
+
+/** Identity of the native text profile: changes here rebuild text/button objects. */
+export const nativeTextSignature = (catalog: UiProjectResourceCatalog | null | undefined): string => {
+  const engine = catalogEngine(catalog)
+  if (!engine) return ''
+  const file = NATIVE_MAIN_FONT_FILES[engine]
+  return JSON.stringify([engine, catalog?.mainFontFace ?? '', previewUrlFor(catalog, file.path) ?? ''])
+}
+
+/** Resolve the project's engine-native font family and outline defaults. */
+export const resolveNativeTextProfile = async (catalog: UiProjectResourceCatalog | null | undefined): Promise<UiFabricNativeTextProfile> => {
+  const engine = catalogEngine(catalog)
+  if (!engine) return {}
+  const face = catalog?.mainFontFace?.trim() || (engine === 'MV' ? 'GameFont' : 'rmmz-mainfont, sans-serif')
+  const file = NATIVE_MAIN_FONT_FILES[engine]
+  const url = previewUrlFor(catalog, file.path)
+  if (url && face.includes(file.family)) {
+    // Install the shipped game font under its engine family name so design
+    // state shows the real glyphs; on failure the family string still falls
+    // back through its own list.
+    await installUiFabricFontFamily(file.family, url).catch(() => undefined)
+  }
+  return { fontFamily: face, outline: NATIVE_TEXT_OUTLINE[engine] }
 }
 
 const geometryKeys = new Set(['x', 'y', 'width', 'height', 'scaleX', 'scaleY', 'rotate', 'opacity', 'visible', 'anchorX', 'anchorY', 'zIndex'])
@@ -70,7 +116,8 @@ export function configureFabricScaleControls(object: FabricObject) {
 }
 
 export function fabricNodeVisualSignature(node: UiNode, catalog: UiProjectResourceCatalog | null | undefined): string {
-  if (node.type === 'text') return JSON.stringify([node.type, node.props.fontFile, previewUrlFor(catalog, node.props.fontFile) ?? ''])
+  const native = nativeTextSignature(catalog)
+  if (node.type === 'text') return JSON.stringify([node.type, node.props.fontFile, previewUrlFor(catalog, node.props.fontFile) ?? '', native])
   if (node.type === 'button') {
     const statePath = node.props.imageStates.normal
     return JSON.stringify([
@@ -80,6 +127,7 @@ export function fabricNodeVisualSignature(node: UiNode, catalog: UiProjectResour
       previewUrlFor(catalog, 'img/system/Window.png') ?? '',
       node.props.fontFile,
       previewUrlFor(catalog, node.props.fontFile) ?? '',
+      native,
     ])
   }
   if (node.type === 'nineSlice') return JSON.stringify([node.type, node.props.path, previewUrlFor(catalog, node.props.path) ?? ''])
@@ -262,7 +310,9 @@ const textShadow = (node: UiTextNode | UiButtonNode) => node.props.shadowBlur ||
   ? new Shadow({ color: node.props.shadowColor, blur: node.props.shadowBlur, offsetX: node.props.shadowOffsetX, offsetY: node.props.shadowOffsetY })
   : undefined
 
-const applyTextStyle = (object: Textbox, node: UiTextNode | UiButtonNode, fontFamily?: string) => {
+const applyTextStyle = (object: Textbox, node: UiTextNode | UiButtonNode, fontFamily?: string, native?: UiFabricNativeTextProfile) => {
+  const strokeWidth = node.props.strokeWidth > 0 ? node.props.strokeWidth : (native?.outline?.width ?? 0)
+  const strokeColor = node.props.strokeWidth > 0 ? node.props.strokeColor : native?.outline?.color
   object.set({
     text: node.props.content,
     width: Math.max(20, node.props.width),
@@ -270,11 +320,13 @@ const applyTextStyle = (object: Textbox, node: UiTextNode | UiButtonNode, fontFa
     fontSize: node.props.fontSize,
     fontWeight: node.props.fontWeight,
     fontStyle: node.props.italic ? 'italic' : 'normal',
-    fontFamily: fontFamily || 'sans-serif',
+    fontFamily: fontFamily || native?.fontFamily || 'sans-serif',
     charSpacing: node.props.letterSpacing * 10,
     fill: node.props.textColor,
-    stroke: node.props.strokeWidth > 0 ? node.props.strokeColor : undefined,
-    strokeWidth: node.props.strokeWidth,
+    stroke: strokeWidth > 0 ? strokeColor : undefined,
+    strokeWidth,
+    // The engine draws the outline behind the fill; match that paint order.
+    paintFirst: strokeWidth > 0 ? 'stroke' : 'fill',
     textAlign: node.props.align,
     backgroundColor: node.type === 'button' ? '#00000000' : node.props.backgroundColor,
     shadow: textShadow(node),
@@ -289,7 +341,7 @@ const applyTextStyle = (object: Textbox, node: UiTextNode | UiButtonNode, fontFa
   object.setCoords()
 }
 
-const createTextNode = (node: UiTextNode | UiButtonNode, fontFamily?: string) => {
+const createTextNode = (node: UiTextNode | UiButtonNode, fontFamily?: string, native?: UiFabricNativeTextProfile) => {
   const object = new UiLayoutTextbox(node.props.content, {
     ...commonObjectOptions(node),
     width: Math.max(20, node.props.width),
@@ -301,7 +353,7 @@ const createTextNode = (node: UiTextNode | UiButtonNode, fontFamily?: string) =>
     editable: !node.locked,
     backgroundColor: node.props.backgroundColor,
   })
-  applyTextStyle(object, node, fontFamily)
+  applyTextStyle(object, node, fontFamily, native)
   return object
 }
 
@@ -314,7 +366,7 @@ const loadFabricImageSource = async (url: string | undefined) => {
   }
 }
 
-const createButtonNode = async (node: UiButtonNode, catalog: UiProjectResourceCatalog | null | undefined, fontFamily?: string) => {
+const createButtonNode = async (node: UiButtonNode, catalog: UiProjectResourceCatalog | null | undefined, fontFamily?: string, native?: UiFabricNativeTextProfile) => {
   const [stateImageElement, windowSkinElement] = await Promise.all([
     loadFabricImageSource(previewUrlFor(catalog, node.props.imageStates.normal)),
     loadFabricImageSource(previewUrlFor(catalog, 'img/system/Window.png')),
@@ -332,7 +384,7 @@ const createButtonNode = async (node: UiButtonNode, catalog: UiProjectResourceCa
     stateImageElement,
     windowSkinElement,
   })
-  applyTextStyle(object, node, fontFamily)
+  applyTextStyle(object, node, fontFamily, native)
   return object
 }
 
@@ -407,13 +459,15 @@ export async function createFabricNodeObject(node: UiNode, catalog: UiProjectRes
   else if (node.type === 'frameAnimation') object = await createImageNode(node, node.props.frames[node.props.initialFrame]?.path ?? node.props.frames[0]?.path ?? '', node.props.fillMode, catalog, '帧动画\n添加帧后即可播放')
   else if (node.type === 'text') {
     const fontFamily = await loadNodeFontFamily(node, catalog)
-    object = createTextNode(node, fontFamily)
-    extra = { fontFamily }
+    const native = await resolveNativeTextProfile(catalog)
+    object = createTextNode(node, fontFamily, native)
+    extra = { fontFamily, nativeTextProfile: native }
   }
   else if (node.type === 'button') {
     const fontFamily = await loadNodeFontFamily(node, catalog)
-    object = await createButtonNode(node, catalog, fontFamily)
-    extra = { fontFamily }
+    const native = await resolveNativeTextProfile(catalog)
+    object = await createButtonNode(node, catalog, fontFamily, native)
+    extra = { fontFamily, nativeTextProfile: native }
   }
   else if (node.type === 'progressBar') object = createProgress(node)
   else if (node.type === 'overlay') object = boundary(node.props.width, node.props.height, { fill: node.props.fillColor })
@@ -467,7 +521,7 @@ const applyHierarchyClipPath = (object: UiFabricNodeObject, node: UiNode, docume
 }
 
 export function applyFabricNodeGeometry(object: UiFabricNodeObject, node: UiNode, document: UiDesignerDocument) {
-  if (object instanceof Textbox && (node.type === 'text' || node.type === 'button') && !object.isEditing) applyTextStyle(object, node, object.data.fontFamily)
+  if (object instanceof Textbox && (node.type === 'text' || node.type === 'button') && !object.isEditing) applyTextStyle(object, node, object.data.fontFamily, object.data.nativeTextProfile)
   if (object instanceof UiNineSliceImage && node.type === 'nineSlice') {
     object.set({ width: Math.max(1, node.props.width), height: Math.max(1, node.props.height) })
     object.setNineSliceLayout({

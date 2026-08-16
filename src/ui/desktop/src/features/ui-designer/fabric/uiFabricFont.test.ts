@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { createUiFabricFontLoader, uiFabricFontFamily } from './uiFabricFont'
+import { createUiFabricFontLoader, installUiFabricFontFamily, uiFabricFontFamily } from './uiFabricFont'
 
 test('project fonts use a stable family and are installed once per resource URL', async () => {
   assert.equal(uiFabricFontFamily('fonts/Heading Font.woff2'), uiFabricFontFamily('FONTS\\Heading Font.woff2'))
@@ -15,4 +15,11 @@ test('project fonts use a stable family and are installed once per resource URL'
 
   assert.equal(first, second)
   assert.deepEqual(installed, [{ family: first, url: 'rpg-agent-preview://resource/font-a' }])
+})
+
+test('named engine font families install directly and failures are not cached', async () => {
+  // Node has no FontFace API; both attempts must reject so a later retry in a
+  // real renderer can still succeed.
+  await assert.rejects(installUiFabricFontFamily('GameFont', 'rpg-agent-preview://resource/gamefont'), /FontFace/)
+  await assert.rejects(installUiFabricFontFamily('GameFont', 'rpg-agent-preview://resource/gamefont'), /FontFace/)
 })

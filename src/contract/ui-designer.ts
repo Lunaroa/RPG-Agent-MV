@@ -735,6 +735,15 @@ export interface UiProjectResourceCatalog {
   projectPath: string
   engine: 'MV' | 'MZ' | 'unknown'
   projectCompatibility?: UiDesignerProjectCompatibility
+  /**
+   * The project's native window-text profile from data/System.json: the face
+   * MV's Window_Base.standardFontFace would pick for the project locale, or
+   * MZ's advanced font settings. Design-state text renders with these
+   * defaults so it matches the engine-native preview. Absent when the engine
+   * or System.json cannot be resolved.
+   */
+  mainFontFace?: string
+  mainFontSize?: number
   resources: UiResourceEntry[]
   /** Total matches before the bounded page returned to the renderer. */
   total?: number

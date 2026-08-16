@@ -275,4 +275,55 @@ describe('ui designer resource catalog', () => {
     assert.equal(catalog.projectCompatibility?.engineVersionSupported, false);
     assert.match(catalog.projectCompatibility?.warnings.join(' ') || '', /outside the validated/i);
   });
+
+  test('resolves the engine-native main font profile from data/System.json', () => {
+    const mvProject = (name: string, locale: string | null) => {
+      const project = path.join(tempRoot, name);
+      fs.mkdirSync(path.join(project, 'data'), { recursive: true });
+      fs.writeFileSync(path.join(project, 'Game.rpgproject'), 'RPGMV', 'utf8');
+      fs.writeFileSync(path.join(project, 'data', 'System.json'), JSON.stringify(locale === null ? {} : { locale }), 'utf8');
+      fs.writeFileSync(path.join(project, 'data', 'MapInfos.json'), '[null]', 'utf8');
+      return project;
+    };
+
+    const zh = inspectUiDesignerResources(mvProject('mv-zh', 'zh-CN'));
+    assert.equal(zh.engine, 'MV');
+    assert.equal(zh.mainFontFace, 'SimHei, Heiti TC, sans-serif');
+    assert.equal(zh.mainFontSize, 28);
+
+    const ko = inspectUiDesignerResources(mvProject('mv-ko', 'ko-KR'));
+    assert.equal(ko.mainFontFace, 'Dotum, AppleGothic, sans-serif');
+
+    const fallback = inspectUiDesignerResources(mvProject('mv-default', 'ja-JP'));
+    assert.equal(fallback.mainFontFace, 'GameFont');
+    assert.equal(fallback.mainFontSize, 28);
+
+    const broken = path.join(tempRoot, 'mv-broken');
+    fs.mkdirSync(path.join(broken, 'data'), { recursive: true });
+    fs.writeFileSync(path.join(broken, 'Game.rpgproject'), 'RPGMV', 'utf8');
+    fs.writeFileSync(path.join(broken, 'data', 'System.json'), '{not-json', 'utf8');
+    fs.writeFileSync(path.join(broken, 'data', 'MapInfos.json'), '[null]', 'utf8');
+    const brokenCatalog = inspectUiDesignerResources(broken);
+    assert.equal(brokenCatalog.mainFontFace, undefined);
+    assert.equal(brokenCatalog.mainFontSize, undefined);
+
+    const mz = path.join(tempRoot, 'mz-font');
+    fs.mkdirSync(path.join(mz, 'data'), { recursive: true });
+    fs.mkdirSync(path.join(mz, 'js', 'plugins'), { recursive: true });
+    fs.writeFileSync(path.join(mz, 'game.rmmzproject'), '{}', 'utf8');
+    fs.writeFileSync(path.join(mz, 'index.html'), '<!doctype html>', 'utf8');
+    fs.writeFileSync(path.join(mz, 'package.json'), '{}', 'utf8');
+    for (const fileName of ['rmmz_core.js', 'rmmz_managers.js', 'rmmz_objects.js', 'rmmz_scenes.js', 'rmmz_sprites.js', 'rmmz_windows.js', 'main.js', 'plugins.js']) {
+      fs.writeFileSync(path.join(mz, 'js', fileName), fileName === 'rmmz_core.js' ? 'Utils.RPGMAKER_NAME = "MZ"; Utils.RPGMAKER_VERSION = "1.9.0";' : '', 'utf8');
+    }
+    fs.writeFileSync(path.join(mz, 'data', 'System.json'), JSON.stringify({
+      gameTitle: 'Sample', versionId: 1, tileSize: 48, faceSize: 144, iconSize: 32,
+      advanced: { screenWidth: 816, screenHeight: 624, uiAreaWidth: 816, uiAreaHeight: 624, fontFace: 'CustomFace, serif', fontSize: 31 },
+    }), 'utf8');
+    fs.writeFileSync(path.join(mz, 'data', 'MapInfos.json'), '[null]', 'utf8');
+    const mzCatalog = inspectUiDesignerResources(mz);
+    assert.equal(mzCatalog.engine, 'MZ');
+    assert.equal(mzCatalog.mainFontFace, 'CustomFace, serif');
+    assert.equal(mzCatalog.mainFontSize, 31);
+  });
 });

@@ -904,7 +904,8 @@
       });
     }
     var fontFamily = resolveTextFontFamily(props);
-    var fontSize = finite(props.fontSize, 24);
+    var fontSize = finite(props.fontSize, nativeTextProfile().fontSize);
+    var stroke = nativeStroke(props);
     var cursorX = 0;
     var cursorY = 0;
     var lineHeight = fontSize * 1.2;
@@ -934,8 +935,8 @@
         fontStyle: run.italic || props.italic ? 'italic' : 'normal',
         fontFamily: fontFamily,
         fill: run.color || props.textColor || '#ffffff',
-        stroke: props.strokeColor || '#000000',
-        strokeThickness: finite(props.strokeWidth, 0),
+        stroke: stroke.color,
+        strokeThickness: stroke.width,
       });
       text.x = cursorX; text.y = cursorY;
       view.addChild(text);
@@ -947,6 +948,46 @@
     });
     view.__mzuiRichText = 'safe-runs';
     renderTextBackground(view, props);
+  }
+
+  // One shared style applier for plain text nodes so the freshly created
+  // object and every later props update render the same native profile:
+  // engine main font family/size by default, designer props on top, and the
+  // engine's native window-text outline unless the designer sets a stroke.
+  function applyPlainTextStyle(view, props) {
+    if (!view) return;
+    view.text = String(props.content || '');
+    view.style = view.style || {};
+    var native = nativeTextProfile();
+    var stroke = nativeStroke(props);
+    Object.assign(view.style, {
+      fontSize: finite(props.fontSize, native.fontSize),
+      fontWeight: props.fontWeight || 'normal',
+      fontStyle: props.italic ? 'italic' : 'normal',
+      fontFamily: resolveTextFontFamily(props),
+      fill: props.textColor || '#ffffff',
+      stroke: stroke.color,
+      strokeThickness: stroke.width,
+      letterSpacing: finite(props.letterSpacing, 0),
+      wordWrap: finite(props.wrapWidth, 0) > 0,
+      wordWrapWidth: finite(props.wrapWidth, 0),
+      align: props.align || 'left',
+    });
+    view.style.dropShadow = finite(props.shadowBlur, 0) > 0 || Boolean(props.shadowColor);
+    view.style.dropShadowColor = props.shadowColor || '#000000';
+    view.style.dropShadowDistance = Math.max(Math.abs(finite(props.shadowOffsetX, 0)), Math.abs(finite(props.shadowOffsetY, 0)));
+    var textPadding = props.padding || {};
+    // PIXI.TextStyle.padding is one numeric texture padding value in both
+    // the MV and MZ Pixi versions. Passing the editor's four-edge object
+    // prevents the text canvas from being generated.
+    view.style.padding = Math.max(
+      0,
+      finite(textPadding.top, 0),
+      finite(textPadding.right, 0),
+      finite(textPadding.bottom, 0),
+      finite(textPadding.left, 0)
+    );
+    view.style.textBaseline = props.verticalAlign || 'top';
   }
 
   function createDisplayNode(node, runtime) {
@@ -1017,8 +1058,9 @@
       view.__mzuiTextNode = true;
     }
     else if (node.type === 'text' && typeof PIXI.Text === 'function') {
-      view = new PIXI.Text(String(props.content || ''), { fontSize: props.fontSize || 24, fontFamily: resolveTextFontFamily(props), fill: props.textColor || '#ffffff' });
+      view = new PIXI.Text(String(props.content || ''), {});
       view.__mzuiTextNode = true;
+      applyPlainTextStyle(view, props);
     }
     else if (node.type === 'button') view = createButtonWindow(props);
     else if ((node.type === 'progressBar' || node.type === 'overlay') && typeof PIXI.Graphics === 'function') view = new PIXI.Graphics();
@@ -1053,14 +1095,69 @@
     try { return new global.Window_Base(rect.x, rect.y, rect.width, rect.height); } catch (_) { return null; }
   }
 
-  // MV and MZ expose the same Window_Base.drawText signature:
-  // (text, x, y, maxWidth, align).  The line height belongs to the
-  // underlying Bitmap.drawText call made by the engine; passing a designer
-  // height here shifts it into CanvasRenderingContext2D.textAlign.
-  function drawWindowText(view, text, x, y, maxWidth, align) {
-    if (!view || typeof view.drawText !== 'function') return false;
-    view.drawText(text, x, y, maxWidth, align);
-    return true;
+  // Button labels stay on the engine's native pipeline: the window's own
+  // contents Bitmap with the engine drawText signature (text, x, y,
+  // maxWidth, lineHeight, align).  The designer's text props are applied on
+  // top of the native window font profile, and lines are laid out inside the
+  // window content area (engine padding) with the engine baseline formula
+  // doing the vertical centering.  MV's Bitmap has no fontBold; bold labels
+  // render at the engine weight there, matching what the shipped game does.
+  function renderButtonText(view, props) {
+    if (!view || !view.contents || typeof view.contents.drawText !== 'function') return;
+    var contents = view.contents;
+    var native = nativeTextProfile();
+    var stroke = nativeStroke(props);
+    contents.fontFace = resolveTextFontFamily(props);
+    contents.fontSize = finite(props.fontSize, native.fontSize);
+    contents.fontBold = props.fontWeight === 'bold';
+    contents.fontItalic = props.italic === true;
+    contents.textColor = props.textColor || '#ffffff';
+    contents.outlineColor = stroke.color;
+    contents.outlineWidth = stroke.width;
+    var padding = typeof view.standardPadding === 'function' ? view.standardPadding() : (typeof view.padding === 'number' ? view.padding : 0);
+    var contentWidth = Math.max(1, finite(props.width, 0) - padding * 2);
+    var contentHeight = Math.max(0, finite(props.height, 0) - padding * 2);
+    var lineHeight = Math.max(1, Math.ceil(contents.fontSize * 1.3));
+    // The editor textbox wraps per grapheme; mirror that for button labels.
+    var lines = wrapButtonTextLines(contents, String(props.content || ''), contentWidth);
+    var totalHeight = lines.length * lineHeight;
+    var top = props.verticalAlign === 'middle' || !props.verticalAlign
+      ? Math.max(0, (contentHeight - totalHeight) / 2)
+      : props.verticalAlign === 'bottom'
+        ? Math.max(0, contentHeight - totalHeight)
+        : 0;
+    var align = props.align || 'center';
+    for (var index = 0; index < lines.length; index += 1) {
+      contents.drawText(lines[index], 0, Math.round(top + index * lineHeight), contentWidth, lineHeight, align);
+    }
+  }
+
+  function wrapButtonTextLines(contents, text, maxWidth) {
+    var source = String(text == null ? '' : text).replace(/\r\n?/g, '\n');
+    var lines = [];
+    source.split('\n').forEach(function (paragraph) {
+      if (!paragraph) { lines.push(''); return; }
+      var current = '';
+      var characters = Array.from(paragraph);
+      for (var index = 0; index < characters.length; index += 1) {
+        var candidate = current + characters[index];
+        if (current && measureButtonText(contents, candidate) > maxWidth) {
+          lines.push(current);
+          current = characters[index];
+        } else {
+          current = candidate;
+        }
+      }
+      if (current) lines.push(current);
+    });
+    return lines;
+  }
+
+  function measureButtonText(contents, text) {
+    try {
+      if (typeof contents.measureTextWidth === 'function') return contents.measureTextWidth(text);
+    } catch (_) {}
+    return text.length * finite(contents.fontSize, 24) * 0.6;
   }
 
   function RectangleLike(x, y, width, height) {
@@ -1533,25 +1630,7 @@
       if (view.__mzuiTextRuns) {
         renderTextRuns(view, props, view.__mzuiContext || {});
       } else if (view.text !== undefined) {
-        view.text = String(props.content || '');
-        view.style = view.style || {};
-        var fontFamily = resolveTextFontFamily(props);
-        Object.assign(view.style, { fontSize: finite(props.fontSize, 24), fontWeight: props.fontWeight || 'normal', fontStyle: props.italic ? 'italic' : 'normal', fontFamily: fontFamily, fill: props.textColor || '#ffffff', stroke: props.strokeColor || '#000000', strokeThickness: finite(props.strokeWidth, 0), letterSpacing: finite(props.letterSpacing, 0), wordWrap: finite(props.wrapWidth, 0) > 0, wordWrapWidth: finite(props.wrapWidth, 0), align: props.align || 'left' });
-        view.style.dropShadow = finite(props.shadowBlur, 0) > 0 || Boolean(props.shadowColor);
-        view.style.dropShadowColor = props.shadowColor || '#000000';
-        view.style.dropShadowDistance = Math.max(Math.abs(finite(props.shadowOffsetX, 0)), Math.abs(finite(props.shadowOffsetY, 0)));
-        var textPadding = props.padding || {};
-        // PIXI.TextStyle.padding is one numeric texture padding value in both
-        // the MV and MZ Pixi versions. Passing the editor's four-edge object
-        // prevents the text canvas from being generated.
-        view.style.padding = Math.max(
-          0,
-          finite(textPadding.top, 0),
-          finite(textPadding.right, 0),
-          finite(textPadding.bottom, 0),
-          finite(textPadding.left, 0)
-        );
-        view.style.textBaseline = props.verticalAlign || 'top';
+        applyPlainTextStyle(view, props);
         view.__mzuiRichText = 'plain-text';
         if (props.backgroundColor) view.__mzuiBackgroundColor = props.backgroundColor;
         renderTextBackground(view, props);
@@ -1559,7 +1638,7 @@
     }
     if (node.type === 'button') {
       if ('contents' in view && view.contents && typeof view.contents.clear === 'function') view.contents.clear();
-      drawWindowText(view, String(props.content || ''), 0, 0, finite(props.width, 0), props.align || 'left');
+      renderButtonText(view, props);
       if ('openness' in view) view.openness = 255;
       applyButtonVisual(view, props);
     }
@@ -2098,11 +2177,65 @@
   function resolveTextFontFamily(props) {
     var loaded = loadFontFile(props && props.fontFile);
     if (loaded) return loaded;
-    if (global.$gameSystem && typeof global.$gameSystem.mainFontFace === 'function') {
-      var engineFont = global.$gameSystem.mainFontFace();
-      if (typeof engineFont === 'string' && engineFont.trim()) return engineFont.trim();
+    return nativeTextProfile().fontFace;
+  }
+
+  // The RPG Maker native text style is whatever the project engine itself
+  // uses for window text: MZ exposes $gameSystem.mainFontFace/mainFontSize,
+  // MV exposes Window_Base.standardFontFace/standardFontSize (locale-aware),
+  // and the Bitmap defaults carry the native outline color and width.  A
+  // fresh 1x1 engine Bitmap is a cheap synchronous probe for those defaults,
+  // so designer text matches the game without hardcoding engine constants.
+  var nativeTextProfileCache = null;
+  function nativeTextProfile() {
+    if (nativeTextProfileCache) return nativeTextProfileCache;
+    var face = '';
+    var size = NaN;
+    var tryFace = function (value) {
+      if (typeof value === 'string' && value.trim()) { face = value.trim(); return true; }
+      return false;
+    };
+    var trySize = function (value) {
+      if (typeof value === 'number' && isFinite(value) && value > 0) { size = value; return true; }
+      return false;
+    };
+    var windowBase = global.Window_Base && global.Window_Base.prototype;
+    if (global.$gameSystem) {
+      try { if (typeof global.$gameSystem.mainFontFace === 'function') tryFace(global.$gameSystem.mainFontFace()); } catch (_) {}
+      try { if (typeof global.$gameSystem.mainFontSize === 'function') trySize(global.$gameSystem.mainFontSize()); } catch (_) {}
     }
-    return 'sans-serif';
+    if (!face && windowBase) {
+      // MV standardFontFace reads $gameSystem.isChinese/isKorean through the
+      // project's $dataSystem locale; call it only when that state exists.
+      var mvLocaleReady = global.$gameSystem && typeof global.$gameSystem.isChinese === 'function';
+      try { if (mvLocaleReady && typeof windowBase.standardFontFace === 'function') tryFace(windowBase.standardFontFace()); } catch (_) {}
+      try { if (typeof windowBase.mainFontFace === 'function') tryFace(windowBase.mainFontFace()); } catch (_) {}
+    }
+    if (!isFinite(size) && windowBase) {
+      try { if (typeof windowBase.standardFontSize === 'function') trySize(windowBase.standardFontSize()); } catch (_) {}
+      try { if (typeof windowBase.mainFontSize === 'function') trySize(windowBase.mainFontSize()); } catch (_) {}
+    }
+    var probe = null;
+    try { if (global.Bitmap) probe = new global.Bitmap(1, 1); } catch (_) {}
+    var isMvEngine = Boolean(global.Utils && global.Utils.RPGMAKER_NAME === 'MV');
+    var outlineColor = probe && typeof probe.outlineColor === 'string' ? probe.outlineColor : 'rgba(0, 0, 0, 0.5)';
+    var outlineWidth = probe && isFinite(probe.outlineWidth) && probe.outlineWidth >= 0 ? probe.outlineWidth : (isMvEngine ? 4 : 3);
+    nativeTextProfileCache = {
+      fontFace: face || (probe && typeof probe.fontFace === 'string' && probe.fontFace.trim() ? probe.fontFace.trim() : 'sans-serif'),
+      fontSize: isFinite(size) ? size : (probe && isFinite(probe.fontSize) && probe.fontSize > 0 ? probe.fontSize : 24),
+      outlineColor: outlineColor,
+      outlineWidth: outlineWidth,
+    };
+    return nativeTextProfileCache;
+  }
+
+  // Designer stroke wins when set; otherwise text keeps the engine's native
+  // window-text outline (MV width 4, MZ width 3, both rgba(0,0,0,0.5)).
+  function nativeStroke(props) {
+    var strokeWidth = finite(props && props.strokeWidth, 0);
+    if (strokeWidth > 0) return { color: (props && props.strokeColor) || '#000000', width: strokeWidth };
+    var native = nativeTextProfile();
+    return { color: native.outlineColor, width: native.outlineWidth };
   }
 
   function shouldRunNodeAnimation(node, visible) {

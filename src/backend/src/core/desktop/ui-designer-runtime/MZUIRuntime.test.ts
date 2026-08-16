@@ -97,6 +97,8 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.equal(runtime.nodeViews.button.__mzuiButtonStates.normal, '');
     assert.equal(runtime.nodeViews.text.style.fontSize, 24);
     assert.equal(runtime.nodeViews.text.style.fontFamily, 'sans-serif');
+    assert.equal(runtime.nodeViews.text.style.stroke, 'rgba(0, 0, 0, 0.5)');
+    assert.equal(runtime.nodeViews.text.style.strokeThickness, 3);
     assert.equal(runtime.nodeViews.nineSlice.zIndex, 3);
     runtime.update();
     assert.equal(runtime.nodeViews.progressBar.__mzuiAnimatedRatio, 0.5);
@@ -418,11 +420,11 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.equal(played.at(-1), 'EventConfirm');
   });
 
-  test('uses the official MV Window_Base and Bitmap drawText signatures for button text', () => {
+  test('renders MV button text through the engine Bitmap with native font settings', () => {
     assertEngineWindowTextSignature('MV');
   });
 
-  test('uses the official MZ Window_Base and Bitmap drawText signatures for button text', () => {
+  test('renders MZ button text through the engine Bitmap with native font settings', () => {
     assertEngineWindowTextSignature('MZ');
   });
 
@@ -1649,38 +1651,72 @@ function sceneScript(ready = '', update = ''): { version: '1.1.0'; source: strin
 
 function assertEngineWindowTextSignature(engine: 'MV' | 'MZ'): void {
   const context = makeContext();
-  const windowCalls: unknown[][] = [];
   const bitmapCalls: unknown[][] = [];
+  const bitmapFont: Record<string, unknown> = {};
   class EngineBitmap {
     clear() {}
+    measureTextWidth(text: string) { return String(text).length * 10; }
     drawText(...args: unknown[]) { bitmapCalls.push(args); }
+  }
+  for (const key of ['fontFace', 'fontSize', 'fontBold', 'fontItalic', 'textColor', 'outlineColor', 'outlineWidth']) {
+    Object.defineProperty(EngineBitmap.prototype, key, {
+      get() { return bitmapFont[key]; },
+      set(value: unknown) { bitmapFont[key] = value; },
+      configurable: true,
+    });
   }
   class EngineWindow extends context.PIXI.Container {
     contents = new EngineBitmap();
     constructor(..._args: unknown[]) { super(); }
-    lineHeight() { return 36; }
-    drawText(...args: unknown[]) {
-      windowCalls.push(args);
-      const [text, x, y, maxWidth, align] = args;
-      this.contents.drawText(text, x, y, maxWidth, this.lineHeight(), align);
-    }
+    standardPadding() { return 18; }
   }
   context.Window_Base = EngineWindow;
   context.Utils = { RPGMAKER_NAME: engine };
+  // MZ exposes the main font through $gameSystem; MV falls through to the
+  // engine Bitmap defaults probe, exactly like the real engines.
+  if (engine === 'MZ') {
+    context.$gameSystem = { mainFontFace: () => 'rmmz-mainfont, sans-serif', mainFontSize: () => 26 };
+  }
+  context.Bitmap = class {
+    fontFace = 'GameFont';
+    fontSize = 28;
+    textColor = '#ffffff';
+    outlineColor = 'rgba(0, 0, 0, 0.5)';
+    outlineWidth = engine === 'MZ' ? 3 : 4;
+  };
   vm.runInNewContext(RUNTIME_SOURCE, context, { filename: `MZUIRuntime-${engine}-drawText.js` });
   const runtime = context.MZUIRuntime.create();
   const scene = allNodeScene();
+  const button = scene.nodes.find((node: any) => node.type === 'button');
   const text = scene.nodes.find((node: any) => node.type === 'text');
+  button.props.content = 'OK';
+  button.props.textColor = '#fff';
   text.props.content = 'line one\nline two';
   text.props.wrapWidth = 40;
   text.props.align = 'right';
   runtime.mount(scene, { root: new context.PIXI.Container() });
   runtime.update();
 
-  assert.deepEqual(windowCalls[0], ['OK', 0, 0, 100, 'center']);
-  assert.deepEqual(bitmapCalls[0], ['OK', 0, 0, 100, 36, 'center']);
-  assert.equal(windowCalls.every((args) => args.length === 5 && typeof args[4] === 'string'), true);
+  const expectedFace = engine === 'MZ' ? 'rmmz-mainfont, sans-serif' : 'GameFont';
+  const expectedSize = engine === 'MZ' ? 26 : 28;
+  const expectedOutlineWidth = engine === 'MZ' ? 3 : 4;
+  // Button label: designer props applied onto the native window profile and
+  // drawn line-by-line inside the 100x80 window's 18px-padded content area.
+  assert.equal(bitmapFont.fontFace, expectedFace);
+  assert.equal(bitmapFont.fontSize, expectedSize);
+  assert.equal(bitmapFont.textColor, '#fff');
+  assert.equal(bitmapFont.outlineColor, 'rgba(0, 0, 0, 0.5)');
+  assert.equal(bitmapFont.outlineWidth, expectedOutlineWidth);
+  assert.equal(bitmapFont.fontBold, false);
+  const lineHeight = Math.ceil(expectedSize * 1.3);
+  const contentHeight = 80 - 18 * 2;
+  const centeredTop = Math.round(Math.max(0, (contentHeight - lineHeight) / 2));
+  assert.deepEqual(bitmapCalls[0], ['OK', 0, centeredTop, 100 - 18 * 2, lineHeight, 'center']);
   assert.equal(bitmapCalls.every((args) => args.length === 6 && typeof args[5] === 'string'), true);
+  // Plain text node: same native family, size and outline defaults.
+  assert.equal(runtime.nodeViews.text.style.fontFamily, expectedFace);
+  assert.equal(runtime.nodeViews.text.style.stroke, 'rgba(0, 0, 0, 0.5)');
+  assert.equal(runtime.nodeViews.text.style.strokeThickness, expectedOutlineWidth);
   assert.equal(runtime.nodeViews.text.style.wordWrap, true);
   assert.equal(runtime.nodeViews.text.style.wordWrapWidth, 40);
   assert.equal(runtime.nodeViews.text.style.align, 'right');

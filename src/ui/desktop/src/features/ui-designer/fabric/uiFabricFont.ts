@@ -40,3 +40,26 @@ const browserFontLoader = createUiFabricFontLoader({
 })
 
 export const loadUiFabricFont = browserFontLoader
+
+const installedNamedFamilies = new Map<string, Promise<void>>()
+
+/**
+ * Install a font file under an explicit family name, e.g. the engine's own
+ * 'GameFont' or 'rmmz-mainfont', so design-state text renders with the same
+ * glyphs the game preview shows. Failures resolve quietly: the family string
+ * stays in the style and the browser falls back per its own list.
+ */
+export function installUiFabricFontFamily(family: string, url: string): Promise<void> {
+  if (typeof FontFace !== 'function' || typeof document === 'undefined' || !document.fonts) {
+    return Promise.reject(new Error('The UI designer requires the browser FontFace API to render project fonts.'))
+  }
+  const key = `${family}\0${url}`
+  const existing = installedNamedFamilies.get(key)
+  if (existing) return existing
+  const loading = new FontFace(family, `url(${JSON.stringify(url)})`).load().then((loaded) => {
+    document.fonts.add(loaded)
+  })
+  installedNamedFamilies.set(key, loading)
+  void loading.catch(() => { if (installedNamedFamilies.get(key) === loading) installedNamedFamilies.delete(key) })
+  return loading
+}

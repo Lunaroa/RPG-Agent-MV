@@ -134,8 +134,40 @@ export function inspectUiDesignerResources(
     projectPath: project,
     engine: manifest.engine === 'rpg-maker-mz' ? 'MZ' : manifest.engine === 'rpg-maker-mv' ? 'MV' : 'unknown',
     projectCompatibility: uiDesignerProjectCompatibility(manifest),
+    ...nativeTextProfileForCatalog(project, manifest),
     resources,
   };
+}
+
+/**
+ * The project's native window-text profile from data/System.json, mirroring
+ * what the engine resolves at runtime (MV Window_Base.standardFontFace by
+ * project locale, MZ advanced font settings). The preview runtime reads the
+ * same values from the live engine objects; this is the design-state source.
+ */
+export function nativeTextProfileForCatalog(
+  project: string,
+  manifest: ReturnType<typeof inspectRmmvProject>,
+): Pick<UiProjectResourceCatalog, 'mainFontFace' | 'mainFontSize'> {
+  if (manifest.engine !== 'rpg-maker-mv' && manifest.engine !== 'rpg-maker-mz') return {};
+  const layout = resolveRmmvLayout(project);
+  let system: unknown;
+  try {
+    system = JSON.parse(fs.readFileSync(path.join(layout.resourceRoot, 'data', 'System.json'), 'utf8'));
+  } catch {
+    return {};
+  }
+  if (!system || typeof system !== 'object') return {};
+  if (manifest.engine === 'rpg-maker-mv') {
+    const locale = String((system as { locale?: unknown }).locale ?? '');
+    if (/^zh/.test(locale)) return { mainFontFace: 'SimHei, Heiti TC, sans-serif', mainFontSize: 28 };
+    if (/^ko/.test(locale)) return { mainFontFace: 'Dotum, AppleGothic, sans-serif', mainFontSize: 28 };
+    return { mainFontFace: 'GameFont', mainFontSize: 28 };
+  }
+  const advanced = (system as { advanced?: { fontFace?: unknown; fontSize?: unknown } }).advanced;
+  const fontFace = typeof advanced?.fontFace === 'string' && advanced.fontFace.trim() ? advanced.fontFace.trim() : 'rmmz-mainfont, sans-serif';
+  const fontSize = typeof advanced?.fontSize === 'number' && Number.isFinite(advanced.fontSize) && advanced.fontSize > 0 ? advanced.fontSize : 26;
+  return { mainFontFace: fontFace, mainFontSize: Math.round(fontSize) };
 }
 
 /**
@@ -505,6 +537,7 @@ function pageResourceCatalog(
     projectPath: project,
     engine: manifest.engine === 'rpg-maker-mz' ? 'MZ' : manifest.engine === 'rpg-maker-mv' ? 'MV' : 'unknown',
     projectCompatibility: uiDesignerProjectCompatibility(manifest),
+    ...nativeTextProfileForCatalog(project, manifest),
     resources: filtered.slice(offset, offset + limit),
     total,
     offset,

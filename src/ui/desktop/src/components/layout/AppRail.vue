@@ -29,23 +29,23 @@ const items = computed(() => {
     },
     { id: 'map-overview', to: '/map-overview', label: t('app.nav.mapOverview'), icon: MapLocation, uiId: 'nav-map-overview' },
     {
-      id: 'plugin-marketplace',
-      to: '/plugin-marketplace',
-      label: t('app.nav.pluginMarketplace'),
-      icon: Shop,
-      uiId: 'nav-plugin-marketplace',
-    },
-    {
       id: 'plugins',
       to: '/console?page=plugins',
       label: t('settings.console.plugins'),
       icon: Connection,
       uiId: 'nav-plugins',
     },
+    {
+      id: 'plugin-marketplace',
+      to: '/plugin-marketplace',
+      label: t('app.nav.pluginMarketplace'),
+      icon: Shop,
+      uiId: 'nav-plugin-marketplace',
+    },
     { id: 'console', to: '/console', label: t('app.nav.console'), icon: Monitor, uiId: 'nav-console' },
   ]
   if (productPlugins.isEnabled('ui-designer')) {
-    base.splice(5, 0, {
+    base.splice(4, 0, {
       id: 'ui-designer',
       to: '/ui-designer',
       label: t('app.nav.uiDesigner'),

@@ -134,6 +134,7 @@ export function saveUiDesignerFile(
 }
 
 export class UiDesignerUserDataStore {
+  private readonly workingDocumentsRoot: string;
   private readonly snapshotsRoot: string;
   private readonly recentPath: string;
   private readonly recoveryPath: string;
@@ -144,6 +145,7 @@ export class UiDesignerUserDataStore {
     const resolvedUserDataRoot = path.resolve(userDataRoot);
     const persistentRoot = path.join(resolvedUserDataRoot, 'data', 'ui-designer');
     const recoveryRoot = path.join(resolvedUserDataRoot, 'runtime', 'ui-designer');
+    this.workingDocumentsRoot = path.join(recoveryRoot, 'documents');
     this.snapshotsRoot = path.join(recoveryRoot, 'snapshots');
     this.recoveryPath = path.join(recoveryRoot, 'recovery.json');
     this.recentFilesPath = path.join(persistentRoot, 'recent-files.json');
@@ -158,6 +160,27 @@ export class UiDesignerUserDataStore {
       recentPath: this.recentPath,
       preferencesPath: this.preferencesPath,
     });
+  }
+
+  isWorkingDocumentPath(filePath: string): boolean {
+    if (typeof filePath !== 'string' || !filePath.trim()) return false;
+    const resolved = path.resolve(filePath);
+    const relative = path.relative(path.resolve(this.workingDocumentsRoot), resolved);
+    return path.extname(resolved).toLowerCase() === UI_DESIGNER_FILE_EXTENSION
+      && Boolean(relative)
+      && path.dirname(relative) === '.';
+  }
+
+  saveWorkingDocument(
+    document: UiDesignerDocument,
+    options: UiDesignerSaveOptions & { path?: string; duplicate?: boolean } = {},
+  ): UiDesignerFileMetadata {
+    const requestedPath = typeof options.path === 'string' ? options.path : '';
+    const reuseExisting = options.duplicate !== true && this.isWorkingDocumentPath(requestedPath);
+    const targetPath = reuseExisting ? path.resolve(requestedPath) : this.nextWorkingDocumentPath();
+    return saveUiDesignerFile(targetPath, document, reuseExisting
+      ? { expected: options.expected, force: options.force }
+      : {});
   }
 
   captureSnapshot(filePath: string): UiDesignerSnapshotRecord {
@@ -337,6 +360,18 @@ export class UiDesignerUserDataStore {
     catch (error) { throw new UiDesignerPersistenceError('list-recent-files', 'Recent-file history is damaged. Repair or remove the recent-file metadata file before continuing.', error); }
     if (!Array.isArray(raw) || raw.some((value) => !isRecentFileRecord(value))) throw new UiDesignerPersistenceError('list-recent-files', 'Recent-file history has an invalid record shape and was not silently discarded.');
     return raw.slice(0, UI_DESIGNER_RECENT_LIMIT) as UiDesignerRecentFileRecord[];
+  }
+
+  private nextWorkingDocumentPath(): string {
+    fs.mkdirSync(this.workingDocumentsRoot, { recursive: true });
+    if (fs.lstatSync(this.workingDocumentsRoot).isSymbolicLink()) {
+      throw new UiDesignerPersistenceError('save-working-document', 'The UI designer working-document folder cannot be a symbolic link.');
+    }
+    let candidate: string;
+    do {
+      candidate = path.join(this.workingDocumentsRoot, `${crypto.randomUUID()}${UI_DESIGNER_FILE_EXTENSION}`);
+    } while (fs.existsSync(candidate));
+    return candidate;
   }
 }
 

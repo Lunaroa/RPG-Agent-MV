@@ -10,12 +10,13 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
   const handlers = new Map<string, (...args: any[]) => any>()
   const ipcMain = { handle(name: string, handler: (...args: any[]) => any) { handlers.set(name, handler) } }
   let selectedFrameFolder: string | undefined
+  let saveDialogs = 0
   const dialog = {
     async showOpenDialog(_parent: unknown, options?: { properties?: string[] }) {
       if (options?.properties?.includes('openDirectory')) return selectedFrameFolder ? { canceled: false, filePaths: [selectedFrameFolder] } : { canceled: true, filePaths: [] }
       return { canceled: true, filePaths: [] }
     },
-    async showSaveDialog() { return { canceled: true, filePath: undefined } },
+    async showSaveDialog() { saveDialogs += 1; return { canceled: true, filePath: undefined } },
   }
   let saved = 0
   const revealRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-ipc-'))
@@ -25,6 +26,12 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
   const recent: Array<{ path: string; options?: { opened?: boolean; saved?: boolean; sceneName?: string } }> = []
   let rendererStarts = 0
   const userDataStore = {
+    isWorkingDocumentPath: (filePath: string) => filePath.startsWith('runtime/documents/'),
+    saveWorkingDocument: (_document: unknown, options: { path?: string; duplicate?: boolean } = {}) => {
+      saved += 1
+      const filePath = !options.duplicate && options.path?.startsWith('runtime/documents/') ? options.path : `runtime/documents/${saved}.mzui`
+      return { path: filePath, digest: `digest-${saved}`, mtimeMs: saved, size: 2 }
+    },
     recordRecentFile(path: string, options?: { opened?: boolean; saved?: boolean; sceneName?: string }) { recent.push({ path, options }); return { sourcePath: path, lastOpenedAt: 'now', exists: true } },
     listRecentFiles: () => [],
     removeRecentFile: () => {},
@@ -40,7 +47,7 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
     resolveProject: (project) => project || 'project',
     file: {
       readUiDesignerFile: (filePath) => ({ document: { meta: { sceneName: 'Scene_Sample' } }, metadata: { path: filePath, digest: 'digest', mtimeMs: 1, size: 2 } }),
-      saveUiDesignerFile: () => { saved += 1; return { path: 'scene.mzui', digest: 'digest', mtimeMs: 2, size: 2 } },
+      saveUiDesignerFile: () => { throw new Error('ordinary designer saves must use the runtime working-document store') },
       revealSource: (filePath: string) => { revealed.push(filePath) },
       UiDesignerUserDataStore: class { constructor() { return userDataStore as any } } as any,
     },
@@ -79,10 +86,13 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
 
   const opened = await handlers.get('ui-designer:file:open')!({ sender: {} }, { path: 'scene.mzui' })
   assert.equal(opened.status, 'ready')
-  assert.deepEqual(recent[0], { path: 'scene.mzui', options: { opened: true, sceneName: 'Scene_Sample' } })
-  const savedResult = await handlers.get('ui-designer:file:save')!({ sender: {} }, { path: 'scene.mzui' }, { meta: {} })
+  assert.equal(opened.sourcePath, 'runtime/documents/1.mzui')
+  assert.deepEqual(recent[0], { path: 'runtime/documents/1.mzui', options: { opened: true, sceneName: 'Scene_Sample' } })
+  const savedResult = await handlers.get('ui-designer:file:save')!({ sender: {} }, { path: opened.sourcePath }, { meta: {} })
   assert.equal(savedResult.status, 'success')
-  assert.equal(saved, 1)
+  assert.equal(savedResult.sourcePath, opened.sourcePath)
+  assert.equal(saved, 2)
+  assert.equal(saveDialogs, 0)
   assert.equal(recent[1].options?.saved, true)
   assert.equal(recent[1].options?.opened, false)
   const revealResult = await handlers.get('ui-designer:file:reveal-source')!(null, revealPath)

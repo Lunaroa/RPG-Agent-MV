@@ -98,6 +98,27 @@ describe('ui designer document service', () => {
     assert.deepEqual(store.readPreferences(), { leftPaneWidth: 261, centerPaneWidth: 640, rightPaneWidth: 550 });
   });
 
+  test('keeps working documents in runtime and never reuses an external source path', () => {
+    const userDataRoot = path.join(tempRoot, 'user-data');
+    const store = new UiDesignerUserDataStore(userDataRoot);
+    const document = sampleDocument();
+    const externalPath = path.join(tempRoot, 'external.mzui');
+
+    const imported = store.saveWorkingDocument(document, { path: externalPath });
+    assert.equal(path.dirname(imported.path), path.join(userDataRoot, 'runtime', 'ui-designer', 'documents'));
+    assert.equal(store.isWorkingDocumentPath(imported.path), true);
+    assert.equal(fs.existsSync(externalPath), false);
+
+    document.meta.description = 'Saved in runtime';
+    const saved = store.saveWorkingDocument(document, { path: imported.path, expected: imported });
+    assert.equal(saved.path, imported.path);
+    assert.equal(readUiDesignerFile(imported.path).document.meta.description, 'Saved in runtime');
+
+    const duplicate = store.saveWorkingDocument(document, { path: imported.path, duplicate: true });
+    assert.notEqual(duplicate.path, imported.path);
+    assert.equal(store.isWorkingDocumentPath(duplicate.path), true);
+  });
+
   test('uses expected digest/mtime conflict checks and explicit force', () => {
     const filePath = path.join(tempRoot, 'scene.mzui');
     const document = sampleDocument();

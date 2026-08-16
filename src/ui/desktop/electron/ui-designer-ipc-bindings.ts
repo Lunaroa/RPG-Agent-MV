@@ -64,6 +64,8 @@ export interface UiDesignerIpcDependencies {
 }
 
 interface UiDesignerUserDataStoreLike {
+  isWorkingDocumentPath(path: string): boolean
+  saveWorkingDocument(document: UiDesignerDocument, options?: { path?: string; duplicate?: boolean; expected?: Pick<UiDesignerFileMetadata, 'digest' | 'mtimeMs'>; force?: boolean }): UiDesignerFileMetadata
   listRecentFiles(): UiDesignerRecentFileRecord[]
   recordRecentFile(path: string, options?: { opened?: boolean; saved?: boolean; sceneName?: string }): UiDesignerRecentFileRecord
   removeRecentFile(path: string): void
@@ -127,19 +129,26 @@ export function registerUiDesignerIpcHandlers(
     if (!filePath) return { status: 'idle', operation: 'open', message: 'Canceled.' }
     try {
       const result = dependencies.file.readUiDesignerFile(filePath)
-      dependencies.userDataStore().recordRecentFile(filePath, { opened: true, sceneName: result.document.meta.sceneName })
-      return { status: 'ready', operation: 'open', value: result.document, metadata: result.metadata, sourcePath: filePath, message: 'Ready.' }
+      const store = dependencies.userDataStore()
+      const metadata = store.isWorkingDocumentPath(filePath)
+        ? result.metadata
+        : store.saveWorkingDocument(result.document)
+      store.recordRecentFile(metadata.path, { opened: true, sceneName: result.document.meta.sceneName })
+      return { status: 'ready', operation: 'open', value: result.document, metadata, sourcePath: metadata.path, message: 'Ready.' }
     } catch (error) { return operationError('open', error) }
   })
 
-  const save = async (event: { sender: unknown }, request: UiDesignerFileRequest, document: UiDesignerDocument, mode: 'save' | 'saveAs') => {
-    const parent = dependencies.dialogParent?.(event.sender)
-    const filePath = mode === 'save' && request?.path ? request.path : await selectedPath(dialog, parent, 'save')
-    if (!filePath) return { status: 'idle', operation: mode, message: 'Canceled.' }
+  const save = async (_event: { sender: unknown }, request: UiDesignerFileRequest, document: UiDesignerDocument, mode: 'save' | 'saveAs') => {
     try {
-      const metadata = dependencies.file.saveUiDesignerFile(filePath, document, { expected: request?.expected, force: request?.force })
-      dependencies.userDataStore().recordRecentFile(filePath, { saved: true, opened: mode === 'saveAs', sceneName: document.meta.sceneName })
-      return { status: 'success', operation: mode, metadata, sourcePath: filePath, message: 'Saved.' }
+      const store = dependencies.userDataStore()
+      const metadata = store.saveWorkingDocument(document, {
+        path: request?.path,
+        duplicate: mode === 'saveAs',
+        expected: request?.expected,
+        force: request?.force,
+      })
+      store.recordRecentFile(metadata.path, { saved: true, opened: mode === 'saveAs', sceneName: document.meta.sceneName })
+      return { status: 'success', operation: mode, metadata, sourcePath: metadata.path, message: 'Saved.' }
     } catch (error) { return operationError(mode, error) }
   }
   ipcMain.handle('ui-designer:file:save', (event, request: UiDesignerFileRequest, document: UiDesignerDocument) => save(event, request || {}, document, 'save'))

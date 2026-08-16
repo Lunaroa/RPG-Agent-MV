@@ -1,4 +1,5 @@
 import type { UiDesignerDocument, UiGuide, UiNode, UiPoint, UiRect, UiSnapResult, UiViewport } from '@contract/ui-designer'
+import { resolveTreeOrderRanks } from './tree'
 import {
   UI_DESIGNER_PANE_LIMITS,
   normalizeUiDesignerDocumentGeometry,
@@ -198,12 +199,16 @@ export function rectCenter(rect: UiRect): UiPoint {
   return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
 }
 
-/** Keep an editable node inside a parent that explicitly clips its children. */
+/**
+ * Keep an editable node inside a parent that explicitly clips its children.
+ * The root canvas never constrains editing: it crops at render time only, so
+ * nodes may sit outside the scene while being edited.
+ */
 export function clampNodeRectToParent(document: UiDesignerDocument, nodeId: string, rect: UiRect, preserveAspect = false): UiRect {
   const node = findDocumentNode(document, nodeId)
   if (!node || node.parentId === null) return normalizeGeometryRect(rect, rect)
   const parent = findDocumentNode(document, node.parentId)
-  if (!parent || parent.type !== 'container' || !parent.props.clip) return normalizeGeometryRect(rect, rect)
+  if (!parent || parent.id === 'node_root' || parent.type !== 'container' || !parent.props.clip) return normalizeGeometryRect(rect, rect)
   const parentRect = nodeRect(parent)
   const requestedWidth = Math.max(1, rect.width)
   const requestedHeight = Math.max(1, rect.height)
@@ -222,7 +227,7 @@ export function clampNodePositionToParent(document: UiDesignerDocument, nodeId: 
   const node = findDocumentNode(document, nodeId)
   if (!node) return normalizeGeometryPoint(position)
   const parent = node.parentId === null ? undefined : findDocumentNode(document, node.parentId)
-  if (!parent || parent.type !== 'container' || !parent.props.clip) return normalizeGeometryPoint(position)
+  if (!parent || parent.id === 'node_root' || parent.type !== 'container' || !parent.props.clip) return normalizeGeometryPoint(position)
   const rect = nodeRect(node)
   const parentRect = nodeRect(parent)
   const requestedX = position.x - rect.width * node.props.anchorX
@@ -248,6 +253,19 @@ export function clampNodePositionToParent(document: UiDesignerDocument, nodeId: 
 
 export function nodeRotationRadians(node: UiNode): number {
   return (Number.isFinite(node.props.rotate) ? node.props.rotate : 0) * Math.PI / 180
+}
+
+/** Axis-aligned scene-space bounds of the rotated visual rect; identical to nodeRect when unrotated. */
+export function nodeVisualRect(node: UiNode): UiRect {
+  const rect = nodeRect(node)
+  const theta = nodeRotationRadians(node)
+  if (theta % Math.PI === 0) return rect
+  const cosine = Math.abs(Math.cos(theta))
+  const sine = Math.abs(Math.sin(theta))
+  const center = rectCenter(rect)
+  const width = rect.width * cosine + rect.height * sine
+  const height = rect.width * sine + rect.height * cosine
+  return { x: center.x - width / 2, y: center.y - height / 2, width, height }
 }
 
 /** Exact scene-space center of a node's visual rect, honoring scale, rotation, and anchor. */
@@ -419,22 +437,28 @@ export function topmostNodeAtPoint(
   includeRoot = false,
   renderedBounds?: Record<string, UiRect & { visible?: boolean }>,
 ): UiNode | undefined {
-  const order = new Map(document.nodes.map((node, index) => [node.id, index]))
+  const order = resolveTreeOrderRanks(document)
   return document.nodes
     .filter((node) => (includeRoot || node.id !== 'node_root') && node.props.visible !== false && renderedBounds?.[node.id]?.visible !== false)
     .filter((node) => {
       const rect = renderedBounds?.[node.id] ?? nodeRect(node)
       return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height
     })
-    .sort((left, right) => right.props.zIndex - left.props.zIndex || (order.get(right.id) ?? 0) - (order.get(left.id) ?? 0))[0]
+    .sort((left, right) => right.props.zIndex - left.props.zIndex || (order.get(left.id) ?? 0) - (order.get(right.id) ?? 0))[0]
 }
 
 /** Smart-snap peers must share the same parent-local coordinate space and be editable visual targets. */
-export function smartSnapTargetsForNode(document: UiDesignerDocument, nodeId: string): SmartSnapTarget[] {
+/**
+ * Sibling rects worth snapping to. `excludeIds` removes nodes that move with
+ * the drag (the rest of a multi-selection) so a group never snaps onto its
+ * own members' pre-drag positions.
+ */
+export function smartSnapTargetsForNode(document: UiDesignerDocument, nodeId: string, excludeIds: readonly string[] = []): SmartSnapTarget[] {
   const source = findDocumentNode(document, nodeId)
   if (!source) return []
   return document.nodes
     .filter((node) => node.id !== nodeId
+      && !excludeIds.includes(node.id)
       && node.id !== 'node_root'
       && node.parentId === source.parentId
       && node.props.visible !== false
@@ -445,29 +469,60 @@ export function smartSnapTargetsForNode(document: UiDesignerDocument, nodeId: st
 interface SnapCandidate {
   value: number
   guide?: UiGuide
+  source?: 'canvas' | 'node'
+  nodeId?: string
 }
 
 interface AxisSnap {
+  axis: 'x' | 'y'
   value: number
   delta: number
   guide?: UiGuide
+  source?: 'canvas' | 'node'
+  nodeId?: string
+}
+
+/** What one snap hit aligned to, so the canvas can draw transient feedback for it. */
+export interface UiSnapHit {
+  axis: 'x' | 'y'
+  value: number
+  source: 'canvas' | 'node' | 'guide'
+  guideId?: string
+  nodeId?: string
+}
+
+export interface UiSnapFeedbackLine {
+  axis: 'x' | 'y'
+  position: number
+  start: number
+  end: number
+  source: 'canvas' | 'node'
+}
+
+export interface UiSnapFeedback {
+  lines: UiSnapFeedbackLine[]
+  guideIds: string[]
+}
+
+export interface UiSnapPointResult extends UiSnapResult {
+  hits: UiSnapHit[]
 }
 
 function snapCandidates(options: SnapOptions): { x: SnapCandidate[]; y: SnapCandidate[] } {
   const x: SnapCandidate[] = []
   const y: SnapCandidate[] = []
-  const pushFinite = (list: SnapCandidate[], value: number, guide?: UiGuide) => {
-    if (Number.isFinite(value)) list.push({ value: Math.round(value), guide })
+  const pushFinite = (list: SnapCandidate[], value: number, guide?: UiGuide, source?: 'canvas' | 'node', nodeId?: string) => {
+    if (Number.isFinite(value)) list.push({ value: Math.round(value), guide, source, nodeId })
   }
   if (options.canvasWidth !== undefined && Number.isFinite(options.canvasWidth)) {
-    pushFinite(x, 0)
-    pushFinite(x, options.canvasWidth / 2)
-    pushFinite(x, options.canvasWidth)
+    pushFinite(x, 0, undefined, 'canvas')
+    pushFinite(x, options.canvasWidth / 2, undefined, 'canvas')
+    pushFinite(x, options.canvasWidth, undefined, 'canvas')
   }
   if (options.canvasHeight !== undefined && Number.isFinite(options.canvasHeight)) {
-    pushFinite(y, 0)
-    pushFinite(y, options.canvasHeight / 2)
-    pushFinite(y, options.canvasHeight)
+    pushFinite(y, 0, undefined, 'canvas')
+    pushFinite(y, options.canvasHeight / 2, undefined, 'canvas')
+    pushFinite(y, options.canvasHeight, undefined, 'canvas')
   }
   for (const guide of options.guides) {
     if (guide.locked || !Number.isFinite(guide.position)) continue
@@ -478,49 +533,91 @@ function snapCandidates(options: SnapOptions): { x: SnapCandidate[]; y: SnapCand
       const rect = target.rect
       if (![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)) continue
       const center = rectCenter(rect)
-      pushFinite(x, rect.x)
-      pushFinite(x, rect.x + rect.width)
-      pushFinite(x, center.x)
-      pushFinite(y, rect.y)
-      pushFinite(y, rect.y + rect.height)
-      pushFinite(y, center.y)
+      pushFinite(x, rect.x, undefined, 'node', target.id)
+      pushFinite(x, rect.x + rect.width, undefined, 'node', target.id)
+      pushFinite(x, center.x, undefined, 'node', target.id)
+      pushFinite(y, rect.y, undefined, 'node', target.id)
+      pushFinite(y, rect.y + rect.height, undefined, 'node', target.id)
+      pushFinite(y, center.y, undefined, 'node', target.id)
     }
   }
   return { x, y }
 }
 
-function nearestAxisSnap(current: number, candidates: SnapCandidate[], sensitivity: number): AxisSnap | undefined {
-  return candidates.reduce<AxisSnap | undefined>((best, candidate) => {
+function nearestAxisSnap(current: number, candidates: SnapCandidate[], sensitivity: number): (SnapCandidate & { delta: number }) | undefined {
+  return candidates.reduce<(SnapCandidate & { delta: number }) | undefined>((best, candidate) => {
     const delta = Math.abs(candidate.value - current)
     if (!Number.isFinite(delta) || delta > sensitivity || (best && delta >= best.delta)) return best
-    return { value: candidate.value, delta, guide: candidate.guide }
+    return { ...candidate, delta }
   }, undefined)
 }
 
 function snapAxis(current: number, axis: 'x' | 'y', options: SnapOptions): AxisSnap | undefined {
   const sensitivity = Number.isFinite(options.sensitivity) && options.sensitivity >= 0 ? options.sensitivity : 0
+  const withAxis = (candidate?: SnapCandidate & { delta: number }): AxisSnap | undefined => candidate ? { axis, ...candidate } : undefined
   if (options.gridEnabled && Number.isFinite(options.gridSize) && options.gridSize > 0) {
     const gridValue = Math.round(current / options.gridSize) * options.gridSize
     const gridSnap = nearestAxisSnap(current, [{ value: Math.round(gridValue) }], sensitivity)
     const candidates = snapCandidates(options)[axis]
-    return nearestAxisSnap(current, gridSnap ? [{ value: gridSnap.value }, ...candidates] : candidates, sensitivity)
+    return withAxis(nearestAxisSnap(current, gridSnap ? [{ value: gridSnap.value }, ...candidates] : candidates, sensitivity))
   }
-  return nearestAxisSnap(current, snapCandidates(options)[axis], sensitivity)
+  return withAxis(nearestAxisSnap(current, snapCandidates(options)[axis], sensitivity))
 }
 
-export function snapPoint(point: UiPoint, options: SnapOptions): UiSnapResult {
+function snapHitFor(snap: AxisSnap): UiSnapHit | undefined {
+  if (snap.guide) return { axis: snap.axis, value: snap.value, source: 'guide', guideId: snap.guide.id }
+  if (snap.source) return snap.nodeId ? { axis: snap.axis, value: snap.value, source: snap.source, nodeId: snap.nodeId } : { axis: snap.axis, value: snap.value, source: snap.source }
+  return undefined
+}
+
+/** Transient world-space feedback for the hits of an active snap: dashed alignment lines plus ruler guides to highlight. */
+export function snapFeedbackFor(document: UiDesignerDocument, draggedRect: UiRect, hits: readonly UiSnapHit[]): UiSnapFeedback {
+  const lines: UiSnapFeedbackLine[] = []
+  const guideIds: string[] = []
+  for (const hit of hits) {
+    if (hit.source === 'guide') {
+      if (hit.guideId) guideIds.push(hit.guideId)
+      continue
+    }
+    let start: number
+    let end: number
+    if (hit.source === 'node') {
+      const target = findDocumentNode(document, hit.nodeId ?? '')
+      if (!target) continue
+      const rect = nodeRect(target)
+      if (hit.axis === 'x') {
+        start = Math.min(draggedRect.y, rect.y)
+        end = Math.max(draggedRect.y + draggedRect.height, rect.y + rect.height)
+      } else {
+        start = Math.min(draggedRect.x, rect.x)
+        end = Math.max(draggedRect.x + draggedRect.width, rect.x + rect.width)
+      }
+    } else if (hit.axis === 'x') {
+      start = 0
+      end = document.canvas.height
+    } else {
+      start = 0
+      end = document.canvas.width
+    }
+    if (Number.isFinite(start) && Number.isFinite(end) && end - start > 0) lines.push({ axis: hit.axis, position: hit.value, start, end, source: hit.source })
+  }
+  return { lines, guideIds }
+}
+
+export function snapPoint(point: UiPoint, options: SnapOptions): UiSnapPointResult {
   const safeX = Number.isFinite(point.x) ? point.x : 0
   const safeY = Number.isFinite(point.y) ? point.y : 0
   if (options.enabled === false) {
     const normalized = normalizeGeometryPoint({ x: safeX, y: safeY })
-    return { ...normalized, snapped: false, guides: [] }
+    return { ...normalized, snapped: false, guides: [], hits: [] }
   }
   const xSnap = snapAxis(safeX, 'x', options)
   const ySnap = snapAxis(safeY, 'y', options)
   const guides = [xSnap?.guide, ySnap?.guide].filter((guide): guide is UiGuide => Boolean(guide))
+  const hits = [xSnap, ySnap].filter((snap): snap is AxisSnap => Boolean(snap)).map(snapHitFor).filter((hit): hit is UiSnapHit => Boolean(hit))
   const distances = [xSnap?.delta, ySnap?.delta].filter((value): value is number => value !== undefined)
   const normalized = normalizeGeometryPoint({ x: xSnap?.value ?? safeX, y: ySnap?.value ?? safeY }, { x: safeX, y: safeY })
-  return { ...normalized, snapped: Boolean(xSnap || ySnap), guides, distance: distances.length ? Math.min(...distances) : undefined }
+  return { ...normalized, snapped: Boolean(xSnap || ySnap), guides, hits, distance: distances.length ? Math.min(...distances) : undefined }
 }
 
 const activeXEdge = (rect: UiRect, handle: UiResizeHandle): number | undefined => handle.includes('w') ? rect.x : handle.includes('e') ? rect.x + rect.width : undefined
@@ -655,55 +752,68 @@ export function updateNodeRect(document: UiDesignerDocument, nodeId: string, rec
   return applyNodeGeometryTransaction(document, nodeId, { kind: 'rect', rect })
 }
 
+/**
+ * Align nodes on their rotated visual bounds. The reference edge comes from
+ * the selection's visual union (or the canvas); each node is translated so
+ * its visual rect lands on the reference, which keeps rotated nodes visually
+ * flush instead of aligning their invisible unrotated frames.
+ */
 export function alignNodes(
   document: UiDesignerDocument,
   ids: readonly string[],
   alignment: UiAlignment,
-  reference: 'canvas' | 'selection' = 'selection',
+  reference: 'canvas' | 'selection' | 'parent' = 'selection',
 ): UiDesignerDocument {
   const next = cloneDocument(document)
   const nodes = next.nodes.filter((node) => ids.includes(node.id))
   if (!nodes.length) return next
-  const bounds = nodes.reduce<UiRect>((acc, node) => {
-    const rect = nodeRect(node)
-    return {
-      x: Math.min(acc.x, rect.x),
-      y: Math.min(acc.y, rect.y),
-      width: Math.max(acc.x + acc.width, rect.x + rect.width) - Math.min(acc.x, rect.x),
-      height: Math.max(acc.y + acc.height, rect.y + rect.height) - Math.min(acc.y, rect.y),
-    }
-  }, nodeRect(nodes[0]))
-  for (const node of nodes) {
-    const rect = nodeRect(node)
-    if (alignment === 'left') node.props.x = (reference === 'canvas' ? 0 : bounds.x) + rect.width * node.props.anchorX
-    if (alignment === 'centerX') node.props.x = (reference === 'canvas' ? document.canvas.width : bounds.x + bounds.width / 2) - rect.width / 2 + rect.width * node.props.anchorX
-    if (alignment === 'right') node.props.x = (reference === 'canvas' ? document.canvas.width : bounds.x + bounds.width) - rect.width + rect.width * node.props.anchorX
-    if (alignment === 'top') node.props.y = (reference === 'canvas' ? 0 : bounds.y) + rect.height * node.props.anchorY
-    if (alignment === 'centerY') node.props.y = (reference === 'canvas' ? document.canvas.height : bounds.y + bounds.height / 2) - rect.height / 2 + rect.height * node.props.anchorY
-    if (alignment === 'bottom') node.props.y = (reference === 'canvas' ? document.canvas.height : bounds.y + bounds.height) - rect.height + rect.height * node.props.anchorY
+  const rects = nodes.map((node) => nodeVisualRect(node))
+  const bounds = rects.reduce<UiRect>((acc, rect) => ({
+    x: Math.min(acc.x, rect.x),
+    y: Math.min(acc.y, rect.y),
+    width: Math.max(acc.x + acc.width, rect.x + rect.width) - Math.min(acc.x, rect.x),
+    height: Math.max(acc.y + acc.height, rect.y + rect.height) - Math.min(acc.y, rect.y),
+  }), rects[0])
+  const canvasRect: UiRect = { x: 0, y: 0, width: document.canvas.width, height: document.canvas.height }
+  const referenceRectFor = (node: UiNode): UiRect => {
+    if (reference === 'canvas') return canvasRect
+    if (reference === 'selection') return bounds
+    const parent = node.parentId === null ? undefined : findDocumentNode(next, node.parentId)
+    if (!parent || parent.id === 'node_root') return canvasRect
+    return nodeVisualRect(parent)
   }
+  nodes.forEach((node, index) => {
+    const rect = rects[index]
+    const target = referenceRectFor(node)
+    if (alignment === 'left') node.props.x += target.x - rect.x
+    if (alignment === 'centerX') node.props.x += target.x + target.width / 2 - (rect.x + rect.width / 2)
+    if (alignment === 'right') node.props.x += target.x + target.width - (rect.x + rect.width)
+    if (alignment === 'top') node.props.y += target.y - rect.y
+    if (alignment === 'centerY') node.props.y += target.y + target.height / 2 - (rect.y + rect.height / 2)
+    if (alignment === 'bottom') node.props.y += target.y + target.height - (rect.y + rect.height)
+  })
   return normalizeUiDesignerDocumentGeometry(next)
 }
 
+/** Distribute even gaps between the nodes' rotated visual bounds along one axis. */
 export function distributeNodes(document: UiDesignerDocument, ids: readonly string[], axis: UiDistributionAxis): UiDesignerDocument {
   const next = cloneDocument(document)
   const nodes = next.nodes.filter((node) => ids.includes(node.id))
   if (nodes.length < 3) return next
-  const sorted = [...nodes].sort((a, b) => (axis === 'horizontal' ? a.props.x - b.props.x : a.props.y - b.props.y))
-  const first = sorted[0]
-  const last = sorted[sorted.length - 1]
-  const firstRect = nodeRect(first)
-  const lastRect = nodeRect(last)
-  const firstEdge = axis === 'horizontal' ? firstRect.x : firstRect.y
+  const entries = nodes.map((node) => ({ node, rect: nodeVisualRect(node) }))
+  const sorted = [...entries].sort((a, b) => (axis === 'horizontal' ? a.rect.x - b.rect.x : a.rect.y - b.rect.y))
+  const lastRect = sorted[sorted.length - 1].rect
+  const firstEdge = axis === 'horizontal' ? sorted[0].rect.x : sorted[0].rect.y
   const lastEdge = axis === 'horizontal' ? lastRect.x + lastRect.width : lastRect.y + lastRect.height
-  const totalSize = sorted.reduce((sum, node) => sum + (axis === 'horizontal' ? nodeRect(node).width : nodeRect(node).height), 0)
+  const totalSize = sorted.reduce((sum, entry) => sum + (axis === 'horizontal' ? entry.rect.width : entry.rect.height), 0)
   const gap = (lastEdge - firstEdge - totalSize) / (sorted.length - 1)
   let cursor = firstEdge
-  for (const node of sorted) {
-    if (axis === 'horizontal') node.props.x = cursor + node.props.width * node.props.scaleX * node.props.anchorX
-    else node.props.y = cursor + node.props.height * node.props.scaleY * node.props.anchorY
-    const rect = nodeRect(node)
-    cursor += (axis === 'horizontal' ? rect.width : rect.height) + gap
+  for (const entry of sorted) {
+    const start = axis === 'horizontal' ? entry.rect.x : entry.rect.y
+    const size = axis === 'horizontal' ? entry.rect.width : entry.rect.height
+    if (axis === 'horizontal') entry.node.props.x += cursor - start
+    else entry.node.props.y += cursor - start
+    cursor += size + gap
   }
   return normalizeUiDesignerDocumentGeometry(next)
 }

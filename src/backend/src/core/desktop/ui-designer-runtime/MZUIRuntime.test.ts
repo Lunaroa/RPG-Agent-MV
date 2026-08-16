@@ -35,6 +35,25 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.equal(runtime.mounted, false);
   });
 
+  test('paints the first tree sibling on top by attaching views in reverse tree order', () => {
+    const context = makeContext();
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-order.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = sceneDocument();
+    const second = JSON.parse(JSON.stringify(scene.nodes[0]));
+    second.id = 'second';
+    second.name = 'Second';
+    second.children = [];
+    second.events = {};
+    scene.nodes.push(second);
+    scene.zOrder = ['root', 'second'];
+    runtime.mount(scene, { root: new context.PIXI.Container() });
+    const displayRoot = runtime.nodeViews.root.parent;
+    assert.equal(displayRoot.children[0], runtime.nodeViews.second);
+    assert.equal(displayRoot.children[1], runtime.nodeViews.root);
+    runtime.cleanup();
+  });
+
   test('binds SceneManager push and refuses native scene replacement', () => {
     const context = makeContext();
     vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
@@ -889,6 +908,31 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.equal(view.style.padding, 8);
     assert.equal(view.scale.x, 1);
     assert.equal(view.scale.y, 1);
+    runtime.cleanup();
+  });
+
+  test('plain text keeps the engine alphabetic baseline and vertical-aligns by offset', () => {
+    const context = makeContext();
+    class TextStyleProbe extends context.PIXI.Text {
+      style: Record<string, unknown> = {};
+    }
+    context.PIXI.Text = TextStyleProbe;
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    scene.nodes = scene.nodes.filter((node: any) => node.type === 'text');
+    scene.zOrder = ['text'];
+    const textNode = scene.nodes[0];
+    textNode.props.y = 100;
+    textNode.props.height = 80;
+    textNode.props.scaleY = 1;
+    textNode.props.verticalAlign = 'middle';
+    runtime.mount(scene, { root: new context.PIXI.Container() });
+    const view = runtime.nodeViews.text;
+    assert.equal(view.style.textBaseline, 'alphabetic');
+    assert.equal(view.y, 140);
+    runtime.patchNodes([{ nodeId: 'text', props: { verticalAlign: 'top' } }]);
+    assert.equal(view.y, 100);
     runtime.cleanup();
   });
 

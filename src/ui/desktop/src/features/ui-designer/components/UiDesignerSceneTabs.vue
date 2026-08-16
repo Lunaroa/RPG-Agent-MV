@@ -34,10 +34,7 @@ const switchTab = (event: KeyboardEvent) => {
 }
 onMounted(() => window.addEventListener('keydown', switchTab))
 onBeforeUnmount(() => window.removeEventListener('keydown', switchTab))
-const tabLabel = (scene: UiDesignerSceneState) => {
-  const source = scene.sourcePath?.split(/[\\/]/).pop()
-  return source ? `${source} · ${scene.document.meta.sceneName}` : scene.document.meta.sceneName
-}
+const tabLabel = (scene: UiDesignerSceneState) => scene.document.meta.sceneName
 </script>
 
 <template>

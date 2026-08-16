@@ -15,12 +15,14 @@ import {
   scopeNodes,
   type UiFabricNodeObject,
 } from '../fabric/fabricNodeFactory'
+import { useUiDesignerI18n } from '../i18n'
 
 const props = defineProps<{
   designer: UiDesignerController
   document: UiDesignerDocument
   resourceCatalog?: UiProjectResourceCatalog | null
   scopeNodeId: string
+  workspaceMargin: number
   zoom: number
   active: boolean
 }>()
@@ -30,6 +32,7 @@ const emit = defineEmits<{
 }>()
 
 const unwrap = <T,>(value: T | Ref<T>): T => isRef(value) ? value.value : value
+const { language: designerLanguage } = useUiDesignerI18n()
 const canvasElement = ref<HTMLCanvasElement>()
 let canvas: Canvas | undefined
 let reconcileGeneration = 0
@@ -163,6 +166,14 @@ const syncContainerLabels = () => {
 const reconcile = async () => {
   if (!canvas) return
   const generation = ++reconcileGeneration
+  // Geometry below is written in canvas-absolute coordinates. Objects inside a
+  // multi-select ActiveSelection interpret left/top relative to the selection
+  // group, so dissolve it first; syncFabricSelection rebuilds it at the end.
+  if (canvas.getActiveObject() instanceof ActiveSelection) {
+    syncingSelection = true
+    canvas.discardActiveObject()
+    syncingSelection = false
+  }
   const desiredNodes = scopeNodes(props.document, props.scopeNodeId)
   const desiredIds = new Set(desiredNodes.map((node) => node.id))
   for (const nodeId of [...objects.keys()]) if (!desiredIds.has(nodeId)) removeObject(nodeId)
@@ -174,7 +185,7 @@ const reconcile = async () => {
       object = undefined
     }
     if (!object) {
-      const created = await createFabricNodeObject(node, props.resourceCatalog, props.document)
+      const created = await createFabricNodeObject(node, props.resourceCatalog, props.document, designerLanguage.value)
       if (generation !== reconcileGeneration || !canvas || !nodeById(node.id)) {
         disposeFabricNodeObject(created)
         continue
@@ -235,10 +246,19 @@ const moveObject = (target: FabricObject) => {
   if (!state || state.action !== 'move') return
   const delta = { x: target.left - (state.targetLeft ?? target.left), y: target.top - (state.targetTop ?? target.top) }
   const drafts = props.designer.previewSelectedPositionsWithSnap(state.nodeIds, state.origins, delta)
-  const selectedRoots = new Set(state.nodeIds)
+  // ActiveSelection members interpret left/top relative to the selection group;
+  // fabric already moves them with the group, so writing absolute drafts to them
+  // would teleport them mid-drag. Non-member descendants stay flat/absolute.
+  const selectionMembers = target instanceof ActiveSelection ? new Set(target.getObjects()) : undefined
   for (const [id, position] of Object.entries(drafts)) {
     const object = objects.get(id)
-    if (!object || target instanceof ActiveSelection && selectedRoots.has(id)) continue
+    if (!object) continue
+    if (selectionMembers?.has(object)) {
+      // fabric moves members with the group and their getBoundingRect() applies
+      // the group transform, so labels can track them without writing geometry.
+      syncContainerLabel(id)
+      continue
+    }
     object.set({ left: position.x, top: position.y }).setCoords()
     syncContainerLabel(id)
   }
@@ -353,8 +373,9 @@ onMounted(() => {
   const element = canvasElement.value
   if (!element) return
   canvas = new Canvas(element, {
-    width: props.document.canvas.width,
-    height: props.document.canvas.height,
+    width: props.document.canvas.width + props.workspaceMargin * 2,
+    height: props.document.canvas.height + props.workspaceMargin * 2,
+    viewportTransform: [1, 0, 0, 1, props.workspaceMargin, props.workspaceMargin],
     selection: true,
     selectionKey: ['shiftKey', 'ctrlKey', 'metaKey'],
     preserveObjectStacking: true,
@@ -397,7 +418,7 @@ watch(() => [props.document, props.resourceCatalog, props.scopeNodeId] as const,
 watch(() => props.zoom, syncContainerLabels)
 watch(() => unwrap(props.designer.selectedIds), syncFabricSelection, { deep: true })
 watch(() => [props.document.canvas.width, props.document.canvas.height] as const, ([width, height]) => {
-  canvas?.setDimensions({ width, height })
+  canvas?.setDimensions({ width: width + props.workspaceMargin * 2, height: height + props.workspaceMargin * 2 })
   canvas?.requestRenderAll()
 })
 
@@ -415,7 +436,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="fabric-editor-canvas" data-ui-id="ui-designer-fabric-canvas" @contextmenu.prevent>
-    <canvas ref="canvasElement" :width="document.canvas.width" :height="document.canvas.height" />
+    <canvas ref="canvasElement" :width="document.canvas.width + workspaceMargin * 2" :height="document.canvas.height + workspaceMargin * 2" />
   </div>
 </template>
 

@@ -132,6 +132,23 @@ export function collectNodeSubtreeIds(document: UiDesignerDocument, nodeIds: rea
   return result
 }
 
+/** Rank every node by its depth-first tree position; the tree order is the stacking order. */
+export function resolveTreeOrderRanks(document: UiDesignerDocument): Map<string, number> {
+  const byId = new Map(document.nodes.map((node) => [node.id, node]))
+  const ranks = new Map<string, number>()
+  const visit = (id: string) => {
+    if (ranks.has(id)) return
+    const node = byId.get(id)
+    if (!node) return
+    ranks.set(id, ranks.size)
+    for (const childId of node.children) visit(childId)
+  }
+  for (const id of document.zOrder) visit(id)
+  for (const node of document.nodes) if (node.parentId === null) visit(node.id)
+  for (const node of document.nodes) visit(node.id)
+  return ranks
+}
+
 function subtreeContainsLockedNode(document: UiDesignerDocument, nodeId: string): boolean {
   const pending = [nodeId]
   const seen = new Set<string>()
@@ -240,8 +257,8 @@ export function moveNodeToEdge(document: UiDesignerDocument, nodeId: string, edg
   if (!siblings) throw new Error('Node parent is missing')
   const index = siblings.indexOf(nodeId)
   if (index >= 0) siblings.splice(index, 1)
-  if (edge === 'top') siblings.push(nodeId)
-  else siblings.unshift(nodeId)
+  if (edge === 'top') siblings.unshift(nodeId)
+  else siblings.push(nodeId)
   if (cloned.parentId === null && source) {
     let movableIndex = 0
     for (let index = 0; index < source.length; index += 1) {

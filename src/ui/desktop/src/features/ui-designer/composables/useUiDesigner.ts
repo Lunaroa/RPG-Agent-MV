@@ -54,12 +54,15 @@ import {
   rotateSubtreeTransforms,
   scaleSubtreeRects,
   smartSnapTargetsForNode,
+  snapFeedbackFor,
   snapPoint,
   updateNodePosition,
   zoomViewport,
   type SnapOptions,
   type UiResizeHandle,
   type UiResizeModifiers,
+  type UiSnapFeedback,
+  type UiSnapHit,
 } from '../models/geometry'
 import { resolveNodeActionPolicy, type UiNodeActionCommand } from '../models/actions'
 import { UiDesignerHistory } from '../models/history'
@@ -78,6 +81,7 @@ import {
   normalizeUiDesignerProjectRelativeResourcePath,
   normalizeUiDesignerResourceProperty,
   normalizeProjectAssetChangeManifest,
+  UI_BUTTON_WINDOW_SKIN_RESOURCE_PATH,
 } from '@contract/ui-designer-resources'
 
 export interface UiDesignerSceneState {
@@ -152,7 +156,10 @@ function collectReferencedResourcePaths(document: UiDesignerDocument): string[] 
     const props = node.props as unknown as Record<string, unknown>
     for (const [key, value] of Object.entries(props)) if (RESOURCE_PROPERTY_KEYS.has(key)) add(value)
     if (node.type === 'frameAnimation') for (const frame of node.props.frames) add(frame.path)
-    if (node.type === 'button') for (const path of Object.values(node.props.imageStates)) add(path)
+    if (node.type === 'button') {
+      for (const path of Object.values(node.props.imageStates)) add(path)
+      add(UI_BUTTON_WINDOW_SKIN_RESOURCE_PATH)
+    }
   }
   return [...paths]
 }
@@ -174,6 +181,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const draftCode = ref<Record<string, string>>({})
   const draftRects = ref<Record<string, UiRect>>({})
   const draftRotations = ref<Record<string, number>>({})
+  const snapFeedback = ref<UiSnapFeedback | null>(null)
   const editingMode = ref<'design' | 'code'>('design')
   // The renderer-host iframe is the only preview runtime.
   const isPreviewing = ref(false)
@@ -833,6 +841,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
       next = applyNodeGeometryTransaction(next, node.id, { kind: 'properties', patch: initialPosition })
       replaceActiveDocument(next, `Add ${type}`)
       selectedIds.value = [node.id]
+      if (type === 'button') void loadReferencedResources(next)
       return node.id
     } catch (error) {
       actionError.value = error instanceof Error ? error.message : String(error)
@@ -1655,7 +1664,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     restorePreviewMode()
   }
 
-  const snapOptionsFor = (nodeId: string): SnapOptions => {
+  const snapOptionsFor = (nodeId: string, excludeIds: readonly string[] = []): SnapOptions => {
     const settings = document.value.canvas
     const enabled = typeof preferences.value.snapEnabled === 'boolean' ? preferences.value.snapEnabled : settings.snap.enabled
     return {
@@ -1667,9 +1676,20 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
       guides: document.value.guides,
       canvasWidth: settings.width,
       canvasHeight: settings.height,
-      targets: smartSnapTargetsForNode(document.value, nodeId),
+      targets: smartSnapTargetsForNode(document.value, nodeId, excludeIds),
     }
   }
+
+  const applySnapFeedback = (nodeId: string, position: UiPoint, hits: readonly UiSnapHit[]) => {
+    const node = findNode(document.value, nodeId)
+    if (!node) { snapFeedback.value = null; return }
+    const rect = nodeRect(node)
+    const draftRect = { x: position.x - rect.width * node.props.anchorX, y: position.y - rect.height * node.props.anchorY, width: rect.width, height: rect.height }
+    const feedback = snapFeedbackFor(document.value, draftRect, hits)
+    snapFeedback.value = feedback.lines.length || feedback.guideIds.length ? feedback : null
+  }
+
+  const clearSnapFeedback = () => { snapFeedback.value = null }
 
   const updateNodePositionWithSnap = (nodeId: string, position: { x: number; y: number }) => {
     if (!resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return undefined
@@ -1680,14 +1700,17 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
 
   const previewNodePositionWithSnap = (nodeId: string, position: UiPoint) => {
     if (!resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return undefined
-    const result = clampNodePositionToParent(document.value, nodeId, snapPoint(position, snapOptionsFor(nodeId)))
+    const snapped = snapPoint(position, snapOptionsFor(nodeId))
+    const result = clampNodePositionToParent(document.value, nodeId, snapped)
     draftPositions.value = { ...draftPositions.value, [nodeId]: result }
+    applySnapFeedback(nodeId, result, snapped.hits)
     return result
   }
 
   const commitDraftPosition = (nodeId: string) => {
     const position = draftPositions.value[nodeId]
     if (!position) return
+    clearSnapFeedback()
     draftPositions.value = Object.fromEntries(Object.entries(draftPositions.value).filter(([id]) => id !== nodeId))
     if (!resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return false
     replaceActiveDocument(updateNodePosition(document.value, nodeId, position), 'Move node')
@@ -1703,8 +1726,9 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     const anchorId = rootIds[0]
     const anchorOrigin = origins[anchorId] ?? findNode(document.value, anchorId)?.props ?? { x: 0, y: 0 }
     const requested = { x: anchorOrigin.x + delta.x, y: anchorOrigin.y + delta.y }
-    const snapped = clampNodePositionToParent(document.value, anchorId, snapPoint(requested, snapOptionsFor(anchorId)))
-    const snapDelta = { x: snapped.x - requested.x, y: snapped.y - requested.y }
+    const snapped = snapPoint(requested, snapOptionsFor(anchorId, rootIds))
+    const snappedPosition = clampNodePositionToParent(document.value, anchorId, snapped)
+    const snapDelta = { x: snappedPosition.x - requested.x, y: snappedPosition.y - requested.y }
     const nextDrafts = { ...draftPositions.value }
     for (const id of transformIds) {
       const origin = origins[id] ?? findNode(document.value, id)?.props ?? { x: 0, y: 0 }
@@ -1712,6 +1736,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
       nextDrafts[id] = rootSet.has(id) ? clampNodePositionToParent(document.value, id, position) : position
     }
     draftPositions.value = nextDrafts
+    applySnapFeedback(anchorId, snappedPosition, snapped.hits)
     return Object.fromEntries(transformIds.map((id) => [id, nextDrafts[id]]))
   }
 
@@ -1723,6 +1748,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
       draftPositions.value = Object.fromEntries(Object.entries(draftPositions.value).filter(([id]) => !transformIds.includes(id)))
       return false
     }
+    clearSnapFeedback()
     let next = cloneUiDocument(document.value)
     let changed = false
     for (const id of transformIds) {
@@ -1808,13 +1834,20 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const align = (alignment: Parameters<typeof alignNodes>[2], reference: Parameters<typeof alignNodes>[3] = 'selection') => {
     const targetId = selectedIds.value[0]
     if (!targetId || !getNodeActionPolicy(targetId).canTransform) return false
-    replaceActiveDocument(alignNodes(document.value, selectedIds.value, alignment, reference), `Align ${alignment}`)
+    const rootIds = selectionRootNodeIds(document.value, selectedIds.value)
+    if (!rootIds.length) return false
+    // Figma semantics: a single selected layer aligns to its parent (the
+    // canvas for top-level nodes); multi-selects align to the chosen reference.
+    const effectiveReference = rootIds.length === 1 ? 'parent' : reference
+    replaceActiveDocument(alignNodes(document.value, rootIds, alignment, effectiveReference), `Align ${alignment}`)
     return true
   }
   const distribute = (axis: Parameters<typeof distributeNodes>[2]) => {
     const targetId = selectedIds.value[0]
     if (!targetId || !getNodeActionPolicy(targetId).canTransform) return false
-    replaceActiveDocument(distributeNodes(document.value, selectedIds.value, axis), `Distribute ${axis}`)
+    const rootIds = selectionRootNodeIds(document.value, selectedIds.value)
+    if (!rootIds.length) return false
+    replaceActiveDocument(distributeNodes(document.value, rootIds, axis), `Distribute ${axis}`)
     return true
   }
 
@@ -1834,6 +1867,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     draftCode,
     draftRects,
     draftRotations,
+    snapFeedback,
     draftCoordinator,
     projectPath,
     projectGeneration,

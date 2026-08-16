@@ -17,7 +17,9 @@ import type {
   UiResourceEntry,
   UiTextNode,
 } from '@contract/ui-designer'
-import { collectNodeSubtreeIds } from '../models/tree'
+import { UI_BUTTON_WINDOW_SKIN_RESOURCE_PATH } from '@contract/ui-designer-resources'
+import { collectNodeSubtreeIds, resolveTreeOrderRanks } from '../models/tree'
+import { uiDesignerText } from '../i18n'
 import { UiLayoutTextbox } from './uiLayoutTextbox'
 import { UiNineSliceImage } from './uiNineSliceImage'
 import { UiParticleObject } from './uiParticleObject'
@@ -124,7 +126,7 @@ export function fabricNodeVisualSignature(node: UiNode, catalog: UiProjectResour
       node.type,
       statePath,
       previewUrlFor(catalog, statePath) ?? '',
-      previewUrlFor(catalog, 'img/system/Window.png') ?? '',
+      previewUrlFor(catalog, UI_BUTTON_WINDOW_SKIN_RESOURCE_PATH) ?? '',
       node.props.fontFile,
       previewUrlFor(catalog, node.props.fontFile) ?? '',
       native,
@@ -282,9 +284,9 @@ const createImageNode = async (node: UiNode, path: string, fillMode: string, cat
   }
 }
 
-const createNineSliceNode = async (node: Extract<UiNode, { type: 'nineSlice' }>, catalog: UiProjectResourceCatalog | null | undefined) => {
+const createNineSliceNode = async (node: Extract<UiNode, { type: 'nineSlice' }>, catalog: UiProjectResourceCatalog | null | undefined, emptyLabel: string) => {
   const url = previewUrlFor(catalog, node.props.path)
-  if (!url) return placeholder(node, node.props.path ? `九宫格\n双击选择资源\n${node.props.path}` : '九宫格\n双击选择资源')
+  if (!url) return placeholder(node, node.props.path ? `${emptyLabel}\n${node.props.path}` : emptyLabel)
   try {
     const source = await FabricImage.fromURL(url)
     return new UiNineSliceImage(source.getElement() as HTMLImageElement | HTMLCanvasElement, {
@@ -302,7 +304,7 @@ const createNineSliceNode = async (node: Extract<UiNode, { type: 'nineSlice' }>,
       showGuides: node.props.showGuides,
     })
   } catch {
-    return placeholder(node, `九宫格\n双击选择资源\n${node.props.path}`, '#2b1d25')
+    return placeholder(node, `${emptyLabel}\n${node.props.path}`, '#2b1d25')
   }
 }
 
@@ -369,7 +371,7 @@ const loadFabricImageSource = async (url: string | undefined) => {
 const createButtonNode = async (node: UiButtonNode, catalog: UiProjectResourceCatalog | null | undefined, fontFamily?: string, native?: UiFabricNativeTextProfile) => {
   const [stateImageElement, windowSkinElement] = await Promise.all([
     loadFabricImageSource(previewUrlFor(catalog, node.props.imageStates.normal)),
-    loadFabricImageSource(previewUrlFor(catalog, 'img/system/Window.png')),
+    loadFabricImageSource(previewUrlFor(catalog, UI_BUTTON_WINDOW_SKIN_RESOURCE_PATH)),
   ])
   const object = new UiWindowSkinTextbox(node.props.content, {
     ...commonObjectOptions(node),
@@ -424,11 +426,11 @@ const createParticle = async (node: UiParticleNode, catalog: UiProjectResourceCa
   return new UiParticleObject({ particleProps: node.props, imageElement, objectCaching: false })
 }
 
-const createVideo = async (node: Extract<UiNode, { type: 'video' }>, catalog: UiProjectResourceCatalog | null | undefined) => {
+const createVideo = async (node: Extract<UiNode, { type: 'video' }>, catalog: UiProjectResourceCatalog | null | undefined, emptyLabel: string) => {
   const videoUrl = previewUrlFor(catalog, node.props.path)
   const posterUrl = previewUrlFor(catalog, node.props.posterPath)
   if (!videoUrl && posterUrl) return { object: await imageInBounds(node, posterUrl, 'contain') }
-  if (!videoUrl) return { object: placeholder(node, '视频\n双击选择资源') }
+  if (!videoUrl) return { object: placeholder(node, emptyLabel) }
   const video = document.createElement('video')
   video.src = videoUrl
   video.muted = true
@@ -443,20 +445,23 @@ const createVideo = async (node: Extract<UiNode, { type: 'video' }>, catalog: Ui
     video.addEventListener('error', settle, { once: true })
     window.setTimeout(settle, 1200)
   })
-  if (!video.videoWidth || !video.videoHeight) return { object: placeholder(node, `视频\n${node.props.path}`), video }
+  if (!video.videoWidth || !video.videoHeight) {
+    const shortLabel = emptyLabel.split('\n')[0]
+    return { object: placeholder(node, `${shortLabel}\n${node.props.path}`), video }
+  }
   const image = new FabricImage(video, { left: 0, top: 0, originX: 'center', originY: 'center', scaleX: node.props.width / video.videoWidth, scaleY: node.props.height / video.videoHeight, selectable: false, evented: false, objectCaching: false })
   void video.play().catch(() => undefined)
   return { object: new Group([boundary(node.props.width, node.props.height), image], { objectCaching: false }), video }
 }
 
-export async function createFabricNodeObject(node: UiNode, catalog: UiProjectResourceCatalog | null | undefined, document: UiDesignerDocument): Promise<UiFabricNodeObject> {
+export async function createFabricNodeObject(node: UiNode, catalog: UiProjectResourceCatalog | null | undefined, document: UiDesignerDocument, language = 'zh-CN'): Promise<UiFabricNodeObject> {
   const signature = fabricNodeVisualSignature(node, catalog)
   let object: FabricObject
   let extra: Partial<UiFabricObjectData> = {}
   if (node.type === 'container') object = await createContainer(node, catalog)
-  else if (node.type === 'sprite') object = await createImageNode(node, node.props.path, node.props.fillMode, catalog, '图片\n双击选择资源')
-  else if (node.type === 'nineSlice') object = await createNineSliceNode(node, catalog)
-  else if (node.type === 'frameAnimation') object = await createImageNode(node, node.props.frames[node.props.initialFrame]?.path ?? node.props.frames[0]?.path ?? '', node.props.fillMode, catalog, '帧动画\n添加帧后即可播放')
+  else if (node.type === 'sprite') object = await createImageNode(node, node.props.path, node.props.fillMode, catalog, uiDesignerText(language, 'canvasPlaceholderImage'))
+  else if (node.type === 'nineSlice') object = await createNineSliceNode(node, catalog, uiDesignerText(language, 'canvasPlaceholderNineSlice'))
+  else if (node.type === 'frameAnimation') object = await createImageNode(node, node.props.frames[node.props.initialFrame]?.path ?? node.props.frames[0]?.path ?? '', node.props.fillMode, catalog, uiDesignerText(language, 'canvasPlaceholderFrameAnimation'))
   else if (node.type === 'text') {
     const fontFamily = await loadNodeFontFamily(node, catalog)
     const native = await resolveNativeTextProfile(catalog)
@@ -472,7 +477,7 @@ export async function createFabricNodeObject(node: UiNode, catalog: UiProjectRes
   else if (node.type === 'progressBar') object = createProgress(node)
   else if (node.type === 'overlay') object = boundary(node.props.width, node.props.height, { fill: node.props.fillColor })
   else if (node.type === 'video') {
-    const result = await createVideo(node, catalog)
+    const result = await createVideo(node, catalog, uiDesignerText(language, 'canvasPlaceholderVideo'))
     object = result.object
     extra = { animated: Boolean(result.video), videoElement: result.video }
   } else {
@@ -485,7 +490,9 @@ export async function createFabricNodeObject(node: UiNode, catalog: UiProjectRes
 }
 
 const createHierarchyClipPath = (document: UiDesignerDocument, node: UiNode) => {
-  const containers = nodeAncestors(document, node).filter((ancestor): ancestor is Extract<UiNode, { type: 'container' }> => ancestor.type === 'container' && ancestor.props.clip)
+  // The root canvas crops at render/preview time only; the design view keeps
+  // off-canvas content visible and selectable.
+  const containers = nodeAncestors(document, node).filter((ancestor): ancestor is Extract<UiNode, { type: 'container' }> => ancestor.type === 'container' && ancestor.props.clip && ancestor.id !== 'node_root')
   let clipPath: FabricObject | undefined
   for (const container of containers) {
     const clip = clipBoundary(container.props.width, container.props.height)
@@ -574,7 +581,7 @@ export function disposeFabricNodeObject(object: UiFabricNodeObject) {
 }
 
 export function scopeNodes(document: UiDesignerDocument, scopeNodeId: string) {
-  const order = new Map(document.zOrder.map((id, index) => [id, index]))
+  const order = resolveTreeOrderRanks(document)
   const scopedIds = new Set(collectNodeSubtreeIds(document, [scopeNodeId]))
   if (scopeNodeId === 'node_root') scopedIds.delete(scopeNodeId)
   return document.nodes
@@ -582,6 +589,6 @@ export function scopeNodes(document: UiDesignerDocument, scopeNodeId: string) {
     .sort((left, right) => {
       if (left.id === scopeNodeId) return -1
       if (right.id === scopeNodeId) return 1
-      return left.props.zIndex - right.props.zIndex || (order.get(left.id) ?? 0) - (order.get(right.id) ?? 0)
+      return left.props.zIndex - right.props.zIndex || (order.get(right.id) ?? 0) - (order.get(left.id) ?? 0)
     })
 }

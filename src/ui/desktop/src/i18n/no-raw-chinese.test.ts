@@ -53,6 +53,12 @@ const ALLOWED_CHINESE_SOURCE_FILES = new Set([
   'src/backend/src/core/rmmv/event-page-compiler.ts',
   // Bilingual asset category label dictionary ('zh-CN' / 'en-US' pairs).
   'src/contract/project-asset-category-labels.ts',
+  // Plugin manifest metadata stored as explicit 'en-US' / 'zh-CN' records.
+  'src/contract/product-plugin.ts',
+  // UI Designer feature locale dictionary (same role as src/i18n/locales/*).
+  'src/ui/desktop/src/features/ui-designer/i18n.ts',
+  // RM-native event command summaries keyed on the caller's product language.
+  'src/ui/desktop/src/composables/useEventEditor.ts',
 ]);
 
 /** Additional directory-based localization boundaries that must stay Chinese-allowed. */

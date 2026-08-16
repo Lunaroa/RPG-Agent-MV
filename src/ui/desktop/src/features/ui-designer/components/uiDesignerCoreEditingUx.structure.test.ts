@@ -49,6 +49,11 @@ test('narrow layouts preserve the inspector without duplicating resources and ev
   assert.match(inspector, /v-if="!selectedNode"[\s\S]*v-else-if="activeSection === 'properties'"[\s\S]*<UiDesignerEvents\s+v-else-if="activeSection === 'events'"/)
 })
 
+test('reconcile dissolves multi-select ActiveSelection before writing absolute geometry', () => {
+  const fabricCanvas = compile('./UiDesignerFabricCanvas.vue')
+  assert.match(fabricCanvas, /const reconcile = async \(\) => \{[\s\S]{0,400}?canvas\.getActiveObject\(\) instanceof ActiveSelection[\s\S]{0,200}?canvas\.discardActiveObject\(\)[\s\S]*?applyFabricNodeGeometry\(object, current, props\.document\)[\s\S]*?syncFabricSelection\(\)/)
+})
+
 test('canvas double click edits text and buttons in place and routes other node types to their primary editor', () => {
   const canvas = compile('./UiDesignerCanvas.vue')
   const fabricCanvas = compile('./UiDesignerFabricCanvas.vue')

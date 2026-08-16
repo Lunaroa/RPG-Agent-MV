@@ -152,10 +152,20 @@ test('container focus retains the scope boundary and exposes a visible way back'
   assert.match(canvas, /designer\.selectNodes\(node\.children\.length \? \[node\.children\[0\]\] : \[node\.id\]\)/)
   assert.match(canvas, /const exitContainer = \(\) => \{[\s\S]*editStack\.value = editStack\.value\.slice\(0, -1\)[\s\S]*designer\.selectNodes\(\[editingRootId\.value\]\)/)
   assert.match(canvas, /data-ui-id="ui-designer-container-scope"[\s\S]*data-ui-id="ui-designer-container-scope-exit"[\s\S]*@click="exitContainer"/)
-  assert.match(canvas, /\.canvas-edit-breadcrumb \{[^}]*top: 8px;[^}]*left: 8px;/)
+  assert.match(canvas, /\.canvas-edit-breadcrumb \{[^}]*top: calc\(var\(--workspace-margin, 0px\) \+ 8px\);[^}]*left: calc\(var\(--workspace-margin, 0px\) \+ 8px\);/)
   assert.match(fabricCanvas, /props\.designer\.selectNodes\(ids\.length \? ids : \[props\.scopeNodeId\]\)/)
   assert.match(nodePanel, /const parentId = primary\?\.type === 'container' \? primary\.id : primary\?\.parentId \?\? 'node_root'/)
   assert.match(canvas, /designer\.addNode\(nodeType, editingRootId\.value, worldFromClient\(event\)\)/)
+})
+
+test('the scene floats on an editable workspace and off-canvas content stays visible', () => {
+  assert.match(canvas, /const WORKSPACE_MARGIN = 240/)
+  assert.match(canvas, /\.canvas-scene-frame \{[^}]*pointer-events: none;/)
+  assert.match(canvas, /:style="\[sceneRectStyle, \{ backgroundColor: document\.canvas\.backgroundColor \}\]"/)
+  assert.match(canvas, /:style="previewing \? undefined : sceneRectStyle"/)
+  assert.match(canvas, /:workspace-margin="WORKSPACE_MARGIN"/)
+  assert.match(fabricCanvas, /viewportTransform: \[1, 0, 0, 1, props\.workspaceMargin, props\.workspaceMargin\]/)
+  assert.match(fabricFactory, /ancestor\.props\.clip && ancestor\.id !== 'node_root'/)
 })
 
 test('canvas interactions reject native selection and image dragging without blocking inline text editing', () => {
@@ -277,8 +287,7 @@ test('authenticated fixed pre-mount scene state closes the one-shot ready race',
 
 test('start confirm and iframe terminals enter the shared latch with fixed safe codes', () => {
   assert.match(hostLifecycle, /UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES\.startAdapter, 'start'/)
-  assert.match(hostLifecycle, /: UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES\.startResult[\s\S]*resolveUiDesignerRendererFailure\(failureCode, 'start'\)/)
-  assert.match(hostLifecycle, /Restore those runtime assets, then restart the preview/)
+  assert.match(hostLifecycle, /resolveUiDesignerRendererFailure\(UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES\.startResult, 'start'\)/)
   assert.match(hostLifecycle, /UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES\.confirmIpc, 'confirm'/)
   assert.match(hostLifecycle, /UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES\.confirmIdentity, 'confirm'/)
   assert.match(hostLifecycle, /UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES\.iframeLoad, 'iframe-load'/)

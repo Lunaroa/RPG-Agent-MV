@@ -5,9 +5,9 @@ import type { UiDesignerDocument, UiNode, UiRuntimeSceneExport, UiViewport } fro
 import type { UiDesignerRendererExecutionMode } from '@contract/ui-designer-renderer-bridge'
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
-import { UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES, useUiDesignerRendererHost } from '../composables/useUiDesignerRendererHost'
+import { useUiDesignerRendererHost } from '../composables/useUiDesignerRendererHost'
 import UiDesignerFabricCanvas from './UiDesignerFabricCanvas.vue'
-import { viewportClientToWorld, worldPointToViewport, type UiCanvasViewportFrame } from '../models/geometry'
+import { viewportClientToWorld, worldPointToViewport, type UiCanvasViewportFrame, type UiSnapFeedbackLine } from '../models/geometry'
 import { canvasScrollForWorldPoint, createCanvasScrollLayout, fitCanvasZoom, panCanvasScroll } from '../models/viewport-navigation'
 import { fitContextMenuPosition } from '../models/context-menu-position'
 import type { UiNodeActionCommand, UiNodeActionPolicy } from '../models/actions'
@@ -18,6 +18,8 @@ const emit = defineEmits<{ editNode: [nodeId: string] }>()
 const designer = props.designer
 const { t } = useUiDesignerI18n()
 const STAGE_MARGIN = 46
+/** World-space editing room kept visible around the scene; nodes may live in it. */
+const WORKSPACE_MARGIN = 240
 
 const unwrap = <T,>(value: T | Ref<T>): T => isRef(value) ? value.value : value
 const document = computed<UiDesignerDocument>(() => unwrap(designer.document))
@@ -27,6 +29,7 @@ const selectedNode = computed<UiNode | undefined>(() => unwrap(designer.selected
 const draftPositions = computed(() => unwrap(designer.draftPositions))
 const draftRects = computed(() => unwrap(designer.draftRects))
 const draftRotations = computed(() => unwrap(designer.draftRotations))
+const snapFeedback = computed(() => unwrap(designer.snapFeedback))
 const resourceCatalog = computed(() => unwrap(designer.resourceCatalog))
 const gamePreviewing = computed(() => unwrap(designer.isPreviewing))
 const previewing = computed(() => gamePreviewing.value || unwrap(designer.isEditorPreviewing))
@@ -89,7 +92,7 @@ const scrollLayout = computed(() => createCanvasScrollLayout(
   document.value.canvas.width,
   document.value.canvas.height,
   previewing.value ? 1 : canvasViewport.value.zoom,
-  previewing.value ? 0 : STAGE_MARGIN,
+  previewing.value ? 0 : STAGE_MARGIN + WORKSPACE_MARGIN * canvasViewport.value.zoom,
   previewing.value ? 0 : canvasPanRoom(viewportSize.value.width),
   previewing.value ? 0 : canvasPanRoom(viewportSize.value.height),
 ))
@@ -112,14 +115,38 @@ const viewportFrame = (): UiCanvasViewportFrame => {
     stageOffsetY: scrollLayout.value.stageOffsetY,
   }
 }
+const snapLineStyle = (line: UiSnapFeedbackLine) => {
+  if (line.axis === 'x') {
+    const top = worldPointToViewport({ x: line.position, y: line.start }, viewportFrame(), canvasViewport.value)
+    const bottom = worldPointToViewport({ x: line.position, y: line.end }, viewportFrame(), canvasViewport.value)
+    return { left: `${top.x}px`, top: `${Math.min(top.y, bottom.y)}px`, height: `${Math.max(1, Math.abs(bottom.y - top.y))}px` }
+  }
+  const left = worldPointToViewport({ x: line.start, y: line.position }, viewportFrame(), canvasViewport.value)
+  const right = worldPointToViewport({ x: line.end, y: line.position }, viewportFrame(), canvasViewport.value)
+  return { top: `${left.y}px`, left: `${Math.min(left.x, right.x)}px`, width: `${Math.max(1, Math.abs(right.x - left.x))}px` }
+}
 const scrollContentStyle = computed(() => ({ width: `${scrollLayout.value.contentWidth}px`, height: `${scrollLayout.value.contentHeight}px` }))
-const stageStyle = computed(() => ({
+const stageStyle = computed(() => previewing.value ? ({
   width: `${document.value.canvas.width}px`,
   height: `${document.value.canvas.height}px`,
   left: `${scrollLayout.value.stageOffsetX}px`,
   top: `${scrollLayout.value.stageOffsetY}px`,
-  transform: previewing.value ? 'none' : `scale(${canvasViewport.value.zoom})`,
+  transform: 'none',
   backgroundColor: document.value.canvas.backgroundColor,
+}) : ({
+  width: `${document.value.canvas.width + WORKSPACE_MARGIN * 2}px`,
+  height: `${document.value.canvas.height + WORKSPACE_MARGIN * 2}px`,
+  left: `${scrollLayout.value.stageOffsetX - WORKSPACE_MARGIN * canvasViewport.value.zoom}px`,
+  top: `${scrollLayout.value.stageOffsetY - WORKSPACE_MARGIN * canvasViewport.value.zoom}px`,
+  transform: `scale(${canvasViewport.value.zoom})`,
+  '--workspace-margin': `${WORKSPACE_MARGIN}px`,
+}))
+/** Scene rectangle in unscaled stage coordinates, shared by the scene frame, grid, and runtime iframe. */
+const sceneRectStyle = computed(() => ({
+  left: `${WORKSPACE_MARGIN}px`,
+  top: `${WORKSPACE_MARGIN}px`,
+  width: `${document.value.canvas.width}px`,
+  height: `${document.value.canvas.height}px`,
 }))
 const runtimeScene = (): UiRuntimeSceneExport => {
   const source = JSON.parse(JSON.stringify(document.value)) as UiDesignerDocument
@@ -216,7 +243,7 @@ const fitCanvasView = () => {
   void nextTick(() => { updateViewportSize(); centerCanvasScroll() })
 }
 const zoom = (event: WheelEvent) => {
-  if (previewing.value || (!event.ctrlKey && !event.metaKey)) return
+  if (previewing.value) return
   event.preventDefault()
   setCanvasZoom(canvasViewport.value.zoom * (event.deltaY > 0 ? 0.9 : 1.1), { x: event.clientX, y: event.clientY })
 }
@@ -521,8 +548,9 @@ onBeforeUnmount(() => {
       <div v-if="!previewing && document.canvas.rulers" class="canvas-ruler horizontal" aria-hidden="true" @pointerdown.stop="beginGuideFromRuler($event, 'horizontal')"><span v-for="tick in rulerTicks.horizontal" :key="`h-${tick}`" class="ruler-tick" :style="{ left: `${worldPointToViewport({ x: tick, y: 0 }, viewportFrame(), canvasViewport).x}px` }">{{ tick }}</span></div>
       <div v-if="!previewing && document.canvas.rulers" class="canvas-ruler vertical" aria-hidden="true" @pointerdown.stop="beginGuideFromRuler($event, 'vertical')"><span v-for="tick in rulerTicks.vertical" :key="`v-${tick}`" class="ruler-tick" :style="{ top: `${worldPointToViewport({ x: 0, y: tick }, viewportFrame(), canvasViewport).y}px` }">{{ tick }}</span></div>
       <template v-if="!previewing && document.canvas.guidesVisible">
-        <div v-for="guide in document.guides" :key="guide.id" class="canvas-guide" :class="[guide.type, { locked: guide.locked }]" :style="guide.type === 'vertical' ? { left: `${worldPointToViewport({ x: guide.position, y: 0 }, viewportFrame(), canvasViewport).x}px` } : { top: `${worldPointToViewport({ x: 0, y: guide.position }, viewportFrame(), canvasViewport).y}px` }" :title="guide.locked ? `🔒 ${t('guideLocked')}` : t('guide')" @pointerdown.stop="beginGuideDrag($event, guide)" @dblclick.stop="openGuideMenu($event, guide.id); void editGuidePosition()" @contextmenu.prevent.stop="openGuideMenu($event, guide.id)" />
+        <div v-for="guide in document.guides" :key="guide.id" class="canvas-guide" :class="[guide.type, { locked: guide.locked, snapped: snapFeedback?.guideIds.includes(guide.id) }]" :style="guide.type === 'vertical' ? { left: `${worldPointToViewport({ x: guide.position, y: 0 }, viewportFrame(), canvasViewport).x}px` } : { top: `${worldPointToViewport({ x: 0, y: guide.position }, viewportFrame(), canvasViewport).y}px` }" :title="guide.locked ? `🔒 ${t('guideLocked')}` : t('guide')" @pointerdown.stop="beginGuideDrag($event, guide)" @dblclick.stop="openGuideMenu($event, guide.id); void editGuidePosition()" @contextmenu.prevent.stop="openGuideMenu($event, guide.id)" />
       </template>
+      <div v-for="(line, index) in snapFeedback?.lines ?? []" :key="`canvas-snap-line-${index}`" class="canvas-snap-line" :class="line.axis === 'x' ? 'vertical' : 'horizontal'" :style="snapLineStyle(line)" />
       <Teleport to="body">
         <div v-if="!previewing && guideMenu" ref="guideMenuElement" class="guide-context-menu" :style="{ left: `${guideMenu.x}px`, top: `${guideMenu.y}px` }" @pointerdown.stop>
           <template v-if="selectedGuide">
@@ -536,7 +564,8 @@ onBeforeUnmount(() => {
           <el-button v-for="item in nodeMenuItems" :key="item.command" size="small" text :type="item.danger ? 'danger' : undefined" :disabled="!nodeMenuPolicy.allowed[item.command]" :data-ui-id="`ui-designer-node-command-${nodeMenu.nodeId}-${item.command}`" @click="runNodeCommand(item.command)">{{ item.label }}</el-button>
         </div>
       </Teleport>
-      <div class="canvas-stage" :class="{ checkerboard: !previewing && document.canvas.backgroundPattern === 'checkerboard', 'preview-stage': previewing }" :style="stageStyle">
+      <div class="canvas-stage" :class="{ 'preview-stage': previewing }" :style="stageStyle">
+        <div v-if="!previewing" class="canvas-scene-frame" :class="{ checkerboard: document.canvas.backgroundPattern === 'checkerboard' }" :style="[sceneRectStyle, { backgroundColor: document.canvas.backgroundColor }]" />
         <div v-if="!previewing && editStack.length" class="canvas-edit-breadcrumb" data-ui-id="ui-designer-container-scope" @pointerdown.stop>
           <span>{{ t('editingContainer') }}: {{ editingRoot?.name }}</span>
           <el-button size="small" text data-ui-id="ui-designer-container-scope-exit" @click="exitContainer">{{ t('returnToParent') }}</el-button>
@@ -546,6 +575,7 @@ onBeforeUnmount(() => {
           ref="rendererFrame"
           class="canvas-runtime-frame"
           :class="[{ 'preview-interactive': previewInteractive }, { 'frame-idle': !previewing }]"
+          :style="previewing ? undefined : sceneRectStyle"
           :src="rendererIframeUrl"
           sandbox="allow-scripts allow-same-origin"
           :tabindex="previewInteractive ? 0 : -1"
@@ -554,7 +584,7 @@ onBeforeUnmount(() => {
           @load="rendererHost.onIframeLoad"
           @error="rendererHost.onIframeError"
         />
-        <div v-if="!previewing" class="canvas-grid" :class="{ active: gridEnabled }" :style="{ '--grid-size': `${document.canvas.grid.size}px`, '--grid-color': document.canvas.grid.color }" />
+        <div v-if="!previewing" class="canvas-grid" :class="{ active: gridEnabled }" :style="[sceneRectStyle, { '--grid-size': `${document.canvas.grid.size}px`, '--grid-color': document.canvas.grid.color }]" />
         <UiDesignerFabricCanvas
           v-show="!previewing"
           ref="fabricCanvas"
@@ -562,6 +592,7 @@ onBeforeUnmount(() => {
           :document="document"
           :resource-catalog="resourceCatalog"
           :scope-node-id="editingRootId"
+          :workspace-margin="WORKSPACE_MARGIN"
           :zoom="canvasViewport.zoom"
           :active="!previewing"
           @activate="activateNode"
@@ -581,12 +612,12 @@ onBeforeUnmount(() => {
 .preview-viewport { display: flex; box-sizing: border-box; align-items: flex-start; justify-content: center; padding: 20px; background: #090a0d; }
 .canvas-scroll-content { position: relative; flex: none; }
 .canvas-ruler { position: absolute; z-index: 5; pointer-events: auto; cursor: crosshair; background: repeating-linear-gradient(to right, #ffffff55 0 1px, transparent 1px 32px); opacity: .35; }.canvas-ruler.horizontal { inset: 0 0 auto; height: 18px; }.canvas-ruler.vertical { inset: 0 auto 0 0; width: 18px; background: repeating-linear-gradient(to bottom, #ffffff55 0 1px, transparent 1px 32px); }.ruler-tick { position: absolute; color: #fff; font-size: 8px; line-height: 12px; pointer-events: none; transform: translateX(-1px); }.canvas-ruler.vertical .ruler-tick { transform: translateY(-1px) rotate(-90deg); transform-origin: left top; }
-.canvas-guide { position: absolute; z-index: 4; pointer-events: auto; cursor: ew-resize; background: var(--el-color-warning); opacity: .55; }.canvas-guide.vertical { top: 0; bottom: 0; width: 3px; margin-left: -1px; }.canvas-guide.horizontal { right: 0; left: 0; height: 3px; margin-top: -1px; cursor: ns-resize; }.canvas-guide.locked { cursor: not-allowed; opacity: .35; }
+.canvas-guide { position: absolute; z-index: 4; pointer-events: auto; cursor: ew-resize; background: var(--el-color-warning); opacity: .55; }.canvas-guide.vertical { top: 0; bottom: 0; width: 3px; margin-left: -1px; }.canvas-guide.horizontal { right: 0; left: 0; height: 3px; margin-top: -1px; cursor: ns-resize; }.canvas-guide.locked { cursor: not-allowed; opacity: .35; }.canvas-guide.snapped { opacity: 1; }.canvas-snap-line { position: absolute; z-index: 4; pointer-events: none; border-color: var(--el-color-danger); }.canvas-snap-line.vertical { width: 0; border-left: 1px dashed; }.canvas-snap-line.horizontal { height: 0; border-top: 1px dashed; }
 .guide-context-menu, .node-context-menu { position: fixed; z-index: 4000; display: flex; flex-direction: column; min-width: 150px; max-height: min(480px, calc(100vh - 16px)); overflow: auto; padding: 5px; border: 1px solid var(--app-border); border-radius: 5px; background: var(--app-bg); box-shadow: 0 8px 18px #0007; }.guide-context-menu .el-button, .node-context-menu .el-button { justify-content: flex-start; margin: 0; }
-.canvas-stage { position: absolute; overflow: hidden; box-shadow: 0 16px 36px #0007; transform-origin: 0 0; }.canvas-stage.preview-stage { box-shadow: 0 16px 48px #000b; }.canvas-edit-breadcrumb { position: absolute; z-index: 8; top: 8px; left: 8px; display: flex; align-items: center; gap: 4px; padding: 3px 5px; border: 1px solid #ffffff1f; border-radius: 4px; color: var(--app-ink-soft); background: #12141be8; font-size: 10px; }.canvas-edit-breadcrumb .el-button { padding: 2px 5px; }.canvas-stage.checkerboard { background-image: conic-gradient(#ffffff09 25%, transparent 0 50%, #ffffff09 0 75%, transparent 0); background-size: 24px 24px; }
+.canvas-stage { position: absolute; overflow: hidden; transform-origin: 0 0; }.canvas-stage.preview-stage { box-shadow: 0 16px 48px #000b; }.canvas-scene-frame { position: absolute; z-index: 0; box-shadow: 0 16px 36px #0007; pointer-events: none; }.canvas-scene-frame.checkerboard { background-image: conic-gradient(#ffffff09 25%, transparent 0 50%, #ffffff09 0 75%, transparent 0); background-size: 24px 24px; }.canvas-edit-breadcrumb { position: absolute; z-index: 8; top: calc(var(--workspace-margin, 0px) + 8px); left: calc(var(--workspace-margin, 0px) + 8px); display: flex; align-items: center; gap: 4px; padding: 3px 5px; border: 1px solid #ffffff1f; border-radius: 4px; color: var(--app-ink-soft); background: #12141be8; font-size: 10px; }.canvas-edit-breadcrumb .el-button { padding: 2px 5px; }
 .canvas-runtime-frame { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; border: 0; background: transparent; pointer-events: none; user-select: none; }.canvas-runtime-frame.preview-interactive { z-index: 3; pointer-events: auto; touch-action: none; user-select: none; }
 .canvas-runtime-frame.frame-idle { opacity: 0; }
-.canvas-grid { position: absolute; z-index: 1; inset: 0; opacity: 0; background-image: linear-gradient(to right, var(--grid-color) 1px, transparent 1px), linear-gradient(to bottom, var(--grid-color) 1px, transparent 1px); background-size: var(--grid-size) var(--grid-size); pointer-events: none; }.canvas-grid.active { opacity: .18; }
+.canvas-grid { position: absolute; z-index: 1; opacity: 0; background-image: linear-gradient(to right, var(--grid-color) 1px, transparent 1px), linear-gradient(to bottom, var(--grid-color) 1px, transparent 1px); background-size: var(--grid-size) var(--grid-size); pointer-events: none; }.canvas-grid.active { opacity: .18; }
 .canvas-runtime-state { position: absolute; z-index: 9; top: 48px; right: 8px; display: flex; max-width: min(560px, calc(100% - 16px)); align-items: center; gap: 8px; padding: 6px 9px; border: 1px solid var(--app-border); border-radius: 5px; color: var(--app-ink-soft); background: color-mix(in srgb, #12141b 92%, transparent); box-shadow: 0 5px 14px #0005; font-size: 11px; text-align: left; pointer-events: none; }.editor-preview-canvas .canvas-runtime-state { top: 8px; }.canvas-runtime-state > span { min-width: 0; flex: 1 1 auto; }.canvas-runtime-state .el-button { flex: 0 0 auto; pointer-events: auto; }
 .renderer-error-details { max-height: min(60vh, 560px); margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--app-ink); }
 </style>

@@ -17,3 +17,10 @@ test('container names are separate editor labels with stable screen size above t
   assert.match(canvas, /excludeFromExport: true/)
   assert.match(canvas, /watch\(\(\) => props\.zoom, syncContainerLabels\)/)
 })
+
+test('multi-select drag keeps member container labels tracking while their geometry is skipped', () => {
+  // ActiveSelection members must not receive absolute draft geometry (they are
+  // group-relative), yet their name labels must still be re-synced mid-drag —
+  // getBoundingRect() applies the group transform, so labels follow the group.
+  assert.match(canvas, /if \(selectionMembers\?\.has\(object\)\) \{\s*\n\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*syncContainerLabel\(id\)\n\s*continue\n\s*\}/)
+})

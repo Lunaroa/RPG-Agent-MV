@@ -54,7 +54,10 @@ const commonImports = {
   '@contract/ui-designer-script': { UI_DESIGNER_NODE_SCRIPT_COMPLETIONS: ['runtime', 'scene'] },
   '../i18n': { useUiDesignerI18n: () => ({ t: (key: string) => key }) },
   './UiCodeMirrorEditor.vue': 'UiCodeMirrorEditor',
+  './UiNamedEntryField.vue': 'UiNamedEntryField',
+  './UiResourceReferenceControl.vue': 'UiResourceReferenceControl',
   './UiScriptContextHint.vue': 'UiScriptContextHint',
+  '../models/audioResource': { uiDesignerSeNameFromResourcePath: (path: string) => path },
 }
 
 test('event context changes flush the old script before switching or reordering', () => {

@@ -34,9 +34,11 @@ import {
   scaleSubtreeRects,
   serializeDocument,
   shortestRotationDelta,
+  snapFeedbackFor,
   snapPoint,
   snapRect,
   smartSnapTargetsForNode,
+  type UiDesignerDocument,
   topmostNodeAtPoint,
   resizeRect,
   resizeCursor,
@@ -276,12 +278,13 @@ describe('ui designer document model', () => {
 
     const firstTopLevel = resolveNodeActionPolicy(document, [topFirst.id], topFirst.id, false)
     assert.equal(firstTopLevel.allowed.moveUp, false)
-    assert.equal(firstTopLevel.allowed.moveBottom, false)
+    assert.equal(firstTopLevel.allowed.moveTop, false)
+    assert.equal(firstTopLevel.allowed.moveBottom, true)
     const movedTopLevel = moveNodeStep(document, topSecond.id, 'up')
     assert.deepEqual(movedTopLevel.zOrder, ['node_root', topSecond.id, topFirst.id])
     assert.deepEqual(moveNodeStep(movedTopLevel, topSecond.id, 'up').zOrder, movedTopLevel.zOrder)
-    assert.deepEqual(moveNodeToEdge(document, topSecond.id, 'bottom').zOrder, ['node_root', topSecond.id, topFirst.id])
-    assert.deepEqual(moveNodeToEdge(document, topFirst.id, 'top').zOrder, ['node_root', topSecond.id, topFirst.id])
+    assert.deepEqual(moveNodeToEdge(document, topFirst.id, 'bottom').zOrder, ['node_root', topSecond.id, topFirst.id])
+    assert.deepEqual(moveNodeToEdge(document, topSecond.id, 'top').zOrder, ['node_root', topSecond.id, topFirst.id])
   })
 
   test('copies and pastes a subtree with remapped ids', () => {
@@ -550,6 +553,41 @@ describe('ui designer history, geometry and performance', () => {
     assert.equal(distributed.nodes.find((node) => node.id === 'b')?.props.x, 75)
   })
 
+  test('snap hits identify their alignment source for transient feedback', () => {
+    const options = {
+      gridEnabled: false,
+      smartEnabled: true,
+      sensitivity: 6,
+      canvasWidth: 400,
+      canvasHeight: 300,
+      guides: [{ id: 'guide_v', type: 'vertical' as const, position: 120, locked: false }],
+      targets: [{ id: 'target', rect: { x: 210, y: 40, width: 60, height: 30 } }],
+    }
+    const smart = snapPoint({ x: 213, y: 20 }, options)
+    assert.deepEqual(smart.hits, [{ axis: 'x', value: 210, source: 'node', nodeId: 'target' }])
+    const guide = snapPoint({ x: 123, y: 100 }, options)
+    assert.deepEqual(guide.hits, [{ axis: 'x', value: 120, source: 'guide', guideId: 'guide_v' }])
+    const canvasCenter = snapPoint({ x: 197, y: 147 }, options)
+    assert.deepEqual(canvasCenter.hits, [
+      { axis: 'x', value: 200, source: 'canvas' },
+      { axis: 'y', value: 150, source: 'canvas' },
+    ])
+    const grid = snapPoint({ x: 31, y: 63 }, { gridEnabled: true, gridSize: 32, smartEnabled: false, sensitivity: 5, guides: [] })
+    assert.deepEqual(grid.hits, [])
+
+    const document = { nodes: [createDefaultNode('text', { id: 'target', x: 210, y: 40, width: 60, height: 30 })], canvas: { width: 400, height: 300 } } as unknown as UiDesignerDocument
+    const feedback = snapFeedbackFor(document, { x: 180, y: 60, width: 40, height: 20 }, [
+      { axis: 'x', value: 210, source: 'node', nodeId: 'target' },
+      { axis: 'y', value: 150, source: 'canvas' },
+      { axis: 'x', value: 120, source: 'guide', guideId: 'guide_v' },
+    ])
+    assert.deepEqual(feedback.lines, [
+      { axis: 'x', position: 210, start: 40, end: 80, source: 'node' },
+      { axis: 'y', position: 150, start: 0, end: 400, source: 'canvas' },
+    ])
+    assert.deepEqual(feedback.guideIds, ['guide_v'])
+  })
+
   test('stores one canonical history point per explicit Inspector transaction', () => {
     const initial = createUiDocument()
     const history = new UiDesignerHistory(initial)
@@ -728,6 +766,19 @@ describe('ui designer history, geometry and performance', () => {
       [front.id]: { x: 300, y: 160, width: 120, height: 50, visible: true },
     })?.id, front.id)
     assert.equal(topmostNodeAtPoint(document, { x: 700, y: 500 }), undefined)
+  })
+
+  test('hit testing treats the first tree sibling as the front-most layer', () => {
+    const document = createUiDocument()
+    const front = createDefaultNode('container', { id: 'hit_front', name: 'Front', parentId: 'node_root', x: 0, y: 0, width: 200, height: 200 })
+    const back = createDefaultNode('button', { id: 'hit_back', name: 'Back', parentId: 'node_root', x: 0, y: 0, width: 200, height: 200 })
+    document.nodes.push(front, back)
+    document.nodes[0].children.push(front.id, back.id)
+
+    assert.equal(topmostNodeAtPoint(document, { x: 100, y: 100 })?.id, front.id)
+
+    const reordered = reparentNode(document, front.id, back.id, 'after')
+    assert.equal(topmostNodeAtPoint(reordered, { x: 100, y: 100 })?.id, back.id)
   })
 
   test('converts canvas pointers with scroll, margin, zoom and pan from one source of truth', () => {

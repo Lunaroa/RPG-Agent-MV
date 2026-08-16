@@ -36,4 +36,22 @@ export class UiLayoutTextbox extends Textbox<UiLayoutTextboxOptions> {
     const contentHeight = Number.isFinite(this.textContentHeight) ? this.textContentHeight : this.height
     return resolveUiLayoutTextboxTop(this.height, contentHeight, this.verticalTextAlign)
   }
+
+  // Fabric appends the editing textarea to the document body with page
+  // coordinates; focusing it scrolls the page and pushes the editor chrome
+  // away. Pinning it to the viewport keeps both the page and IME placement
+  // stable.
+  override initHiddenTextarea() {
+    super.initHiddenTextarea()
+    if (this.hiddenTextarea) this.hiddenTextarea.style.position = 'fixed'
+  }
+
+  override updateTextareaPosition() {
+    if (!this.canvas || !this.hiddenTextarea) return
+    if (this.selectionStart !== this.selectionEnd) return
+    const style = this._calcTextareaPosition()
+    this.hiddenTextarea.style.position = 'fixed'
+    this.hiddenTextarea.style.left = `${parseFloat(style.left) - window.scrollX}px`
+    this.hiddenTextarea.style.top = `${parseFloat(style.top) - window.scrollY}px`
+  }
 }

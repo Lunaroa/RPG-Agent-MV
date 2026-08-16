@@ -19,5 +19,5 @@ test('new scene surface compiles and shares the runtime scene-name guard through
   assert.match(surface, /:disabled="!sceneNameValid"/)
   assert.match(i18n, /sceneNameInvalid: '请以 Scene_ 开头/)
   assert.match(i18n, /sceneNameInvalid: 'Start with Scene_/)
-  assert.match(shell, /const created = rawDesigner\.newScene\([\s\S]*if \(created\) surface\.value = null/)
+  assert.match(shell, /const created = rawDesigner\.newScene\([\s\S]*if \(created\) \{[\s\S]*surface\.value = null[\s\S]*showWelcome\.value = false/)
 })

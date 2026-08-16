@@ -3,6 +3,7 @@ import { test, vi } from 'vitest'
 import type { UiDesignerAdapterBundle, UiDesignerPersistenceAdapter } from '@contract/ui-designer'
 import { createUiDocument } from '../models/document'
 import { exportRuntimeDocument } from '../models/export'
+import { nodeRect } from '../models/geometry'
 
 vi.mock('../adapters', () => ({
   createUiDesignerAdapters: (overrides: UiDesignerAdapterBundle = {}) => ({ ...overrides }),
@@ -85,6 +86,39 @@ test('selecting an image resource makes its authoring preview URL available imme
   designer.updateNodeProperty(nodeId, 'path', 'img/pictures/Example.png')
   await vi.waitFor(() => assert.equal(designer.resourceCatalog.value?.resources[0]?.previewUrl, 'rmmv-asset://project/sample/img/pictures/Example.png'))
   assert.deepEqual(loadReferenced.mock.calls[0]?.[0].referencedPaths, ['img/pictures/Example.png'])
+})
+
+test('adding a button requests the window skin resource for the authoring canvas', async () => {
+  const loadReferenced = vi.fn(async (request: { referencedPaths: string[] }) => success({
+    projectPath: 'projects/sample',
+    engine: 'MV' as const,
+    resources: request.referencedPaths.map((path) => ({
+      id: `image:${path}`,
+      category: 'image' as const,
+      path,
+      relativePath: path,
+      previewUrl: `rmmv-asset://project/sample/${path}`,
+      name: path.split('/').pop() ?? path,
+      exists: true,
+      referenced: true,
+    })),
+  }))
+  const designer = useUiDesigner({
+    projectPath: 'projects/sample',
+    adapters: {
+      resource: {
+        async loadProject() { return success({ projectPath: 'projects/sample', engine: 'MV' as const, resources: [] }) },
+        loadReferenced,
+        async readSceneData() { return { status: 'unavailable' as const, message: 'unused' } },
+      },
+    },
+  })
+  designer.addNode('button', 'node_root')
+  await vi.waitFor(() => assert.ok(loadReferenced.mock.calls.some(([request]) => request.referencedPaths.includes('img/system/Window.png'))))
+  await vi.waitFor(() => assert.equal(
+    designer.resourceCatalog.value?.resources.find((resource) => resource.relativePath === 'img/system/Window.png')?.previewUrl,
+    'rmmv-asset://project/sample/img/system/Window.png',
+  ))
 })
 
 test('selecting a sprite image adopts its intrinsic dimensions in one undoable edit', () => {
@@ -493,6 +527,28 @@ test('integer geometry and shared node actions guard locked selections and ances
   assert.equal(designer.reparent(topFirstId, 'node_root', 'before'), false)
 })
 
+test('align and distribute move only selection roots so nested children keep parent-relative offsets', () => {
+  const designer = useUiDesigner()
+  const containerId = designer.addNode('container', 'node_root')!
+  const childId = designer.addNode('button', containerId)!
+  const otherId = designer.addNode('button', 'node_root')!
+  const before = designer.document.value
+  const childX = before.nodes.find((node) => node.id === childId)!.props.x
+  const containerX = before.nodes.find((node) => node.id === containerId)!.props.x
+  const otherX = before.nodes.find((node) => node.id === otherId)!.props.x
+
+  designer.selectNodes([containerId, childId, otherId])
+  assert.equal(designer.align('left'), true)
+  const aligned = designer.document.value
+  const alignedContainer = aligned.nodes.find((node) => node.id === containerId)!
+  const alignedChild = aligned.nodes.find((node) => node.id === childId)!
+  const alignedOther = aligned.nodes.find((node) => node.id === otherId)!
+  assert.equal(alignedChild.props.x, childX)
+  const referenceX = Math.min(containerX, otherX)
+  assert.equal(alignedContainer.props.x, referenceX)
+  assert.equal(alignedOther.props.x, referenceX)
+})
+
 test('new palette siblings cascade without turning a selected container into an implicit template', () => {
   const designer = useUiDesigner()
   const parentId = 'node_root'
@@ -573,6 +629,30 @@ test('moving a container previews and commits its complete subtree as one transa
   assert.equal(designer.document.value.nodes.find((node) => node.id === containerId)?.props.x, origins[containerId].x + 48)
   assert.equal(designer.document.value.nodes.find((node) => node.id === childId)?.props.x, origins[childId].x + 48)
   assert.equal(designer.activeScene.value.history.availableUndoSteps, before + 1)
+})
+
+test('drag previews publish snap feedback lines and clear them on commit', () => {
+  const designer = useUiDesigner()
+  const targetId = designer.addNode('text', 'node_root', { x: 210, y: 40 })!
+  const draggedId = designer.addNode('text', 'node_root', { x: 132, y: 40 })!
+  const target = designer.document.value.nodes.find((node) => node.id === targetId)!
+  const dragged = designer.document.value.nodes.find((node) => node.id === draggedId)!
+  const origins = { [draggedId]: { x: dragged.props.x, y: dragged.props.y } }
+
+  const drafts = designer.previewSelectedPositionsWithSnap([draggedId], origins, { x: 81, y: 0 })
+  assert.equal(drafts[draggedId].x, 210)
+  const feedback = designer.snapFeedback.value
+  assert.ok(feedback)
+  assert.deepEqual(feedback!.guideIds, [])
+  const xLine = feedback!.lines.find((line) => line.axis === 'x' && line.source === 'node')
+  assert.equal(xLine?.position, 210)
+  const targetRect = nodeRect(target)
+  const draggedRect = nodeRect(dragged)
+  assert.equal(xLine?.start, Math.min(draggedRect.y, targetRect.y))
+  assert.equal(xLine?.end, Math.max(draggedRect.y + draggedRect.height, targetRect.y + targetRect.height))
+
+  assert.equal(designer.commitDraftPositions([draggedId]), true)
+  assert.equal(designer.snapFeedback.value, null)
 })
 
 test('reparenting a node into a container immediately clamps it inside the destination', () => {

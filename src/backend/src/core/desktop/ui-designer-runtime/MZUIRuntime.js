@@ -320,7 +320,9 @@
             self.reportError(error, 'node:' + node.type, { node: node.id, type: node.type });
           }
         });
-        nodes.forEach(function (node) {
+        // The tree's first sibling is the front-most layer; PIXI paints the
+        // last-added child on top, so attach views in reverse tree order.
+        nodes.slice().reverse().forEach(function (node) {
           var view = self.nodeViews[node.id];
           if (!view) return;
           var parent = node.parentId ? self.nodeViews[node.parentId] : self.displayRoot;
@@ -987,7 +989,19 @@
       finite(textPadding.bottom, 0),
       finite(textPadding.left, 0)
     );
-    view.style.textBaseline = props.verticalAlign || 'top';
+    view.style.textBaseline = 'alphabetic';
+  }
+
+  // Plain text vertical alignment moves the glyph block inside the node box.
+  // Never mapped to canvas textBaseline: PIXI positions lines assuming the
+  // 'alphabetic' baseline, so any override shifts glyphs past the generated
+  // texture and cuts them off.
+  function plainTextVerticalOffset(view, props) {
+    var align = props.verticalAlign || 'top';
+    if (align !== 'middle' && align !== 'bottom') return 0;
+    if (typeof view.updateText === 'function') { try { view.updateText(true); } catch (_) {} }
+    var spare = Math.max(0, Math.abs(finite(props.height, 0) * finite(props.scaleY, 1)) - Math.abs(finite(view.height, 0)));
+    return align === 'middle' ? spare / 2 : spare;
   }
 
   function createDisplayNode(node, runtime) {
@@ -1783,7 +1797,7 @@
     }
   }
 
-  function nodeWorldMatrix(node, scaleX, scaleY) {
+  function nodeWorldMatrix(node, scaleX, scaleY, offsetY) {
     var props = node && node.props ? node.props : {};
     var rotation = finite(props.rotate, 0) * Math.PI / 180;
     var cosine = Math.cos(rotation);
@@ -1795,7 +1809,7 @@
     var pivotX = finite(props.width, 0) * finite(props.anchorX, 0);
     var pivotY = finite(props.height, 0) * finite(props.anchorY, 0);
     var worldX = finite(props.x, 0);
-    var worldY = finite(props.y, 0);
+    var worldY = finite(props.y, 0) + finite(offsetY, 0);
     return {
       a: a, b: b, c: c, d: d,
       tx: worldX - a * pivotX - c * pivotY,
@@ -1821,13 +1835,17 @@
   function applyNodeTransform(node, view, scene) {
     if (!node || !view) return;
     var props = node.props || {};
+    var offsetY = 0;
+    if (node.type === 'text' && !view.__mzuiTextRuns && view.text !== undefined) {
+      offsetY = plainTextVerticalOffset(view, props);
+    }
     var worldScaleX = finite(view.__mzuiWorldScaleX, finite(props.scaleX, 1));
     var worldScaleY = finite(view.__mzuiWorldScaleY, finite(props.scaleY, 1));
-    var desired = nodeWorldMatrix(node, worldScaleX, worldScaleY);
+    var desired = nodeWorldMatrix(node, worldScaleX, worldScaleY, offsetY);
     var parent = node.parentId ? findNode(scene, node.parentId) : null;
     var local = desired;
     var localX = finite(props.x, 0);
-    var localY = finite(props.y, 0);
+    var localY = finite(props.y, 0) + offsetY;
     if (parent) {
       var parentProps = parent.props || {};
       var parentWorld = nodeWorldMatrix(parent, finite(parentProps.scaleX, 1), finite(parentProps.scaleY, 1));
@@ -1838,7 +1856,7 @@
       var inverseC = -parentWorld.c / determinant;
       var inverseD = parentWorld.a / determinant;
       var dx = finite(props.x, 0) - parentWorld.tx;
-      var dy = finite(props.y, 0) - parentWorld.ty;
+      var dy = finite(props.y, 0) + offsetY - parentWorld.ty;
       localX = inverseA * dx + inverseC * dy;
       localY = inverseB * dx + inverseD * dy;
       local = {

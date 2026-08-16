@@ -6,6 +6,8 @@ export type UiDesignerManagedAssetKind = Exclude<UiDesignerResourceKind, 'sceneD
 
 export const PROJECT_ASSET_CHANGE_MANIFEST_VERSION = '1.0.0' as const;
 
+export const UI_BUTTON_WINDOW_SKIN_RESOURCE_PATH = 'img/system/Window.png';
+
 const RESOURCE_PATH_KEYS = new Set([
   'path',
   'backgroundPath',

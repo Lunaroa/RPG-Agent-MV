@@ -34,12 +34,18 @@ test('UI designer keeps the isolated runtime only for explicit preview', () => {
   assert.match(canvas, /<UiDesignerFabricCanvas/)
   assert.match(canvas, /v-show="!previewing"/)
   assert.match(canvas, /data-ui-id="ui-designer-runtime-canvas-frame"/)
-  assert.match(canvas, /v-show="previewing"/)
+  // The preview frame must stay rendered (opacity, not visibility/display) while the
+  // editor prepares, or the embedded engine never receives animation frames.
+  assert.match(canvas, /'frame-idle': !previewing/)
+  assert.match(canvas, /\.canvas-runtime-frame\.frame-idle \{ opacity: 0; \}/)
+  assert.doesNotMatch(canvas, /\.canvas-runtime-frame\.frame-idle \{[^}]*visibility:\s*hidden/)
+  assert.doesNotMatch(canvas, /\.canvas-runtime-frame\.frame-idle \{[^}]*display:\s*none/)
+  assert.doesNotMatch(canvas, /<iframe[^>]*v-show/)
   assert.doesNotMatch(canvas, /UiCanvasNode|node-layer/)
   assert.match(canvas, /preview-interactive/)
   assert.match(canvas, /@error="rendererHost\.onIframeError"/)
   assert.match(canvas, /rendererFailureCode/)
-  assert.match(canvas, /rendererHost\.retry\(\)/)
+  assert.match(canvas, /restartFailedPreview/)
   assert.match(canvas, /rendererDisconnected/)
   assert.match(canvas, /data-ui-id="ui-designer-runtime-canvas-restart"/)
   assert.doesNotMatch(canvas, /rendererHost\.sendInput/)
@@ -98,11 +104,14 @@ test('resource refresh follows an in-flight edit with the latest complete scene'
   assert.match(hostLifecycle, /const sceneRevisionAtStart = revision[\s\S]*if \(revision !== sceneRevisionAtStart\) queueSceneSync\(true\)[\s\S]*postPendingResourceRefresh\(\)/)
 })
 
-test('renderer status appears only inside preview and never blocks Fabric authoring', () => {
+test('renderer status stays transient while a terminal error remains restartable from authoring', () => {
   assert.doesNotMatch(canvas, /runtime-disabled/)
-  assert.match(canvas, /<template v-if="previewing">[\s\S]*canvasSyncing[\s\S]*canvas-runtime-state/)
-  assert.match(canvas, /\.canvas-runtime-state \{[^}]*top: 8px;[^}]*right: 8px;[^}]*pointer-events: none;/)
-  assert.match(canvas, /\.canvas-runtime-state \.el-button \{ pointer-events: auto; \}/)
+  assert.match(canvas, /rendererStatus === 'error' && unwrap\(designer\.previewStatus\) === 'error'[\s\S]*<template v-else-if="rendererRequested">[\s\S]*canvasSyncing/)
+  assert.match(canvas, /\.canvas-panel \{ position: relative;/)
+  assert.match(canvas, /\.canvas-runtime-state \{[^}]*top: 48px;[^}]*right: 8px;[^}]*pointer-events: none;/)
+  assert.match(canvas, /\.editor-preview-canvas \.canvas-runtime-state \{ top: 8px; \}/)
+  assert.match(canvas, /\.canvas-runtime-state > span \{ min-width: 0; flex: 1 1 auto; \}/)
+  assert.match(canvas, /\.canvas-runtime-state \.el-button \{ flex: 0 0 auto; pointer-events: auto; \}/)
 })
 
 test('renderer host does not settle a mounted receipt from the wrong execution mode', () => {
@@ -249,13 +258,27 @@ test('authenticated pre-mount progress renews the handshake watchdog without ext
   assert.match(hostLifecycle, /const armHandshakeWatchdog = \(activeSessionId: string\): boolean =>/)
   assert.match(hostLifecycle, /session\?\.sessionId === activeSessionId && pendingMountRevision === null && !executionModeReady\.value/)
   assert.match(hostLifecycle, /const advancesHandshake = messageKind === 'receipt'[\s\S]*messageKind === 'hello'[\s\S]*messageKind === 'ready'[\s\S]*messageKind === 'scene-state' && !sceneStateHasDocumentIdentity/)
+  assert.match(hostLifecycle, /if \(advancesHandshake\) acknowledgeIframeLoad\(\)/)
   assert.match(hostLifecycle, /if \(advancesHandshake && pendingMountRevision === null && !executionModeReady\.value && !armHandshakeWatchdog\(active\.sessionId\)\) return/)
   assert.match(hostLifecycle, /pendingMountRevision = revision[\s\S]*cancelHandshake\(\)/)
 })
 
+test('authenticated iframe progress closes the DOM load-event race before scene mounting', () => {
+  assert.match(hostLifecycle, /const acknowledgeIframeLoad = \(\) => \{[\s\S]*iframeLoaded = true[\s\S]*if \(firstAcknowledgement\) maybeRun\(\)/)
+  assert.match(hostLifecycle, /if \(advancesHandshake\) acknowledgeIframeLoad\(\)/)
+  assert.match(hostLifecycle, /const onIframeLoad = \(\) => \{\s*acknowledgeIframeLoad\(\)\s*\}/)
+})
+
+test('authenticated fixed pre-mount scene state closes the one-shot ready race', () => {
+  assert.match(hostLifecycle, /const acknowledgeEngineReady = \(reportedEngineSceneClass: string\) => \{[\s\S]*reportedEngineSceneClass !== UI_DESIGNER_RENDERER_HOST_SCENE_CLASS[\s\S]*engineReady = true[\s\S]*maybeRun\(\)/)
+  assert.match(hostLifecycle, /message\.kind === 'ready'[\s\S]*acknowledgeEngineReady\(message\.payload\.engineSceneClass\)/)
+  assert.match(hostLifecycle, /message\.kind === 'scene-state'[\s\S]*!engineReady[\s\S]*message\.payload\.phase === 'active'[\s\S]*message\.payload\.actualScene === UI_DESIGNER_RENDERER_HOST_SCENE_CLASS[\s\S]*message\.payload\.engineSceneClass === UI_DESIGNER_RENDERER_HOST_SCENE_CLASS[\s\S]*message\.payload\.mountedDocumentSceneId === null[\s\S]*message\.payload\.documentSceneName === null[\s\S]*message\.payload\.revision === 0[\s\S]*message\.payload\.executionMode === 'authoring'[\s\S]*acknowledgeEngineReady\(message\.payload\.engineSceneClass\)/)
+})
+
 test('start confirm and iframe terminals enter the shared latch with fixed safe codes', () => {
   assert.match(hostLifecycle, /UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES\.startAdapter, 'start'/)
-  assert.match(hostLifecycle, /UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES\.startResult, 'start'/)
+  assert.match(hostLifecycle, /: UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES\.startResult[\s\S]*resolveUiDesignerRendererFailure\(failureCode, 'start'\)/)
+  assert.match(hostLifecycle, /Restore those runtime assets, then restart the preview/)
   assert.match(hostLifecycle, /UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES\.confirmIpc, 'confirm'/)
   assert.match(hostLifecycle, /UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES\.confirmIdentity, 'confirm'/)
   assert.match(hostLifecycle, /UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES\.iframeLoad, 'iframe-load'/)
@@ -265,7 +288,25 @@ test('start confirm and iframe terminals enter the shared latch with fixed safe 
   assert.doesNotMatch(startAndConfirm, /result\.message/)
   assert.match(canvas, /:data-failure-code="rendererFailureCode \|\| undefined"/)
   assert.match(canvas, /:data-failure-stage="rendererStage"/)
-  assert.match(canvas, /t\('rendererDisconnected'\)/)
+  assert.match(canvas, /const rendererFailureMessage = computed\(\(\) => t\('rendererDisconnected'\)\)/)
+  assert.match(canvas, /rendererStatus === 'error' && unwrap\(designer\.previewStatus\) === 'error'/)
+  assert.match(canvas, /<template v-else-if="rendererRequested">/)
+  assert.match(canvas, /const restartFailedPreview = \(\) => failedPreviewMode\.value === 'full-preview'[\s\S]*designer\.startPreview\(\)[\s\S]*designer\.startEditorPreview\(\)/)
+  assert.match(canvas, /@click="restartFailedPreview"/)
+  assert.doesNotMatch(canvas, /@click="rendererHost\.retry\(\)"/)
+})
+
+test('preview failure details stay opt-in, bounded, and separate from the Fabric canvas renderer', () => {
+  assert.match(hostLifecycle, /const failureDetails = ref<UiDesignerRendererFailureDetails \| null>\(null\)/)
+  assert.match(hostLifecycle, /failureDetails\.value = \{[\s\S]*iframeLoaded,[\s\S]*engineReady,[\s\S]*processConfirmed,[\s\S]*pendingMountRevision,[\s\S]*lastHostMessageKind,[\s\S]*cleanupConfirmed: null/)
+  assert.match(hostLifecycle, /sanitizeRendererTechnicalMessage[\s\S]*\.slice\(0, 1024\)/)
+  assert.match(canvas, /class="renderer-details-button" data-ui-id="ui-designer-runtime-canvas-details"[\s\S]*rendererFailureDetailsVisible = true/)
+  const detailsButton = canvas.slice(canvas.indexOf('class="renderer-details-button"'), canvas.indexOf('</el-button>', canvas.indexOf('class="renderer-details-button"')))
+  assert.doesNotMatch(detailsButton, /\stext(?:\s|>)/)
+  assert.match(detailsButton, /t\('errorDetails'\)/)
+  assert.match(canvas, /<el-dialog[\s\S]*data-ui-id="ui-designer-runtime-canvas-details-content"[\s\S]*rendererFailureDetailsText/)
+  assert.match(canvas, /<UiDesignerFabricCanvas/)
+  assert.doesNotMatch(canvas, /UiCanvasNode|node-layer/)
 })
 
 test('canvas exposes bounded renderer lifecycle diagnostics to the hidden desktop bridge', () => {
@@ -323,6 +364,9 @@ test('scene-state fatal keeps the route barrier on one active owner and retries 
   assert.match(hostLifecycle, /if \(!actorTerminal && actorDisposed\) actorTerminal = true/)
   assert.match(hostLifecycle, /if \(messageKind === 'fatal'\) \{[\s\S]*terminalGate\.accept\(message\)[\s\S]*actorDisposed = true\s*pendingDispose\?\.acknowledge\(\)/)
   assert.match(hostLifecycle, /onExecutionModeError\?\.\(recoveryReason, !terminal\)/)
+  // Terminal editor-preview failures must notify the designer too; gating the
+  // call on full-preview left previewStatus stuck on 'preparing'.
+  assert.doesNotMatch(hostLifecycle, /'full-preview' \|\| !terminal\) options\.onExecutionModeError/)
   assert.match(designerController, /const previewCleanupPending = ref\(false\)/)
   assert.match(designerController, /previewCleanupPending\.value \|\| previewDisposalInFlight\.value \|\| previewStatus\.value === 'preparing'/)
   assert.match(designerController, /failPreview = \(message = '', cleanupPending = false\)/)
@@ -333,6 +377,7 @@ test('terminal retry preserves the fixed cause through cleanup and resets only b
   assert.match(hostLifecycle, /const authoritativeFailure = latchFailure\(acceptedFailure\)/)
   assert.match(hostLifecycle, /if \(terminalFailure\) latchFailure\(terminalFailure\)/)
   assert.match(hostLifecycle, /const terminal = await dispose\('shutdown', 'protocol-error', false\)/)
+  assert.match(hostLifecycle, /console\.error\('\[ui-designer renderer bridge failure\]', \{\s*code: authoritativeFailure\.code,\s*stage: failedStage,\s*cleanupConfirmed: terminal,/)
   const cleanupBarrier = hostLifecycle.indexOf("if (!await stopRetainedStaleSessions())")
   const gateReset = hostLifecycle.indexOf('terminalGate.reset()', cleanupBarrier)
   const rendererStart = hostLifecycle.indexOf('rendererAdapter.start(generation)', gateReset)

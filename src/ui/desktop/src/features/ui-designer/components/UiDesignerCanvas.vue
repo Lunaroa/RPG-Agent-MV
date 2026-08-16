@@ -5,7 +5,7 @@ import type { UiDesignerDocument, UiNode, UiRuntimeSceneExport, UiViewport } fro
 import type { UiDesignerRendererExecutionMode } from '@contract/ui-designer-renderer-bridge'
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
-import { useUiDesignerRendererHost } from '../composables/useUiDesignerRendererHost'
+import { UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES, useUiDesignerRendererHost } from '../composables/useUiDesignerRendererHost'
 import UiDesignerFabricCanvas from './UiDesignerFabricCanvas.vue'
 import { viewportClientToWorld, worldPointToViewport, type UiCanvasViewportFrame } from '../models/geometry'
 import { canvasScrollForWorldPoint, createCanvasScrollLayout, fitCanvasZoom, panCanvasScroll } from '../models/viewport-navigation'
@@ -32,6 +32,7 @@ const gamePreviewing = computed(() => unwrap(designer.isPreviewing))
 const previewing = computed(() => gamePreviewing.value || unwrap(designer.isEditorPreviewing))
 const rendererRequested = computed(() => previewing.value || unwrap(designer.previewStatus) === 'preparing')
 const requestedExecutionMode = computed<UiDesignerRendererExecutionMode>(() => unwrap(designer.previewExecutionMode))
+const failedPreviewMode = ref<Extract<UiDesignerRendererExecutionMode, 'editor-preview' | 'full-preview'>>('editor-preview')
 const preferences = computed<Record<string, unknown>>(() => unwrap(designer.preferences))
 const gridEnabled = computed(() => typeof preferences.value.gridEnabled === 'boolean' ? preferences.value.gridEnabled : document.value.canvas.grid.enabled)
 const snapEnabled = computed(() => typeof preferences.value.snapEnabled === 'boolean' ? preferences.value.snapEnabled : document.value.canvas.snap.enabled)
@@ -152,7 +153,10 @@ const rendererHost = useUiDesignerRendererHost({
     designer.acknowledgePreviewExecutionMode(mode)
     if (mode !== 'authoring') void nextTick(() => rendererFrame.value?.focus())
   },
-  onExecutionModeError: (message, cleanupPending) => designer.failPreview(message, cleanupPending),
+  onExecutionModeError: (message, cleanupPending) => {
+    if (requestedExecutionMode.value !== 'authoring') failedPreviewMode.value = requestedExecutionMode.value
+    designer.failPreview(message, cleanupPending)
+  },
   onPreviewExitRequest: () => { if (unwrap(designer.isEditorPreviewing)) designer.stopEditorPreview(); else designer.stopPreview() },
 })
 const rendererStatus = rendererHost.status
@@ -161,6 +165,16 @@ const rendererIframeUrl = rendererHost.iframeUrl
 const rendererStage = rendererHost.stage
 const rendererReady = computed(() => rendererStatus.value === 'running')
 const previewInteractive = computed(() => previewing.value && rendererReady.value && rendererHost.executionModeReady.value && rendererHost.executionMode.value !== 'authoring')
+const rendererFailureMessage = computed(() => t('rendererDisconnected'))
+const rendererFailureDetailsVisible = ref(false)
+const rendererFailureDetailsText = computed(() => JSON.stringify(rendererHost.failureDetails.value ?? {
+  code: rendererFailureCode.value ?? 'UI_RENDERER_UNKNOWN',
+  stage: rendererStage.value,
+  recoveryReason: rendererHost.failureRecoveryReason.value || rendererHost.error.value || rendererFailureMessage.value,
+}, null, 2))
+const restartFailedPreview = () => failedPreviewMode.value === 'full-preview'
+  ? designer.startPreview()
+  : designer.startEditorPreview()
 
 const isEditableTarget = (target: EventTarget | null) => target instanceof Element && Boolean(target.closest('input, textarea, select, [contenteditable="true"], .CodeMirror'))
 const clearNativeCanvasSelection = (event?: Event) => {
@@ -490,6 +504,18 @@ onBeforeUnmount(() => {
         </el-dropdown-menu></template>
       </el-dropdown>
     </div>
+    <div v-if="rendererStatus === 'error' && unwrap(designer.previewStatus) === 'error'" class="canvas-runtime-state" aria-live="polite" :data-failure-code="rendererFailureCode || undefined" :data-failure-stage="rendererStage" data-ui-id="ui-designer-runtime-canvas-status">
+      <span>{{ rendererFailureMessage }}</span>
+      <el-button class="renderer-details-button" data-ui-id="ui-designer-runtime-canvas-details" data-testid="ui-designer-runtime-canvas-details" size="small" @click="rendererFailureDetailsVisible = true">{{ t('errorDetails') }}</el-button>
+      <el-button data-ui-id="ui-designer-runtime-canvas-restart" data-testid="ui-designer-runtime-canvas-restart" size="small" @click="restartFailedPreview">{{ t('restartPreview') }}</el-button>
+    </div>
+    <template v-else-if="rendererRequested">
+      <div v-if="!designer.canRenderCanvas" class="canvas-runtime-state" data-ui-id="ui-designer-runtime-canvas-project-required">{{ t('projectRequired') }}</div>
+      <div v-else-if="rendererStatus !== 'running'" class="canvas-runtime-state" aria-live="polite" data-ui-id="ui-designer-runtime-canvas-status"><span>{{ `${t(designer.previewStatus === 'preparing' ? 'previewPreparing' : 'canvasSyncing')} · ${rendererStage}` }}</span></div>
+    </template>
+    <el-dialog v-model="rendererFailureDetailsVisible" append-to-body width="min(620px, calc(100vw - 32px))" :title="t('previewErrorDetails')">
+      <pre class="renderer-error-details" data-ui-id="ui-designer-runtime-canvas-details-content" data-testid="ui-designer-runtime-canvas-details-content">{{ rendererFailureDetailsText }}</pre>
+    </el-dialog>
     <div ref="viewportElement" class="canvas-viewport" :class="{ 'preview-viewport': previewing, 'pan-ready': spacePressed && !previewing, panning: Boolean(panning) }" @wheel="zoom" @pointerdown.capture="handleViewportPointerDown" @selectstart="preventNativeCanvasSelection" @dragstart="preventNativeCanvasDrag" @dragover.prevent @drop="dropResource">
       <div class="canvas-scroll-content" :style="scrollContentStyle">
       <div v-if="!previewing && document.canvas.rulers" class="canvas-ruler horizontal" aria-hidden="true" @pointerdown.stop="beginGuideFromRuler($event, 'horizontal')"><span v-for="tick in rulerTicks.horizontal" :key="`h-${tick}`" class="ruler-tick" :style="{ left: `${worldPointToViewport({ x: tick, y: 0 }, viewportFrame(), canvasViewport).x}px` }">{{ tick }}</span></div>
@@ -517,10 +543,9 @@ onBeforeUnmount(() => {
         </div>
         <iframe
           v-if="rendererIframeUrl"
-          v-show="previewing"
           ref="rendererFrame"
           class="canvas-runtime-frame"
-          :class="{ 'preview-interactive': previewInteractive }"
+          :class="[{ 'preview-interactive': previewInteractive }, { 'frame-idle': !previewing }]"
           :src="rendererIframeUrl"
           sandbox="allow-scripts allow-same-origin"
           :tabindex="previewInteractive ? 0 : -1"
@@ -542,23 +567,14 @@ onBeforeUnmount(() => {
           @activate="activateNode"
           @contextmenu="openFabricContextMenu"
         />
-        <template v-if="previewing">
-          <div v-if="!designer.canRenderCanvas" class="canvas-runtime-state" data-ui-id="ui-designer-runtime-canvas-project-required">{{ t('projectRequired') }}</div>
-          <div v-else-if="rendererStatus === 'error'" class="canvas-runtime-state" aria-live="polite" :data-failure-code="rendererFailureCode || undefined" :data-failure-stage="rendererStage" data-ui-id="ui-designer-runtime-canvas-status">
-            <span>{{ t('rendererDisconnected') }}</span>
-            <el-button data-ui-id="ui-designer-runtime-canvas-restart" data-testid="ui-designer-runtime-canvas-restart" size="small" @click="rendererHost.retry()">{{ t('restartPreview') }}</el-button>
-          </div>
-          <div v-else-if="rendererStatus !== 'running'" class="canvas-runtime-state" aria-live="polite" data-ui-id="ui-designer-runtime-canvas-status"><span>{{ `${t(designer.previewStatus === 'preparing' ? 'previewPreparing' : 'canvasSyncing')} · ${rendererStage}` }}</span></div>
-        </template>
       </div>
       </div>
     </div>
-    <div v-if="!previewing" class="canvas-hint">{{ t('chooseNode') }}</div>
   </section>
 </template>
 
 <style scoped>
-.canvas-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; background: #12141b; }
+.canvas-panel { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; background: #12141b; }
 .canvas-toolbar { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 5px 10px; border-bottom: 1px solid var(--app-border); color: var(--app-ink-soft); font-size: 11px; }
 .canvas-title { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.canvas-zoom { font-variant-numeric: tabular-nums; }
 .canvas-viewport { position: relative; flex: 1; min-height: 0; overflow: auto; background: #20232c; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; scrollbar-width: none; }.canvas-viewport::-webkit-scrollbar { display: none; }.canvas-viewport * { -webkit-user-drag: none; }.canvas-viewport.pan-ready { cursor: grab; }.canvas-viewport.panning { cursor: grabbing; }
@@ -569,7 +585,8 @@ onBeforeUnmount(() => {
 .guide-context-menu, .node-context-menu { position: fixed; z-index: 4000; display: flex; flex-direction: column; min-width: 150px; max-height: min(480px, calc(100vh - 16px)); overflow: auto; padding: 5px; border: 1px solid var(--app-border); border-radius: 5px; background: var(--app-bg); box-shadow: 0 8px 18px #0007; }.guide-context-menu .el-button, .node-context-menu .el-button { justify-content: flex-start; margin: 0; }
 .canvas-stage { position: absolute; overflow: hidden; box-shadow: 0 16px 36px #0007; transform-origin: 0 0; }.canvas-stage.preview-stage { box-shadow: 0 16px 48px #000b; }.canvas-edit-breadcrumb { position: absolute; z-index: 8; top: 8px; left: 8px; display: flex; align-items: center; gap: 4px; padding: 3px 5px; border: 1px solid #ffffff1f; border-radius: 4px; color: var(--app-ink-soft); background: #12141be8; font-size: 10px; }.canvas-edit-breadcrumb .el-button { padding: 2px 5px; }.canvas-stage.checkerboard { background-image: conic-gradient(#ffffff09 25%, transparent 0 50%, #ffffff09 0 75%, transparent 0); background-size: 24px 24px; }
 .canvas-runtime-frame { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; border: 0; background: transparent; pointer-events: none; user-select: none; }.canvas-runtime-frame.preview-interactive { z-index: 3; pointer-events: auto; touch-action: none; user-select: none; }
+.canvas-runtime-frame.frame-idle { opacity: 0; }
 .canvas-grid { position: absolute; z-index: 1; inset: 0; opacity: 0; background-image: linear-gradient(to right, var(--grid-color) 1px, transparent 1px), linear-gradient(to bottom, var(--grid-color) 1px, transparent 1px); background-size: var(--grid-size) var(--grid-size); pointer-events: none; }.canvas-grid.active { opacity: .18; }
-.canvas-runtime-state { position: absolute; z-index: 9; top: 8px; right: 8px; display: flex; max-width: min(420px, calc(100% - 16px)); align-items: center; gap: 8px; padding: 6px 9px; border: 1px solid var(--app-border); border-radius: 5px; color: var(--app-ink-soft); background: color-mix(in srgb, #12141b 92%, transparent); box-shadow: 0 5px 14px #0005; font-size: 11px; text-align: left; pointer-events: none; }.canvas-runtime-state .el-button { pointer-events: auto; }
-.canvas-hint { min-height: 24px; padding: 5px 10px; border-top: 1px solid var(--app-border); color: var(--app-ink-soft); font-size: 11px; }
+.canvas-runtime-state { position: absolute; z-index: 9; top: 48px; right: 8px; display: flex; max-width: min(560px, calc(100% - 16px)); align-items: center; gap: 8px; padding: 6px 9px; border: 1px solid var(--app-border); border-radius: 5px; color: var(--app-ink-soft); background: color-mix(in srgb, #12141b 92%, transparent); box-shadow: 0 5px 14px #0005; font-size: 11px; text-align: left; pointer-events: none; }.editor-preview-canvas .canvas-runtime-state { top: 8px; }.canvas-runtime-state > span { min-width: 0; flex: 1 1 auto; }.canvas-runtime-state .el-button { flex: 0 0 auto; pointer-events: auto; }
+.renderer-error-details { max-height: min(60vh, 560px); margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--app-ink); }
 </style>

@@ -55,6 +55,34 @@ export interface UiDesignerRendererTerminalFailure extends UiDesignerRendererFai
   sequence: number
 }
 
+export interface UiDesignerRendererFailureDetails {
+  code: string
+  stage: UiDesignerRendererHostStage
+  stageStatus: UiDesignerRendererHostStageStatus
+  recoveryReason: string
+  technicalMessage: string | null
+  iframeLoaded: boolean
+  engineReady: boolean
+  processConfirmed: boolean
+  pendingMountRevision: number | null
+  requestedExecutionMode: UiDesignerRendererExecutionMode
+  executionMode: UiDesignerRendererExecutionMode
+  executionModeReady: boolean
+  revision: number
+  hostSequence: number
+  lastHostMessageKind: string | null
+  scenePhase: 'transitioning' | 'active'
+  requestedScene: string | null
+  actualScene: string | null
+  engineSceneClass: string | null
+  mountedDocumentSceneId: string | null
+  documentSceneName: string | null
+  mountedRevision: number | null
+  mountedExecutionMode: UiDesignerRendererExecutionMode | null
+  cleanupConfirmed: boolean | null
+  lastDiagnostic: Pick<UiRuntimeDiagnostic, 'code' | 'severity' | 'phase' | 'event' | 'label' | 'message' | 'count'> | null
+}
+
 export const UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES = Object.freeze({
   sceneExport: 'UI_RENDERER_SCENE_EXPORT_FAILED',
   updatePlan: 'UI_RENDERER_UPDATE_PLAN_FAILED',
@@ -99,6 +127,18 @@ const rendererRecoveryByCode: Readonly<Record<string, string>> = Object.freeze({
 })
 
 const unknownRendererRecoveryReason = 'The isolated UI canvas stopped unexpectedly. Retry the preview.'
+
+const sanitizeRendererTechnicalMessage = (cause: unknown): string | null => {
+  const raw = cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : ''
+  if (!raw.trim()) return null
+  return raw
+    .replace(/(?:file|rpg-agent-preview):\/\/[^\s"'<>]+/gi, '<preview>')
+    .replace(/(?:[A-Za-z]:[\\/]|\\\\)[^\r\n"'<>]*/g, '<path>')
+    .replace(/\b[a-f0-9]{32,}\b/gi, '<token>')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 1024)
+}
 
 export function resolveUiDesignerRendererFailure(
   code: string,
@@ -266,6 +306,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   const error = ref('')
   const failureCode = ref<string | null>(null)
   const failureRecoveryReason = ref('')
+  const failureDetails = ref<UiDesignerRendererFailureDetails | null>(null)
   const iframeUrl = ref('')
   const bounds = ref<Record<string, UiDesignerRendererNodeBounds>>({})
   const diagnostics = ref<UiRuntimeDiagnostic[]>([])
@@ -295,6 +336,8 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   let actorDisposed = false
   let engineReady = false
   let processConfirmed = false
+  let lastHostMessageKind: string | null = null
+  let lastTechnicalMessage: string | null = null
   let startEpoch = 0
   let disposed = false
   let messageListenerInstalled = false
@@ -331,6 +374,10 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
   const setStage = (next: UiDesignerRendererHostStage, nextStatus: UiDesignerRendererHostStageStatus) => {
     stage.value = next
     stageStatus.value = nextStatus
+  }
+
+  const rememberTechnicalFailure = (cause: unknown) => {
+    lastTechnicalMessage = sanitizeRendererTechnicalMessage(cause)
   }
 
   const readDesignerValue = <T,>(value: T | Ref<T>): T => isRef(value) ? value.value : value
@@ -824,6 +871,42 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     cancelDraftSync()
     const authoritativeFailure = latchFailure(acceptedFailure)
     const failedStage = authoritativeFailure.stage
+    const latestDiagnostic = diagnostics.value.at(-1)
+    failureDetails.value = {
+      code: authoritativeFailure.code,
+      stage: failedStage,
+      stageStatus: stageStatus.value,
+      recoveryReason: authoritativeFailure.recoveryReason,
+      technicalMessage: lastTechnicalMessage,
+      iframeLoaded,
+      engineReady,
+      processConfirmed,
+      pendingMountRevision,
+      requestedExecutionMode: options.executionMode(),
+      executionMode: executionMode.value,
+      executionModeReady: executionModeReady.value,
+      revision,
+      hostSequence,
+      lastHostMessageKind,
+      scenePhase: scenePhase.value,
+      requestedScene: requestedScene.value,
+      actualScene: actualScene.value,
+      engineSceneClass: engineSceneClass.value,
+      mountedDocumentSceneId: mountedDocumentSceneId.value,
+      documentSceneName: documentSceneName.value,
+      mountedRevision: mountedRevision.value,
+      mountedExecutionMode: mountedExecutionMode.value,
+      cleanupConfirmed: null,
+      lastDiagnostic: latestDiagnostic ? {
+        code: latestDiagnostic.code,
+        severity: latestDiagnostic.severity,
+        phase: latestDiagnostic.phase,
+        event: latestDiagnostic.event,
+        label: latestDiagnostic.label,
+        message: latestDiagnostic.message,
+        count: latestDiagnostic.count,
+      } : null,
+    }
     const operation = (async () => {
       startEpoch += 1
       cancelHandshake()
@@ -847,7 +930,16 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
         : `${authoritativeFailure.recoveryReason} The previous preview was kept because cleanup was not confirmed.`
       failureRecoveryReason.value = recoveryReason
       error.value = recoveryReason
-      if (options.executionMode() === 'full-preview' || !terminal) options.onExecutionModeError?.(recoveryReason, !terminal)
+      if (failureDetails.value) failureDetails.value = { ...failureDetails.value, recoveryReason, cleanupConfirmed: terminal }
+      console.error('[ui-designer renderer bridge failure]', {
+        code: authoritativeFailure.code,
+        stage: failedStage,
+        cleanupConfirmed: terminal,
+      })
+      // Every failure mode must return the designer to a recoverable state;
+      // skipping the notification for terminal editor-preview failures left
+      // previewStatus stuck on 'preparing' with no exit path.
+      options.onExecutionModeError?.(recoveryReason, !terminal)
       if (terminal) {
         iframeUrl.value = ''
         bounds.value = {}
@@ -914,6 +1006,9 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     failureLatch.reset()
     failureCode.value = null
     failureRecoveryReason.value = ''
+    failureDetails.value = null
+    lastHostMessageKind = null
+    lastTechnicalMessage = null
     installMessageListener()
     status.value = 'preparing'
     setStage('start', 'begin')
@@ -926,8 +1021,9 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       let result: Awaited<ReturnType<UiDesignerRendererHostAdapter['start']>>
       try {
         result = await rendererAdapter.start(generation)
-      } catch {
+      } catch (cause) {
         if (disposed || epoch !== startEpoch || generation !== options.designer.projectGeneration) return
+        rememberTechnicalFailure(cause)
         await fail(resolveUiDesignerRendererFailure(UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.startAdapter, 'start'))
         return
       }
@@ -1004,12 +1100,33 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     syncSelection()
   }
 
+  const acknowledgeIframeLoad = () => {
+    if (!session) return
+    const firstAcknowledgement = !iframeLoaded
+    iframeLoaded = true
+    if (status.value !== 'running') status.value = 'loading'
+    if (rendererStageOrder[stage.value] <= rendererStageOrder['iframe-load']) setStage('iframe-load', 'success')
+    if (!engineReady && rendererStageOrder[stage.value] <= rendererStageOrder.hello) setStage('hello', 'begin')
+    if (firstAcknowledgement) maybeRun()
+  }
+
+  const acknowledgeEngineReady = (reportedEngineSceneClass: string) => {
+    if (reportedEngineSceneClass !== UI_DESIGNER_RENDERER_HOST_SCENE_CLASS) {
+      throw new Error('The isolated UI canvas ready scene class does not match the fixed host scene.')
+    }
+    if (engineReady) return
+    engineReady = true
+    setStage('ready', 'success')
+    maybeRun()
+  }
+
   const confirmProcess = async (active: UiDesignerRendererHostSession, adapter: UiDesignerRendererHostAdapter) => {
     let result: Awaited<ReturnType<UiDesignerRendererHostAdapter['confirm']>>
     try {
       result = await adapter.confirm(active.sessionId)
-    } catch {
+    } catch (cause) {
       if (!session || session.sessionId !== active.sessionId) return
+      rememberTechnicalFailure(cause)
       await fail(resolveUiDesignerRendererFailure(UI_DESIGNER_RENDERER_LOCAL_FAILURE_CODES.confirmIpc, 'confirm'))
       return
     }
@@ -1083,6 +1200,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       })
       hostSequence = message.sequence
       const messageKind = (message as unknown as { kind: string }).kind
+      lastHostMessageKind = messageKind
       if (!session) {
         if (messageKind === 'fatal') {
           const terminalFailure = terminalGate.accept(message)
@@ -1097,15 +1215,16 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
         || messageKind === 'hello'
         || messageKind === 'ready'
         || (messageKind === 'scene-state' && !sceneStateHasDocumentIdentity)
+      if (advancesHandshake) acknowledgeIframeLoad()
       if (advancesHandshake && pendingMountRevision === null && !executionModeReady.value && !armHandshakeWatchdog(active.sessionId)) return
       if (messageKind === 'receipt') {
         const payload = (message as unknown as { payload: UiDesignerRendererReceiptPayload }).payload
         applyReceiptStage(payload)
         if (payload.stage === 'iframe-load' && payload.status === 'success') {
-          iframeLoaded = true
-          maybeRun()
+          acknowledgeIframeLoad()
         }
       } else if (messageKind === 'fatal') {
+        rememberTechnicalFailure((message as Extract<UiDesignerRendererBridgeMessage, { kind: 'fatal' }>).payload.message)
         const terminalFailure = terminalGate.accept(message)
         if (terminalFailure) void fail(terminalFailure)
       } else if (message.kind === 'hello') {
@@ -1118,10 +1237,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
         setStage('confirm', 'begin')
         void confirmProcess(active, sessionAdapter)
       } else if (message.kind === 'ready') {
-        if (message.payload.engineSceneClass !== UI_DESIGNER_RENDERER_HOST_SCENE_CLASS) throw new Error('The isolated UI canvas ready scene class does not match the fixed host scene.')
-        setStage('ready', 'success')
-        engineReady = true
-        maybeRun()
+        acknowledgeEngineReady(message.payload.engineSceneClass)
       } else if (message.kind === 'mounted' || message.kind === 'bounds' || message.kind === 'diagnostic' || message.kind === 'scene-state') {
         const next = reduceUiDesignerRendererHostRuntimeMessage({
           bounds: bounds.value,
@@ -1150,6 +1266,23 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
         mountedRevision.value = next.mountedRevision
         mountedExecutionMode.value = next.mountedExecutionMode
         if (message.kind === 'diagnostic') options.designer.runtimeDiagnostics = [...diagnostics.value]
+        if (
+          message.kind === 'scene-state'
+          && !engineReady
+          && message.payload.phase === 'active'
+          && message.payload.actualScene === UI_DESIGNER_RENDERER_HOST_SCENE_CLASS
+          && message.payload.engineSceneClass === UI_DESIGNER_RENDERER_HOST_SCENE_CLASS
+          && message.payload.mountedDocumentSceneId === null
+          && message.payload.documentSceneName === null
+          && message.payload.revision === 0
+          && message.payload.executionMode === 'authoring'
+        ) {
+          // The generated host publishes this exact authenticated pre-mount
+          // state only after its one-shot ready signal. It therefore closes
+          // the iframe-ref race without accepting a different engine scene or
+          // treating a mounted document state as renderer readiness.
+          acknowledgeEngineReady(message.payload.engineSceneClass)
+        }
         if (message.kind === 'mounted' && message.payload.revision >= revision) {
           const mountedIdentityMatches = message.payload.engineSceneClass === UI_DESIGNER_RENDERER_HOST_SCENE_CLASS
             && message.payload.mountedDocumentSceneId === designerSceneId()
@@ -1202,18 +1335,14 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       } else if (message.kind === 'disposed') {
         if (pendingDispose) pendingDispose.acknowledge()
       }
-    } catch {
+    } catch (cause) {
+      rememberTechnicalFailure(cause)
       void fail(resolveUiDesignerRendererFailure('UI_RENDERER_BRIDGE_PROTOCOL', stage.value))
     }
   }
 
   const onIframeLoad = () => {
-    if (!session) return
-    iframeLoaded = true
-    if (status.value !== 'running') status.value = 'loading'
-    if (rendererStageOrder[stage.value] <= rendererStageOrder['iframe-load']) setStage('iframe-load', 'success')
-    if (!engineReady && rendererStageOrder[stage.value] <= rendererStageOrder.hello) setStage('hello', 'begin')
-    maybeRun()
+    acknowledgeIframeLoad()
   }
 
   const onIframeError = () => {
@@ -1320,5 +1449,5 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       })
   })
 
-  return { status, error, failureCode, failureRecoveryReason, iframeUrl, bounds, diagnostics, executionMode, executionModeReady, stage, stageStatus, scenePhase, requestedScene, actualScene, engineSceneClass, mountedDocumentSceneId, documentSceneName, mountedRevision, mountedExecutionMode, onIframeLoad, onIframeError, retry, refreshCanvas, dispose }
+  return { status, error, failureCode, failureRecoveryReason, failureDetails, iframeUrl, bounds, diagnostics, executionMode, executionModeReady, stage, stageStatus, scenePhase, requestedScene, actualScene, engineSceneClass, mountedDocumentSceneId, documentSceneName, mountedRevision, mountedExecutionMode, onIframeLoad, onIframeError, retry, refreshCanvas, dispose }
 }

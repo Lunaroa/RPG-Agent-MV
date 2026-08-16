@@ -49,6 +49,7 @@ const tabLabel = (scene: UiDesignerSceneState) => {
       :data-ui-id="`ui-designer-scene-tab-${scene.id}`"
       :data-testid="`ui-designer-scene-tab-${scene.id}`"
       :class="{ active: scene.id === designer.activeSceneId }"
+      :title="tabLabel(scene)"
       type="button"
       :disabled="designer.isPreviewing"
       draggable="true"
@@ -58,7 +59,7 @@ const tabLabel = (scene: UiDesignerSceneState) => {
       @drop="onDrop(scene.id, $event)"
     >
       <el-dropdown trigger="contextmenu" @command="(command: string) => command === 'close' ? close(scene.id) : command === 'closeOthers' ? void closeOthers(scene.id) : command === 'closeAll' ? void closeAll() : command === 'revealSource' ? void revealSource(scene) : undefined">
-        <span class="scene-tab-content"><span>{{ tabLabel(scene) }}</span><span v-if="designer.isSceneDirty(scene.id)" class="tab-dirty">•</span><el-icon v-if="!designer.isPreviewing" class="tab-close" :data-ui-id="`ui-designer-scene-tab-${scene.id}-close`" :data-testid="`ui-designer-scene-tab-${scene.id}-close`" :title="t('close')" @click.stop="close(scene.id)"><Close /></el-icon></span>
+        <span class="scene-tab-content"><span class="scene-tab-label">{{ tabLabel(scene) }}</span><span v-if="designer.isSceneDirty(scene.id)" class="tab-dirty">•</span><el-icon v-if="!designer.isPreviewing" class="tab-close" :data-ui-id="`ui-designer-scene-tab-${scene.id}-close`" :data-testid="`ui-designer-scene-tab-${scene.id}-close`" :title="t('close')" @click.stop="close(scene.id)"><Close /></el-icon></span>
         <template #dropdown><el-dropdown-menu><el-dropdown-item command="close" :disabled="designer.isPreviewing">{{ t('close') }}</el-dropdown-item><el-dropdown-item command="closeOthers" :disabled="designer.isPreviewing">{{ t('closeOthers') }}</el-dropdown-item><el-dropdown-item command="closeAll" :disabled="designer.isPreviewing">{{ t('closeAll') }}</el-dropdown-item><el-dropdown-item command="revealSource" :disabled="designer.isPreviewing || !scene.sourcePath">{{ t('revealSource') }}</el-dropdown-item></el-dropdown-menu></template>
       </el-dropdown>
     </button>
@@ -80,9 +81,12 @@ const tabLabel = (scene: UiDesignerSceneState) => {
 
 .scene-tab {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 5px;
+  min-width: 0;
   max-width: 190px;
+  overflow: hidden;
   padding: 6px 9px;
   border: 0;
   border-bottom: 2px solid transparent;
@@ -93,13 +97,17 @@ const tabLabel = (scene: UiDesignerSceneState) => {
   white-space: nowrap;
 }
 
+.scene-tab :deep(.el-dropdown) { min-width: 0; max-width: 100%; overflow: hidden; }
+.scene-tab-content { display: flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; }
+.scene-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .scene-tab.active {
   border-bottom-color: var(--app-accent);
   color: var(--app-ink);
 }
 
-.tab-dirty { color: var(--el-color-warning); }
-.tab-close { opacity: .6; }
+.tab-dirty { flex: 0 0 auto; color: var(--el-color-warning); }
+.tab-close { flex: 0 0 auto; opacity: .6; }
 .tab-close:hover { opacity: 1; color: var(--el-color-danger); }
-.scene-add { margin-left: 2px; }
+.scene-add { flex: 0 0 auto; margin-left: 2px; }
 </style>

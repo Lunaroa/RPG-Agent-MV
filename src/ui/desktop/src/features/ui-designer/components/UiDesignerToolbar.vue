@@ -10,6 +10,7 @@ const emit = defineEmits<{
   shortcuts: []
   tour: []
   export: []
+  home: []
 }>()
 const { t } = useUiDesignerI18n()
 const designer = props.designer
@@ -59,10 +60,10 @@ const toggleGamePreview = () => { void (designer.isPreviewing ? designer.stopPre
     </div>
 
     <div class="toolbar-actions">
+      <el-button data-testid="ui-designer-home" data-ui-id="ui-designer-home" size="small" text @click="emit('home')">{{ t('home') }}</el-button>
       <el-button-group>
         <el-button data-testid="ui-designer-open" size="small" :disabled="!designer.canSave" @click="void designer.open()">{{ t('open') }}</el-button>
         <el-button data-testid="ui-designer-save" size="small" type="primary" :disabled="!designer.canSave || !designer.isDirty" @click="void designer.save()">{{ t('save') }}</el-button>
-        <el-button size="small" :disabled="!designer.canSave" @click="void designer.save('saveAs')">{{ t('saveAs') }}</el-button>
         <el-button data-testid="ui-designer-export" size="small" :disabled="!designer.canExport" @click="emit('export')">{{ t('export') }}</el-button>
       </el-button-group>
 

@@ -12,7 +12,6 @@ import UiDesignerCodePanel from './UiDesignerCodePanel.vue'
 import UiDesignerInspector from './UiDesignerInspector.vue'
 import UiDesignerNodePanel from './UiDesignerNodePanel.vue'
 import UiDesignerSceneTabs from './UiDesignerSceneTabs.vue'
-import UiDesignerStatusBar from './UiDesignerStatusBar.vue'
 import UiDesignerToolbar from './UiDesignerToolbar.vue'
 import UiDesignerWelcome from './UiDesignerWelcome.vue'
 import UiDesignerSettingsSurface from './UiDesignerSettingsSurface.vue'
@@ -30,7 +29,7 @@ const { t } = useUiDesignerI18n()
 let rawDesigner!: ReturnType<typeof useUiDesigner>
 const surface = ref<'settings' | 'help' | 'shortcuts' | 'tour' | 'export' | 'newScene' | null>(null)
 const tourStep = ref(0)
-const showWelcome = ref(false)
+const showWelcome = ref(true)
 const exportPath = ref('')
 const exportCompleted = ref(false)
 const newSceneDraft = reactive({ name: '', width: 816, height: 624, sceneBase: 'Scene_Base' })
@@ -46,6 +45,46 @@ const workspaceStyle = computed(() => ({
 const sceneTemplateOptions = computed(() => ['blank', ...rawDesigner.templates.value])
 const sceneTemplateLabels: Record<string, UiDesignerMessageKey> = {
   'builtin:title': 'sceneTemplateTitle', 'builtin:menu': 'sceneTemplateMenu', 'builtin:dialog': 'sceneTemplateDialog', 'builtin:scrolling-credits': 'sceneTemplateScrollingCredits', 'builtin:portrait-frame': 'sceneTemplatePortraitFrame', 'builtin:status-bars': 'sceneTemplateStatusBars', 'builtin:game-over': 'sceneTemplateGameOver', 'builtin:save-slots': 'sceneTemplateSaveSlots', 'builtin:hud-bars': 'sceneTemplateHudBars', 'builtin:item-tooltip': 'sceneTemplateItemTooltip', 'builtin:choice-menu': 'sceneTemplateChoiceMenu', 'builtin:logo-animation': 'sceneTemplateLogoAnimation',
+}
+interface LastActiveDocumentRecord {
+  projectPath: string
+  sourcePath: string
+}
+const LAST_ACTIVE_DOCUMENTS_PREFERENCE = 'lastActiveDocuments'
+let workspaceTrackingReady = false
+let lastActiveDocumentWrite = Promise.resolve(true)
+const currentProjectKey = () => props.projectPath?.trim() ?? ''
+const lastActiveDocumentRecords = () => {
+  const value = rawDesigner.preferences.value[LAST_ACTIVE_DOCUMENTS_PREFERENCE]
+  if (!Array.isArray(value)) return []
+  return value.filter((record): record is LastActiveDocumentRecord => Boolean(
+    record
+    && typeof record === 'object'
+    && typeof (record as LastActiveDocumentRecord).projectPath === 'string'
+    && typeof (record as LastActiveDocumentRecord).sourcePath === 'string',
+  ))
+}
+const rememberLastActiveDocument = (sourcePath?: string) => {
+  const projectPath = currentProjectKey()
+  lastActiveDocumentWrite = lastActiveDocumentWrite.then(async () => {
+    const retained = lastActiveDocumentRecords().filter((record) => record.projectPath !== projectPath)
+    const next = [{ projectPath, sourcePath: sourcePath?.trim() ?? '' }, ...retained].slice(0, 20)
+    return rawDesigner.savePreferences({ [LAST_ACTIVE_DOCUMENTS_PREFERENCE]: next })
+  })
+  return lastActiveDocumentWrite
+}
+const restoreLastActiveDocument = async () => {
+  const remembered = lastActiveDocumentRecords().find((record) => record.projectPath === currentProjectKey())
+  const legacyRecent = remembered ? undefined : rawDesigner.recentFiles.value.find((record) => record.exists)
+  const sourcePath = remembered ? remembered.sourcePath.trim() : legacyRecent?.sourcePath
+  if (!sourcePath) return false
+  const initialSceneId = rawDesigner.activeSceneId.value
+  if (!(await rawDesigner.open({ path: sourcePath }))) return false
+  if (rawDesigner.scenes.value.length > 1 && rawDesigner.scenes.value.some((scene) => scene.id === initialSceneId)) {
+    await rawDesigner.closeScene(initialSceneId)
+  }
+  await rememberLastActiveDocument(rawDesigner.activeScene.value?.sourcePath)
+  return true
 }
 const sceneTemplateLabel = (name: string) => name === 'blank' ? t('blankScene') : sceneTemplateLabels[name] ? t(sceneTemplateLabels[name]) : name
 const shortcutRegistry = createUiDesignerShortcutRegistry()
@@ -118,7 +157,10 @@ const openNewScene = () => {
 }
 const createNewScene = () => {
   const created = rawDesigner.newScene(newSceneDraft.name, { width: newSceneDraft.width, height: newSceneDraft.height, sceneBase: newSceneDraft.sceneBase, template: newSceneTemplate.value === 'blank' ? undefined : newSceneTemplate.value })
-  if (created) surface.value = null
+  if (created) {
+    surface.value = null
+    showWelcome.value = false
+  }
 }
 const completeTour = async () => {
   surface.value = null
@@ -167,6 +209,16 @@ const toggleEditorPreview = () => {
   if (designer.isEditorPreviewing) designer.stopEditorPreview()
   else if (designer.canStartEditorPreview) designer.startEditorPreview()
 }
+const saveCurrentCanvas = () => {
+  if (!fullscreenPreview.value && !showWelcome.value && rawDesigner.canSave.value) void rawDesigner.saveScene(rawDesigner.activeSceneId.value)
+}
+const captureSaveShortcut = (event: KeyboardEvent) => {
+  if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey || event.key.toLowerCase() !== 's') return
+  if (fullscreenPreview.value || showWelcome.value || !rawDesigner.canSave.value) return
+  event.preventDefault()
+  event.stopPropagation()
+  saveCurrentCanvas()
+}
 const clampPane = (side: 'left' | 'center' | 'right', value: number) => normalizePaneSize(side, value)
 const beginPaneDrag = (side: 'left' | 'right', event: PointerEvent) => {
   if (fullscreenPreview.value) return
@@ -205,6 +257,9 @@ watch(() => [designer.preferences.leftPaneWidth, designer.preferences.centerPane
 }, { immediate: true })
 watch(() => designer.scenes.length, (count, previous) => { if (count > 1 || (previous !== undefined && count !== previous)) showWelcome.value = false })
 watch(() => designer.document.nodes.length, (count) => { if (count > 1) showWelcome.value = false })
+watch(() => [rawDesigner.activeSceneId.value, rawDesigner.activeScene.value?.sourcePath] as const, ([, sourcePath]) => {
+  if (workspaceTrackingReady) void rememberLastActiveDocument(sourcePath)
+}, { flush: 'sync' })
 watch(fullscreenPreview, (active, previous) => {
   if (active && !previous) {
     capturePreviewState()
@@ -219,8 +274,13 @@ onMounted(async () => {
   const modifier = (key: string, handler: () => void | Promise<void>, shift = false, description?: string) => shortcutRegistry.register({ key, ctrlOrMeta: true, shift, description, handler })
   modifier('n', () => { if (!fullscreenPreview.value) openNewScene() }, false, 'shortcutNewScene')
   modifier('o', () => { if (!fullscreenPreview.value && designer.canSave) void designer.open() }, false, 'shortcutOpen')
-  modifier('s', () => { if (!fullscreenPreview.value && designer.canSave) void designer.save() }, false, 'shortcutSave')
-  modifier('s', () => { if (!fullscreenPreview.value && designer.canSave) void designer.save('saveAs') }, true, 'shortcutSaveAs')
+  shortcutRegistry.register({
+    key: 's',
+    ctrlOrMeta: true,
+    allowInEditable: true,
+    description: 'shortcutSave',
+    handler: saveCurrentCanvas,
+  })
   modifier('z', () => { if (!fullscreenPreview.value) designer.undo() }, false, 'shortcutUndo')
   modifier('z', () => { if (!fullscreenPreview.value) designer.redo() }, true, 'shortcutRedo')
   modifier('c', () => { if (!fullscreenPreview.value) designer.copy() }, false, 'shortcutCopy')
@@ -253,14 +313,18 @@ onMounted(async () => {
   shortcutRegistry.register({ key: 'Escape', description: 'shortcutEscape', allowInEditable: true, handler: () => { if (designer.isPreviewing) void designer.stopPreview(); else if (designer.isEditorPreviewing) designer.stopEditorPreview() } })
   shortcutRegistry.register({ key: '?', shift: true, description: 'shortcutShortcuts', handler: () => { if (!fullscreenPreview.value) surface.value = 'shortcuts' } })
   shortcutBindings.value = shortcutRegistry.list()
+  window.addEventListener('keydown', captureSaveShortcut, true)
   window.addEventListener('keydown', shortcutRegistry.handle)
-  void rawDesigner.loadWelcomeRecords()
   await rawDesigner.loadPreferences()
+  await rawDesigner.loadWelcomeRecords()
   await rawDesigner.loadProjectProfile()
+  showWelcome.value = !(await restoreLastActiveDocument())
+  workspaceTrackingReady = true
   if (!Boolean(designer.preferences.tourCompleted)) openTour()
 })
 onBeforeUnmount(() => {
   endPaneDrag()
+  window.removeEventListener('keydown', captureSaveShortcut, true)
   window.removeEventListener('keydown', shortcutRegistry.handle)
   shortcutRegistry.unregisterAll()
   rawDesigner.flushDrafts()
@@ -273,7 +337,7 @@ onBeforeUnmount(() => {
 
 <template>
     <section class="ui-designer-shell" :class="{ 'editor-preview-active': fullscreenPreview, 'code-mode-active': designer.editingMode === 'code' && !fullscreenPreview }" data-ui-id="ui-designer-shell">
-    <UiDesignerToolbar :designer="designer" @settings="surface = 'settings'" @help="surface = 'help'" @shortcuts="surface = 'shortcuts'" @tour="openTour" @export="exportCompleted = false; surface = 'export'" />
+    <UiDesignerToolbar :designer="designer" @home="showWelcome = true" @settings="surface = 'settings'" @help="surface = 'help'" @shortcuts="surface = 'shortcuts'" @tour="openTour" @export="exportCompleted = false; surface = 'export'" />
     <UiDesignerSceneTabs v-show="!fullscreenPreview" :designer="designer" @new-scene="openNewScene" />
     <div class="designer-workspace" :style="workspaceStyle">
       <aside v-show="!fullscreenPreview" class="left-pane">
@@ -281,7 +345,7 @@ onBeforeUnmount(() => {
       </aside>
       <div v-show="!fullscreenPreview" class="workspace-splitter" role="separator" :aria-label="t('leftPane')" @pointerdown="beginPaneDrag('left', $event)" />
       <main class="center-pane">
-        <UiDesignerWelcome v-if="showWelcome" :designer="designer" @new-scene="openNewScene" />
+        <UiDesignerWelcome v-if="showWelcome" :designer="designer" @new-scene="openNewScene" @return-to-scene="showWelcome = false" @scene-ready="showWelcome = false" />
         <template v-else>
           <UiDesignerCanvas ref="canvasRef" v-show="designer.editingMode === 'design' || fullscreenPreview" :designer="designer" @edit-node="editPrimaryNode" />
           <UiDesignerCodePanel v-show="designer.editingMode === 'code' && !fullscreenPreview" :designer="designer" />
@@ -290,8 +354,6 @@ onBeforeUnmount(() => {
       <div v-show="!fullscreenPreview" class="workspace-splitter" role="separator" :aria-label="t('rightPane')" @pointerdown="beginPaneDrag('right', $event)" />
       <UiDesignerInspector ref="inspectorRef" v-show="!fullscreenPreview" :designer="designer" />
     </div>
-    <UiDesignerStatusBar v-show="!fullscreenPreview" :designer="designer" />
-
     <UiDesignerNewSceneSurface v-if="!fullscreenPreview && surface === 'newScene'" :model-value="true" :draft="newSceneDraft" :template="newSceneTemplate" :template-options="sceneTemplateOptions" :template-label="sceneTemplateLabel" @update:model-value="closeSurface" @update:template="newSceneTemplate = $event" @create="createNewScene" @cancel="surface = null" />
     <UiDesignerSettingsSurface v-if="!fullscreenPreview && surface === 'settings'" :model-value="true" :designer="designer" :left-pane-width="leftPaneWidth" :right-pane-width="rightPaneWidth" :clamp-pane="(side, value) => clampPane(side, value)" @update:model-value="closeSurface" />
     <UiDesignerExportSurface v-if="!fullscreenPreview && surface === 'export'" :model-value="true" :designer="designer" :export-path="exportPath" :export-completed="exportCompleted" @update:model-value="closeSurface" @update:export-path="exportPath = $event" @completed="exportCompleted = $event" />
@@ -303,7 +365,6 @@ onBeforeUnmount(() => {
       <template #footer>
         <el-button data-testid="ui-designer-conflict-cancel" @click="designer.clearFileConflict()">{{ t('lifecycleCancel') }}</el-button>
         <el-button v-if="!designer.runtimeConflict" @click="void designer.resolveFileConflict('reload')">{{ t('reload') }}</el-button>
-        <el-button v-if="!designer.runtimeConflict" @click="void designer.resolveFileConflict('saveAs')">{{ t('saveAs') }}</el-button>
         <el-button data-testid="ui-designer-conflict-force" type="danger" @click="void designer.resolveFileConflict('force')">{{ t('forceSave') }}</el-button>
       </template>
     </el-dialog>

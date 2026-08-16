@@ -5,7 +5,7 @@ import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 import { documentation, system } from '../../../api/client'
 
 const props = defineProps<{ designer: UiDesignerController }>()
-const emit = defineEmits<{ newScene: [] }>()
+const emit = defineEmits<{ newScene: []; returnToScene: []; sceneReady: [] }>()
 const designer = props.designer
 const { t, language } = useUiDesignerI18n()
 const learningError = ref('')
@@ -34,6 +34,15 @@ const formatDate = (value?: string) => {
   const parsed = Date.parse(value)
   return Number.isFinite(parsed) ? new Date(parsed).toLocaleString(language.value) : value
 }
+const openScene = async (path?: string) => {
+  if (await designer.open(path ? { path } : undefined)) emit('sceneReady')
+}
+const restoreScene = async (recoveryId: string) => {
+  if (await designer.restoreRecovery(recoveryId)) emit('sceneReady')
+}
+const loadSceneTemplate = async (name: string) => {
+  if (await designer.loadTemplate(name)) emit('sceneReady')
+}
 </script>
 
 <template>
@@ -42,15 +51,16 @@ const formatDate = (value?: string) => {
     <h2>{{ t('welcomeTitle') }}</h2>
     <p>{{ t('welcomeBody') }}</p>
     <div class="welcome-actions">
+      <el-button data-ui-id="ui-designer-welcome-return" data-testid="ui-designer-welcome-return" @click="emit('returnToScene')">{{ t('returnToScene') }}</el-button>
       <el-button data-ui-id="ui-designer-welcome-new-scene" data-testid="ui-designer-new" type="primary" @click="emit('newScene')">{{ t('newScene') }}</el-button>
-      <el-button data-testid="ui-designer-open" :disabled="!designer.canSave" @click="void designer.open()">{{ t('open') }}</el-button>
+      <el-button data-testid="ui-designer-open" :disabled="!designer.canSave" @click="void openScene()">{{ t('open') }}</el-button>
     </div>
     <el-alert v-if="!designer.canSave" type="info" :closable="false" :title="t('adapterRequired')" />
     <el-alert v-else-if="!designer.hasProject" type="info" :closable="false" :title="t('projectRequired')" />
     <div v-if="designer.recentFiles.length" class="welcome-list">
       <div class="list-title">{{ t('recentFiles') }}</div>
       <div v-for="(item, index) in designer.recentFiles.slice(0, 8)" :key="item.sourcePath" class="welcome-row">
-        <button :data-testid="`ui-designer-recent-open-${index}`" type="button" :disabled="!item.exists" @click="void designer.open({ path: item.sourcePath })">
+        <button :data-testid="`ui-designer-recent-open-${index}`" type="button" :disabled="!item.exists" @click="void openScene(item.sourcePath)">
           <span class="recent-name">{{ item.sceneName || item.sourcePath }}</span>
           <span class="recent-meta">{{ item.exists ? item.sourcePath : t('recentMissing') }} · {{ t('openedAt') }} {{ formatDate(item.lastOpenedAt) }}<template v-if="item.lastSavedAt"> · {{ t('savedAt') }} {{ formatDate(item.lastSavedAt) }}</template></span>
         </button>
@@ -59,11 +69,11 @@ const formatDate = (value?: string) => {
     </div>
     <div v-if="designer.recoveryRecords.length" class="welcome-list">
       <div class="list-title">{{ t('recovery') }}</div>
-      <div v-for="(item, index) in designer.recoveryRecords" :key="item.id" class="welcome-row"><span>{{ item.sourcePath || t('recoveryUnnamed') }}</span><el-button :data-ui-id="`ui-designer-recovery-restore-${index}`" :data-testid="`ui-designer-recovery-restore-${index}`" size="small" text @click="void designer.restoreRecovery(item.id)">{{ t('recover') }}</el-button><el-button :data-ui-id="`ui-designer-recovery-remove-${index}`" :data-testid="`ui-designer-recovery-remove-${index}`" size="small" text @click="void designer.removeRecovery(item.id)">{{ t('removeRecovery') }}</el-button></div>
+      <div v-for="(item, index) in designer.recoveryRecords" :key="item.id" class="welcome-row"><span>{{ item.sourcePath || t('recoveryUnnamed') }}</span><el-button :data-ui-id="`ui-designer-recovery-restore-${index}`" :data-testid="`ui-designer-recovery-restore-${index}`" size="small" text @click="void restoreScene(item.id)">{{ t('recover') }}</el-button><el-button :data-ui-id="`ui-designer-recovery-remove-${index}`" :data-testid="`ui-designer-recovery-remove-${index}`" size="small" text @click="void designer.removeRecovery(item.id)">{{ t('removeRecovery') }}</el-button></div>
     </div>
     <div v-if="designer.templates.length || designer.canSave" class="welcome-list">
       <div class="list-title">{{ t('sceneTemplates') }}</div>
-      <div v-for="(item, index) in designer.templates" :key="item" class="welcome-row"><span>{{ templateLabel(item) }}</span><el-button :data-testid="`ui-designer-template-load-${index}`" size="small" text @click="void designer.loadTemplate(item)">{{ t('loadTemplate') }}</el-button></div>
+      <div v-for="(item, index) in designer.templates" :key="item" class="welcome-row"><span>{{ templateLabel(item) }}</span><el-button :data-testid="`ui-designer-template-load-${index}`" size="small" text @click="void loadSceneTemplate(item)">{{ t('loadTemplate') }}</el-button></div>
     </div>
     <div class="welcome-list learning-list">
       <div class="list-title">{{ t('learning') }}</div>

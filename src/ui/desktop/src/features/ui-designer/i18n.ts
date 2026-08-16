@@ -6,6 +6,7 @@ export type UiDesignerLanguage = 'zh-CN' | 'en-US'
 const messages = {
   'zh-CN': {
     title: '界面设计器',
+    home: '主页', returnToScene: '返回当前场景',
     newScene: '新建场景',
     sceneNameInvalid: '请以 Scene_ 开头，并且只使用字母、数字、下划线或 $。',
     open: '打开',
@@ -53,7 +54,7 @@ const messages = {
     runtimeContentMismatch: 'Runtime 内容不匹配',
     runtimeStagedPending: 'Runtime 有待应用暂存',
     runtimeError: 'Runtime 检查失败', projectCompatibility: '工程兼容性', projectCompatibilitySupported: '已支持', projectCompatibilityWarning: '需要注意', projectCompatibilityUnknown: '未知',
-    previewIdle: '预览未运行', previewUnavailable: '预览不可用', previewPreparing: '正在准备预览', previewRunning: '预览运行中', previewStopped: '预览已停止', previewError: '预览错误', rendererDisconnected: '预览连接已断开，编辑内容仍保留。', restartPreview: '重新启动预览', canvasSyncing: '正在同步画布',
+    previewIdle: '预览未运行', previewUnavailable: '预览不可用', previewPreparing: '正在准备预览', previewRunning: '预览运行中', previewStopped: '预览已停止', previewError: '预览错误', rendererDisconnected: '预览连接已断开，编辑内容仍保留。', details: '详细', errorDetails: '错误详情', previewErrorDetails: '预览错误详情', restartPreview: '重新启动预览', canvasSyncing: '正在同步画布',
     chooseNode: '从左侧节点列表添加节点。',
     welcomeTitle: '开始设计一个 MZ/MV 场景',
     welcomeBody: '设计文件先保存在内存中；接入文件适配器后才能打开、保存和导出。',
@@ -92,6 +93,7 @@ const messages = {
   },
   'en-US': {
     title: 'UI Designer',
+    home: 'Home', returnToScene: 'Return to scene',
     newScene: 'New Scene',
     sceneNameInvalid: 'Start with Scene_ and use only letters, numbers, underscores, or $.',
     open: 'Open',
@@ -139,7 +141,7 @@ const messages = {
     runtimeContentMismatch: 'Runtime content mismatch',
     runtimeStagedPending: 'Runtime staging is pending',
     runtimeError: 'Runtime check failed', projectCompatibility: 'Project compatibility', projectCompatibilitySupported: 'Supported', projectCompatibilityWarning: 'Needs attention', projectCompatibilityUnknown: 'Unknown',
-    previewIdle: 'Preview idle', previewUnavailable: 'Preview unavailable', previewPreparing: 'Preparing preview', previewRunning: 'Preview running', previewStopped: 'Preview stopped', previewError: 'Preview error', rendererDisconnected: 'Preview connection was lost. Your edits are still here.', restartPreview: 'Restart preview', canvasSyncing: 'Syncing canvas',
+    previewIdle: 'Preview idle', previewUnavailable: 'Preview unavailable', previewPreparing: 'Preparing preview', previewRunning: 'Preview running', previewStopped: 'Preview stopped', previewError: 'Preview error', rendererDisconnected: 'Preview connection was lost. Your edits are still here.', details: 'Details', errorDetails: 'Error details', previewErrorDetails: 'Preview error details', restartPreview: 'Restart preview', canvasSyncing: 'Syncing canvas',
     chooseNode: 'Add a node from the left panel.',
     welcomeTitle: 'Start designing an MZ/MV scene',
     welcomeBody: 'The design stays in memory until the file adapter is connected for open, save, and export.',

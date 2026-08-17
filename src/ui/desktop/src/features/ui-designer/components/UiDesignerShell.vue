@@ -301,8 +301,9 @@ onMounted(async () => {
   modifier('e', () => { if (!fullscreenPreview.value) { exportCompleted.value = false; surface.value = 'export' } }, false, 'shortcutExport')
   modifier('p', toggleEditorPreview, false, 'shortcutEditorPreview')
   modifier(';', () => { if (!fullscreenPreview.value) designer.setCanvasSetting('guidesVisible', !designer.document.canvas.guidesVisible) }, false, 'shortcutToggleGuides')
+  // Plain arrows drive spatial selection navigation (UiDesignerCanvas keyDown);
+  // Shift+arrows remain the coarse nudge. Plain 1px nudge is intentionally retired.
   for (const [key, delta] of [['ArrowLeft', { x: -1, y: 0 }], ['ArrowRight', { x: 1, y: 0 }], ['ArrowUp', { x: 0, y: -1 }], ['ArrowDown', { x: 0, y: 1 }]] as const) {
-    shortcutRegistry.register({ key, description: 'shortcutNudge', handler: () => { if (!fullscreenPreview.value) designer.nudgeSelected(delta) } })
     shortcutRegistry.register({ key, shift: true, description: 'shortcutNudge', handler: () => { if (!fullscreenPreview.value) designer.nudgeSelected({ x: delta.x * 10, y: delta.y * 10 }) } })
   }
   shortcutRegistry.register({ key: 'Tab', description: 'shortcutNextNode', handler: () => { if (!fullscreenPreview.value) cycleNodeSelection(1) } })

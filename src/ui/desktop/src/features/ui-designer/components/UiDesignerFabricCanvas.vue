@@ -4,6 +4,7 @@ import { isRef, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } fro
 import type { UiDesignerDocument, UiNode, UiPoint, UiProjectResourceCatalog, UiRect } from '@contract/ui-designer'
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import { accumulateRotationDegrees, nodeRect, normalizeRotationDegrees, pointerResizeDelta, type UiResizeHandle } from '../models/geometry'
+import { nextNodeIdInDirection, type UiNavigationDirection, type UiNavigationEntry } from '../models/node-navigation'
 import { collectNodeSubtreeIds, selectionRootNodeIds } from '../models/tree'
 import {
   animateFabricNode,
@@ -354,7 +355,24 @@ const activateNode = (nodeId: string) => {
   return true
 }
 
-defineExpose({ activateNode })
+const navigateSelection = (direction: UiNavigationDirection) => {
+  if (!canvas) return
+  const entries: UiNavigationEntry[] = []
+  for (const [id, object] of objects) {
+    if (!object.visible) continue
+    const bounds = object.getBoundingRect()
+    entries.push({ id, rect: { x: bounds.left, y: bounds.top, width: bounds.width, height: bounds.height } })
+  }
+  if (!entries.length) return
+  const selected = unwrap(props.designer.selectedIds)
+  const anchor = selectionRootNodeIds(props.document, selected).find((id) => objects.get(id)?.visible)
+    ?? selected.find((id) => objects.get(id)?.visible)
+    ?? null
+  const next = nextNodeIdInDirection(entries, anchor, direction)
+  if (next) props.designer.selectNodes([next])
+}
+
+defineExpose({ activateNode, navigateSelection })
 
 const animationLoop = (timestamp: number) => {
   if (canvas && props.active) {

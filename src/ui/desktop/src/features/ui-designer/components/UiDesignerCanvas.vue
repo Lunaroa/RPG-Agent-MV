@@ -9,6 +9,7 @@ import { useUiDesignerRendererHost } from '../composables/useUiDesignerRendererH
 import UiDesignerFabricCanvas from './UiDesignerFabricCanvas.vue'
 import { viewportClientToWorld, worldPointToViewport, type UiCanvasViewportFrame, type UiSnapFeedbackLine } from '../models/geometry'
 import { canvasScrollForWorldPoint, createCanvasScrollLayout, fitCanvasZoom, panCanvasScroll } from '../models/viewport-navigation'
+import { navigationDirectionFromKey } from '../models/node-navigation'
 import { fitContextMenuPosition } from '../models/context-menu-position'
 import type { UiNodeActionCommand, UiNodeActionPolicy } from '../models/actions'
 import { exportRuntimeDocument } from '../models/export'
@@ -421,9 +422,16 @@ const activateNodeById = async (nodeId: string) => {
 defineExpose({ activateNodeById })
 
 const keyDown = (event: KeyboardEvent) => {
-  if (event.code !== 'Space' || previewing.value || isEditableTarget(event.target)) return
+  if (previewing.value || isEditableTarget(event.target)) return
+  if (event.code === 'Space') {
+    event.preventDefault()
+    spacePressed.value = true
+    return
+  }
+  const direction = navigationDirectionFromKey(event.key)
+  if (!direction || event.defaultPrevented) return
   event.preventDefault()
-  spacePressed.value = true
+  fabricCanvas.value?.navigateSelection(direction)
 }
 const keyUp = (event: KeyboardEvent) => {
   if (event.code === 'Space') {

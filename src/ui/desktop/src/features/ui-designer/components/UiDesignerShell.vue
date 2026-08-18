@@ -173,6 +173,9 @@ const toggleEditorPreview = () => {
 const saveCurrentCanvas = () => {
   if (!fullscreenPreview.value && !showWelcome.value && rawDesigner.canSave.value) void rawDesigner.saveScene(rawDesigner.activeSceneId.value)
 }
+const showEditingMode = () => {
+  if (rawDesigner.scenes.value.length) showWelcome.value = false
+}
 const captureSaveShortcut = (event: KeyboardEvent) => {
   if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey || event.key.toLowerCase() !== 's') return
   if (fullscreenPreview.value || showWelcome.value || !rawDesigner.canSave.value) return
@@ -301,7 +304,7 @@ onBeforeUnmount(() => {
 
 <template>
     <section class="ui-designer-shell" :class="{ 'editor-preview-active': fullscreenPreview, 'code-mode-active': (designer.editingMode === 'code' || designer.editingMode === 'json') && !fullscreenPreview }" data-ui-id="ui-designer-shell">
-    <UiDesignerToolbar :designer="designer" @home="showWelcome = true" @settings="surface = 'settings'" @help="surface = 'help'" @shortcuts="surface = 'shortcuts'" @tour="openTour" @export="exportCompleted = false; surface = 'export'" />
+    <UiDesignerToolbar :designer="designer" @home="showWelcome = true" @editing-mode="showEditingMode" @settings="surface = 'settings'" @help="surface = 'help'" @shortcuts="surface = 'shortcuts'" @tour="openTour" @export="exportCompleted = false; surface = 'export'" />
     <UiDesignerSceneTabs v-show="!fullscreenPreview" :designer="designer" @new-scene="openNewScene" />
     <div class="designer-workspace" :style="workspaceStyle">
       <aside v-show="!fullscreenPreview" class="left-pane">

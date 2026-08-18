@@ -11,6 +11,7 @@ const emit = defineEmits<{
   tour: []
   export: []
   home: []
+  'editing-mode': [mode: 'design' | 'code' | 'json']
 }>()
 const { t } = useUiDesignerI18n()
 const designer = props.designer
@@ -44,6 +45,10 @@ onBeforeUnmount(() => { commitSceneName(); unregisterSceneNameDraft() })
 const fullscreenPreview = computed(() => designer.isEditorPreviewing || designer.isPreviewing)
 const toggleEditorPreview = () => { void (designer.isEditorPreviewing ? designer.stopEditorPreview() : designer.startEditorPreview()) }
 const toggleGamePreview = () => { void (designer.isPreviewing ? designer.stopPreview() : designer.startPreview()) }
+const selectEditingMode = (mode: 'design' | 'code' | 'json') => {
+  designer.setEditingMode(mode)
+  emit('editing-mode', mode)
+}
 </script>
 
 <template>
@@ -73,9 +78,9 @@ const toggleGamePreview = () => { void (designer.isPreviewing ? designer.stopPre
       </el-button-group>
 
       <el-button-group>
-        <el-button data-testid="ui-designer-design-mode" size="small" :type="designer.editingMode === 'design' ? 'primary' : 'default'" @click="designer.setEditingMode('design')">{{ t('design') }}</el-button>
-        <el-button data-testid="ui-designer-code-mode" size="small" :type="designer.editingMode === 'code' ? 'primary' : 'default'" @click="designer.setEditingMode('code')">{{ t('code') }}</el-button>
-        <el-button data-testid="ui-designer-json-mode" size="small" :type="designer.editingMode === 'json' ? 'primary' : 'default'" @click="designer.setEditingMode('json')">{{ t('json') }}</el-button>
+        <el-button data-testid="ui-designer-design-mode" data-ui-id="ui-designer-design-mode" size="small" :type="designer.editingMode === 'design' ? 'primary' : 'default'" @click="selectEditingMode('design')">{{ t('design') }}</el-button>
+        <el-button data-testid="ui-designer-code-mode" data-ui-id="ui-designer-code-mode" size="small" :type="designer.editingMode === 'code' ? 'primary' : 'default'" @click="selectEditingMode('code')">{{ t('code') }}</el-button>
+        <el-button data-testid="ui-designer-json-mode" data-ui-id="ui-designer-json-mode" size="small" :type="designer.editingMode === 'json' ? 'primary' : 'default'" @click="selectEditingMode('json')">{{ t('json') }}</el-button>
       </el-button-group>
 
       <el-button data-testid="ui-designer-preview-toggle" data-ui-id="ui-designer-preview-enter" class="editor-preview-toggle" size="small" :aria-label="t('editorPreview')" :disabled="!designer.canStartEditorPreview" @click="toggleEditorPreview">

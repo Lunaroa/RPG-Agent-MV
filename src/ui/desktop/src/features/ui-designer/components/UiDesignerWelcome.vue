@@ -88,12 +88,12 @@ const loadSceneTemplate = async (name: string) => {
 </template>
 
 <style scoped>
-.welcome-panel { display: flex; flex-direction: column; align-items: center; gap: 9px; width: min(470px, 92%); padding: 38px; border: 1px solid var(--app-border); border-radius: 8px; background: color-mix(in srgb, var(--app-bg) 94%, var(--app-accent) 6%); text-align: center; }
+.welcome-panel { display: flex; flex: 1; flex-direction: column; align-items: center; gap: 9px; width: 100%; min-width: 0; min-height: 0; padding: 38px; overflow-y: auto; box-sizing: border-box; border: 1px solid var(--app-border); border-radius: 8px; background: color-mix(in srgb, var(--app-bg) 94%, var(--app-accent) 6%); text-align: center; }
 .welcome-mark { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid var(--app-accent); border-radius: 12px; color: var(--app-accent); font-weight: 750; }
 h2 { margin: 0; font-size: 19px; }
 p { margin: 0; max-width: 380px; color: var(--app-ink-soft); font-size: 12px; line-height: 1.6; }
 .welcome-actions { display: flex; gap: 8px; margin-top: 6px; }
-.welcome-panel .el-alert { margin-top: 8px; text-align: left; }
-.welcome-list { width: 100%; margin-top: 10px; text-align: left; }.list-title { margin-bottom: 5px; color: var(--app-ink-soft); font-size: 11px; font-weight: 650; }.welcome-row { display: flex; align-items: center; gap: 8px; min-height: 28px; border-top: 1px solid var(--app-border); font-size: 11px; }.welcome-row > button { flex: 1; overflow: hidden; border: 0; background: none; color: var(--app-ink); cursor: pointer; text-align: left; text-overflow: ellipsis; white-space: nowrap; }.welcome-row > button:disabled { color: var(--app-ink-soft); cursor: not-allowed; }.welcome-row > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.recent-name, .recent-meta { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.recent-meta { color: var(--app-ink-soft); font-size: 10px; }
+.welcome-panel .el-alert { width: min(720px, 100%); margin-top: 8px; box-sizing: border-box; text-align: left; }
+.welcome-list { width: min(720px, 100%); margin-top: 10px; text-align: left; }.list-title { margin-bottom: 5px; color: var(--app-ink-soft); font-size: 11px; font-weight: 650; }.welcome-row { display: flex; align-items: center; gap: 8px; min-height: 28px; border-top: 1px solid var(--app-border); font-size: 11px; }.welcome-row > button { flex: 1; overflow: hidden; border: 0; background: none; color: var(--app-ink); cursor: pointer; text-align: left; text-overflow: ellipsis; white-space: nowrap; }.welcome-row > button:disabled { color: var(--app-ink-soft); cursor: not-allowed; }.welcome-row > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.recent-name, .recent-meta { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.recent-meta { color: var(--app-ink-soft); font-size: 10px; }
 .learning-actions { display: flex; flex-wrap: wrap; gap: 2px; border-top: 1px solid var(--app-border); }
 </style>

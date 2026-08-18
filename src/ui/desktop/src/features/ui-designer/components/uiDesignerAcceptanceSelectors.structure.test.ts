@@ -31,6 +31,7 @@ test('hostile main-menu acceptance controls expose stable semantic selectors', (
   assert.match(help, /ui-designer-onboarding-finish/)
   assert.match(welcome, /ui-designer-welcome-new-scene/)
   assert.match(welcome, /ui-designer-welcome-return/)
+  assert.match(welcome, /\.welcome-panel \{[^}]*flex: 1;[^}]*width: 100%;[^}]*overflow-y: auto;/)
   assert.match(welcome, /ui-designer-recovery-restore-\$\{index\}/)
   assert.match(welcome, /ui-designer-recovery-remove-\$\{index\}/)
   assert.match(sceneTabs, /ui-designer-scene-tab-new/)
@@ -48,6 +49,7 @@ test('hostile main-menu acceptance controls expose stable semantic selectors', (
   assert.doesNotMatch(toolbar, /designer\.save\('saveAs'\)/)
   assert.doesNotMatch(shell, /shortcutSaveAs|resolveFileConflict\('saveAs'\)/)
   assert.match(shell, /@home="showWelcome = true"/)
+  assert.match(shell, /@editing-mode="showEditingMode"/)
   assert.match(shell, /@return-to-scene="showWelcome = false"/)
   assert.match(shell, /@scene-ready="showWelcome = false"/)
   assert.match(shell, /if \(created\) \{[\s\S]*showWelcome\.value = false/)
@@ -77,6 +79,7 @@ test('hostile main-menu acceptance controls expose stable semantic selectors', (
   assert.match(property, /ui-designer-resource-\$\{props\.fieldKey\}-clear/)
   // JSON mode: toolbar toggle, dedicated panel, and editable apply path.
   assert.match(toolbar, /ui-designer-json-mode/)
+  assert.match(toolbar, /emit\('editing-mode', mode\)/)
   assert.match(shell, /UiDesignerJsonPanel/)
   const jsonPanel = compile('./UiDesignerJsonPanel.vue')
   assert.match(jsonPanel, /ui-designer-json-panel/)

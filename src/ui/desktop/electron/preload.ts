@@ -48,6 +48,26 @@ contextBridge.exposeInMainWorld('api', {
     },
   },
 
+  lifecycle: {
+    onCloseRequest: (handler: () => boolean | Promise<boolean>) => {
+      const listener = async () => {
+        let proceed = false;
+        try {
+          proceed = Boolean(await handler());
+        } catch {
+          proceed = false;
+        }
+        ipcRenderer.send('app:close-response', { proceed });
+      };
+      ipcRenderer.on('app:close-request', listener);
+      ipcRenderer.send('app:close-guard', { registered: true });
+      return () => {
+        ipcRenderer.removeListener('app:close-request', listener);
+        ipcRenderer.send('app:close-guard', { registered: false });
+      };
+    },
+  },
+
   app: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
     checkForUpdates: () => ipcRenderer.invoke('app:checkForUpdates'),
@@ -103,6 +123,7 @@ contextBridge.exposeInMainWorld('api', {
     saveAs: (request: UiDesignerFileRequest, document: UiDesignerDocument) => ipcRenderer.invoke('ui-designer:file:save-as', request, document),
     revealSource: (sourcePath: string) => ipcRenderer.invoke('ui-designer:file:reveal-source', sourcePath),
     getProjectProfile: (request?: UiDesignerProjectProfileRequest) => ipcRenderer.invoke('ui-designer:project:profile', request),
+    listSceneFiles: (request?: UiDesignerProjectRequest) => ipcRenderer.invoke('ui-designer:scenes:list', request),
     listResources: (request?: UiDesignerResourceRequest) => ipcRenderer.invoke('ui-designer:resources:list', request),
     listResourceReferences: (request?: UiDesignerResourceRequest) => ipcRenderer.invoke('ui-designer:resources:references', request),
     readSceneData: (request: UiDesignerSceneDataReadRequest) => ipcRenderer.invoke('ui-designer:resources:read-scene-data', request),

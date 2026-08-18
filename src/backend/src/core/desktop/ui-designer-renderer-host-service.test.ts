@@ -758,12 +758,22 @@ test('official MV 1.6.1 loader reaches ready before lazy Window_Message creation
     assert.equal(officialMv.createGameObjectsCalls(), 0)
     assert.equal(officialMv.messageWindowTone(), null)
 
+    assert.equal(officialMv.context.Graphics._renderer.plugins.accessibility.div.style.pointerEvents, 'none')
+    assert.equal(officialMv.context.document.getElementById('errorPrinter').style.pointerEvents, 'none')
+    assert.equal(officialMv.context.document.getElementById('gameVideo').style.pointerEvents, 'none')
+
+    officialMv.context.Graphics._renderer.plugins.accessibility.div.style.pointerEvents = 'auto'
+    officialMv.context.document.getElementById('errorPrinter').style.pointerEvents = 'auto'
+    officialMv.context.document.getElementById('gameVideo').style.pointerEvents = 'auto'
     const onMessage = officialMv.listeners.get('message')
     assert.ok(onMessage)
     onMessage!({
       source: officialMv.context.parent,
       data: envelope(session, 0, 'mount', { revision: 1, executionMode: 'authoring', documentSceneId: 'scene_tab_1', scene: runtimeScene('') }),
     })
+    assert.equal(officialMv.context.Graphics._renderer.plugins.accessibility.div.style.pointerEvents, 'none')
+    assert.equal(officialMv.context.document.getElementById('errorPrinter').style.pointerEvents, 'none')
+    assert.equal(officialMv.context.document.getElementById('gameVideo').style.pointerEvents, 'none')
     const mountedSceneState = officialMv.messages
       .filter((message) => message.kind === 'scene-state')
       .at(-1)
@@ -1174,9 +1184,14 @@ function createOfficialMv161LoaderFixture(options: {
     TextEncoder,
     Utils: { RPGMAKER_NAME: 'MV', RPGMAKER_VERSION: '1.6.1' },
     PIXI: { VERSION: '4.5.4' },
-    Graphics: { width: 816, height: 624, resize: (width: number, height: number) => { context.Graphics.width = width; context.Graphics.height = height } },
+    Graphics: {
+      width: 816,
+      height: 624,
+      resize: (width: number, height: number) => { context.Graphics.width = width; context.Graphics.height = height },
+      _renderer: { plugins: { accessibility: { div: { style: { pointerEvents: 'auto' } } } } },
+    },
     AudioManager: { stopAll: () => undefined },
-    Video: {},
+    Video: { _element: rendererDocument.getElementById('gameVideo') },
     document: rendererDocument,
     $dataSystem: { windowTone: [0, 0, 0, 0] },
   }
@@ -1341,9 +1356,14 @@ function createRendererDocumentFixture(): {
   }
   fontLoadRequests: string[]
   createElement(tagName: string): Record<string, any>
+  getElementById(id: string): Record<string, any> | null
 } {
   const children: Array<Record<string, any>> = []
   const fontLoadRequests: string[] = []
+  const elementsById: Record<string, Record<string, any>> = {
+    errorPrinter: { id: 'errorPrinter', style: { pointerEvents: 'auto' } },
+    gameVideo: { id: 'gameVideo', style: { pointerEvents: 'auto' } },
+  }
   const body = {
     children,
     appendChild(node: Record<string, any>) {
@@ -1367,6 +1387,7 @@ function createRendererDocumentFixture(): {
       },
     },
     fontLoadRequests,
+    getElementById: (id: string) => elementsById[id] || null,
     createElement: (tagName: string) => ({
       tagName: tagName.toUpperCase(),
       textContent: '',

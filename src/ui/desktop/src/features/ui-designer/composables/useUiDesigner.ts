@@ -8,6 +8,7 @@ import type {
   UiDesignerFileMetadata,
   UiDesignerFileConflict,
   UiDesignerRecentFileRecord,
+  UiDesignerSceneFileRecord,
   UiDesignerRecoveryRecord,
   UiDesignerProjectProfileResult,
   UiDesignerResourceRequest,
@@ -182,7 +183,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const draftRects = ref<Record<string, UiRect>>({})
   const draftRotations = ref<Record<string, number>>({})
   const snapFeedback = ref<UiSnapFeedback | null>(null)
-  const editingMode = ref<'design' | 'code'>('design')
+  const editingMode = ref<'design' | 'code' | 'json'>('design')
   // The renderer-host iframe is the only preview runtime.
   const isPreviewing = ref(false)
   const isEditorPreviewing = ref(false)
@@ -191,7 +192,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const previewExecutionMode = ref<UiDesignerRendererExecutionMode>('authoring')
   const previewCleanupPending = ref(false)
   const previewDisposalInFlight = ref(false)
-  let previewModeBefore: 'design' | 'code' | undefined
+  let previewModeBefore: 'design' | 'code' | 'json' | undefined
   let previewExitPending = false
   const fileStatus = ref<UiFileStatus>('idle')
   const fileMessage = ref('')
@@ -216,6 +217,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const resourceMutationHandlers = new Set<(manifest: ProjectAssetChangeManifest) => Promise<void> | void>()
   let previewDisposePromise: Promise<boolean> | null = null
   const recentFiles = ref<UiDesignerRecentFileRecord[]>([])
+  const sceneFiles = ref<UiDesignerSceneFileRecord[]>([])
   const recoveryRecords = ref<UiDesignerRecoveryRecord[]>([])
   const recoveryCleanupPending = ref(false)
   const templates = ref<string[]>([...UI_DESIGNER_BUILT_IN_TEMPLATES])
@@ -436,6 +438,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     previewMessage.value = ''
     runtimeDiagnostics.value = []
     resourceCatalog.value = null
+    sceneFiles.value = []
     runtimeStatus.value = { state: 'unknown', message: 'Runtime has not been inspected.' }
     runtimeStaging.value = null
     projectProfile.value = null
@@ -554,6 +557,21 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     const next = cloneUiDocument(document.value)
     next.sceneScript.source = value
     replaceActiveDocument(next, 'Edit scene script')
+  }
+
+  const applyJsonDocument = (source: string): { ok: boolean; message?: string } => {
+    const scene = activeScene.value
+    if (!scene) return { ok: false, message: 'No active scene.' }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(source)
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) }
+    }
+    const report = validateDocument(parsed as UiDesignerDocument)
+    if (!report.valid) return { ok: false, message: report.errors.map((issue) => issue.message).join(' ') }
+    replaceActiveDocument(parsed as UiDesignerDocument, 'Edit scene JSON')
+    return { ok: true }
   }
 
   const previewSourceCode = (value: string, sceneId = activeSceneId.value) => {
@@ -864,9 +882,9 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     return true
   }
 
-  const setEditingMode = (mode: 'design' | 'code') => {
+  const setEditingMode = (mode: 'design' | 'code' | 'json') => {
     if (editingMode.value === mode) return
-    if (editingMode.value === 'code') flushDrafts(activeSceneId.value)
+    if (editingMode.value !== 'design') flushDrafts(activeSceneId.value)
     editingMode.value = mode
   }
 
@@ -1288,6 +1306,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
           }
         }
         currentScene.recoveryId = result.recoveryId
+        void refreshSceneFiles()
         return true
       }
       return false
@@ -1377,10 +1396,27 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
       if (recent.status === 'success' && recent.value) recentFiles.value = recent.value
       if (recovery.status === 'success' && recovery.value) recoveryRecords.value = recovery.value
       templates.value = [...UI_DESIGNER_BUILT_IN_TEMPLATES]
+      void refreshSceneFiles()
       return true
     } catch (error) {
       fileStatus.value = 'error'
       fileMessage.value = error instanceof Error ? error.message : String(error)
+      return false
+    }
+  }
+
+  const refreshSceneFiles = async () => {
+    if (!projectPath.value?.trim()) {
+      sceneFiles.value = []
+      return false
+    }
+    const generation = projectGeneration.value
+    try {
+      const result = await adapters.project.listSceneFiles()
+      if (generation !== projectGeneration.value) return false
+      if (result.status === 'success' && result.value) sceneFiles.value = result.value
+      return true
+    } catch {
       return false
     }
   }
@@ -1902,6 +1938,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     runtimeConflictFiles,
     runtimeProofMissing,
     recentFiles,
+    sceneFiles,
     recoveryRecords,
     recoveryCleanupPending,
     templates,
@@ -1947,6 +1984,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     setNodeEvents,
     setSceneMeta,
     setSourceCode,
+    applyJsonDocument,
     setEditingMode,
     previewSourceCode,
     commitSourceCode,

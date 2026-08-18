@@ -81,8 +81,9 @@ export class UiWindowSkinTextbox extends UiLayoutTextbox {
     ctx.restore()
 
     const layout = resolveWindowSkinFrameLayout(width, height)
-    for (const horizontal of layout.horizontal) {
-      for (const vertical of layout.vertical) {
+    for (const [horizontalIndex, horizontal] of layout.horizontal.entries()) {
+      for (const [verticalIndex, vertical] of layout.vertical.entries()) {
+        if (horizontalIndex === 1 && verticalIndex === 1) continue
         if (horizontal.sourceSize <= 0 || vertical.sourceSize <= 0 || horizontal.targetSize <= 0 || vertical.targetSize <= 0) continue
         ctx.drawImage(
           this.windowSkinElement,

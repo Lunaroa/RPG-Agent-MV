@@ -73,7 +73,7 @@ const addChild = () => {
       <el-input-number :model-value="condition.value" size="small" @update:model-value="update({ value: $event ?? 0 })" />
     </div>
     <template v-else-if="condition.type === 'code'">
-      <UiCodeMirrorEditor :adapter="designer.adapters.code" :model-value="condition.code" :rows="3" :debounce-ms="1000" :format-on-blur="Boolean(designer.preferences.autoFormat)" :completion-items="scriptCompletionItems" :scene-id="designer.activeSceneId" :draft-coordinator="designer.draftCoordinator" @update:model-value="update({ code: $event })" />
+      <UiCodeMirrorEditor :adapter="designer.adapters.code" :model-value="condition.code" :rows="3" :debounce-ms="1000" :format-on-blur="Boolean(designer.preferences.autoFormat)" :font-family="designer.preferences.codeFontFamily" :font-size="designer.preferences.codeFontSize" :completion-items="scriptCompletionItems" :scene-id="designer.activeSceneId" :draft-coordinator="designer.draftCoordinator" @update:model-value="update({ code: $event })" />
       <UiScriptContextHint kind="condition" :issues="codeIssues" />
     </template>
     <div v-else-if="condition.type === 'and' || condition.type === 'or'" class="condition-children">

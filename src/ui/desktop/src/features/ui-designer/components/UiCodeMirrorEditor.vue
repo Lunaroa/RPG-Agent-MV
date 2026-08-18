@@ -10,13 +10,16 @@ const props = withDefaults(defineProps<{
   modelValue: string
   label?: string
   rows?: number
+  mode?: 'javascript' | 'json'
   completionItems?: string[]
   debounceMs?: number
   formatOnBlur?: boolean
+  fontFamily?: string
+  fontSize?: number
   draftCoordinator?: UiDesignerDraftCoordinator
   /** Stable scene identity captured with a delayed edit. */
   sceneId?: string
-}>(), { label: 'JavaScript', rows: 12, debounceMs: 0 })
+}>(), { label: 'JavaScript', rows: 12, mode: 'javascript', debounceMs: 0, fontFamily: '', fontSize: 0 })
 const { t } = useUiDesignerI18n()
 const emit = defineEmits<{ 'update:modelValue': [value: string, sceneId?: string] }>()
 const host = ref<HTMLElement>()
@@ -69,7 +72,7 @@ const mountEditor = () => {
   try {
     editor = props.adapter.mount(host.value, {
       value: props.modelValue,
-      mode: 'javascript',
+      mode: props.mode,
       lineNumbers: true,
       foldGutter: true,
       searchReplace: true,
@@ -96,7 +99,7 @@ defineExpose({ format, refreshLayout })
 
 <template>
   <div class="code-mirror-editor">
-    <div ref="host" class="editor-host" :style="{ minHeight: `${props.rows * 1.5}em` }" />
+    <div ref="host" class="editor-host" :style="{ minHeight: `${props.rows * 1.5}em`, fontFamily: props.fontFamily || 'ui-monospace, SFMono-Regular, Consolas, monospace', fontSize: `${props.fontSize > 0 ? props.fontSize : 12}px` }" />
     <el-alert v-if="error" type="error" :closable="false" :title="t('operationError')">
       <details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ error }}</span></details>
     </el-alert>
@@ -106,5 +109,6 @@ defineExpose({ format, refreshLayout })
 <style scoped>
 .code-mirror-editor { display: flex; flex-direction: column; gap: 7px; min-height: 0; }
 .editor-host { min-height: 120px; border: 1px solid var(--app-border); border-radius: 4px; overflow: hidden; background: #101218; }
+.editor-host :deep(.CodeMirror) { font-family: inherit; font-size: inherit; }
 .status-detail { color: var(--app-ink-soft); font-size: 10px; }
 </style>

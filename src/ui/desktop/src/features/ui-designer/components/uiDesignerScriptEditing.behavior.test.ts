@@ -51,6 +51,7 @@ function findByUiId(value: unknown, uiId: string): TestVNode | undefined {
 }
 
 const commonImports = {
+  '@contract/ui-designer': { UI_DESIGNER_BUILTIN_SCENE_NAMES: ['Scene_Map'] },
   '@contract/ui-designer-script': { UI_DESIGNER_NODE_SCRIPT_COMPLETIONS: ['runtime', 'scene'] },
   '../i18n': { useUiDesignerI18n: () => ({ t: (key: string) => key }) },
   './UiCodeMirrorEditor.vue': 'UiCodeMirrorEditor',

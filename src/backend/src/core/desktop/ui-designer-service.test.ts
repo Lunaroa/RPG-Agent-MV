@@ -12,6 +12,7 @@ import {
   UiDesignerFileConflictError,
   UiDesignerPersistenceError,
   UiDesignerUserDataStore,
+  listUiDesignerSceneFiles,
   readUiDesignerFile,
   saveUiDesignerFile,
 } from './ui-designer-service.ts';
@@ -211,6 +212,29 @@ describe('ui designer document service', () => {
     const report = validateUiDesignerDocument(document);
     assert.equal(report.valid, true);
     assert.ok(report.warnings.some((issue) => issue.code === 'empty-frame-list'));
+  });
+});
+
+describe('ui designer scene file listing', () => {
+  test('lists project .mzui files with valid scene names and skips the rest', () => {
+    const project = path.join(tempRoot, 'project');
+    fs.mkdirSync(path.join(project, 'ui', 'nested'), { recursive: true });
+    saveUiDesignerFile(path.join(project, 'ui', 'title.mzui'), sampleDocument());
+    saveUiDesignerFile(path.join(project, 'ui', 'nested', 'menu.mzui'), { ...sampleDocument(), meta: { ...sampleDocument().meta, sceneName: 'Scene_Menu_Custom' } });
+    fs.writeFileSync(path.join(project, 'ui', 'broken.mzui'), 'not json', 'utf8');
+    const invalidName = sampleDocument();
+    invalidName.meta.sceneName = 'NotASceneClass';
+    fs.writeFileSync(path.join(project, 'ui', 'invalid-name.mzui'), JSON.stringify(invalidName), 'utf8');
+    fs.mkdirSync(path.join(project, 'node_modules', 'pkg'), { recursive: true });
+    saveUiDesignerFile(path.join(project, 'node_modules', 'pkg', 'vendored.mzui'), sampleDocument());
+    fs.writeFileSync(path.join(project, 'notes.txt'), 'ignored', 'utf8');
+
+    const records = listUiDesignerSceneFiles(project);
+    assert.deepEqual(records, [
+      { path: 'ui/nested/menu.mzui', sceneName: 'Scene_Menu_Custom' },
+      { path: 'ui/title.mzui', sceneName: 'Scene_Sample' },
+    ]);
+    assert.deepEqual(listUiDesignerSceneFiles(path.join(project, 'missing')), []);
   });
 });
 

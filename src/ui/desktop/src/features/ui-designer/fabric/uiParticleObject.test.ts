@@ -30,6 +30,17 @@ test('particle object keeps one stable selectable Fabric object while its effect
   assert.equal(object.top, 140)
 })
 
+test('circle emission scatters inside a true circle of the shorter half-side', () => {
+  const particle = createDefaultNode('particle', { width: 120, height: 60 })
+  Object.assign(particle.props, {
+    emissionArea: 'circle', velocityX: 0, velocityY: 0, velocityRandomX: 0, velocityRandomY: 0, gravityX: 0, gravityY: 0,
+  })
+  const frames = resolveUiParticleFrames(particle.props, 0)
+  assert.ok(frames.length > 0)
+  assert.ok(frames.every((frame) => Math.hypot(frame.x, frame.y) <= 30 + 1e-9))
+  assert.ok(frames.some((frame) => Math.hypot(frame.x, frame.y) > 1))
+})
+
 test('particle frames stay finite and interpolate color, opacity, scale and motion', () => {
   const particle = createDefaultNode('particle')
   const frames = resolveUiParticleFrames(particle.props, 2500)

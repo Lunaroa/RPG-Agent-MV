@@ -1,6 +1,8 @@
 import type { UiDesignerProjectProfileResult } from '../../../../contract/ui-designer.ts';
 import { inspectRmmvProject, type RmmvProjectManifest } from '../rmmv/rmmv-layout.ts';
 
+export { listUiDesignerSceneFiles } from './ui-designer-service.ts';
+
 /**
  * Reads the selected RPG Maker project's canvas profile from its manifest.
  *

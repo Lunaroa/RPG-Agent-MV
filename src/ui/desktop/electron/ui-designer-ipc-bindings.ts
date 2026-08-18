@@ -22,6 +22,7 @@ import type {
   UiDesignerRendererResourceSyncRequest,
   UiDesignerRendererResourceSyncResult,
   UiDesignerRendererHostStopReason,
+  UiDesignerSceneFileRecord,
   UiDesignerSceneStageRequest,
   UiRuntimeSceneExport,
   UiRuntimeStatus,
@@ -41,6 +42,7 @@ export interface UiDesignerIpcDependencies {
   }
   project: {
     inspectUiDesignerProjectProfile(project: string): UiDesignerProjectProfileResult
+    listUiDesignerSceneFiles(project: string): UiDesignerSceneFileRecord[]
   }
   resources: {
     inspectUiDesignerResourcesAsync(project: string, options?: UiDesignerResourceRequest): Promise<UiProjectResourceCatalog>
@@ -181,6 +183,12 @@ export function registerUiDesignerIpcHandlers(
     } catch (error) { return operationError('project:profile', error) }
   })
 
+  ipcMain.handle('ui-designer:scenes:list', (_event, request: UiDesignerProjectRequest = {}) => {
+    try {
+      return { status: 'success', operation: 'scenes:list', value: dependencies.project.listUiDesignerSceneFiles(dependencies.resolveProject(request.project)), message: 'Ready.' }
+    } catch (error) { return operationError('scenes:list', error) }
+  })
+
   ipcMain.handle('ui-designer:resources:list', async (_event, request: UiDesignerResourceRequest = {}) => {
     try { return { status: 'success', value: await dependencies.resources.inspectUiDesignerResourcesAsync(dependencies.resolveProject(request.project), request), message: 'Ready.' } }
     catch (error) { return operationError('resources:list', error) }
@@ -292,7 +300,7 @@ function safeStoreCall(
 export function cleanupUiDesignerIpcHandlers(ipcMain: Pick<IpcMain, 'removeHandler'>): void {
   for (const channel of [
     'ui-designer:file:open', 'ui-designer:file:save', 'ui-designer:file:save-as', 'ui-designer:file:reveal-source',
-    'ui-designer:project:profile',
+    'ui-designer:project:profile', 'ui-designer:scenes:list',
     'ui-designer:resources:list', 'ui-designer:resources:references', 'ui-designer:resources:read-scene-data', 'ui-designer:file:select-frame-folder', 'ui-designer:runtime:check', 'ui-designer:runtime:install',
     'ui-designer:scene:stage', 'ui-designer:runtime:export', 'ui-designer:recovery:list', 'ui-designer:recovery:write', 'ui-designer:recovery:read',
     'ui-designer:renderer:start', 'ui-designer:renderer:confirm', 'ui-designer:renderer:stop', 'ui-designer:renderer:sync-resources',

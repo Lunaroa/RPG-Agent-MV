@@ -7,6 +7,7 @@ import type {
   UiDesignerPersistenceAdapter,
   UiDesignerProjectAdapter,
   UiDesignerProjectProfileResult,
+  UiDesignerSceneFileRecord,
   UiDesignerResourceAdapter,
   UiDesignerRuntimeAdapter,
   UiDesignerRuntimeStageResult,
@@ -103,6 +104,9 @@ export const unavailableResourceAdapter: UiDesignerResourceAdapter = {
 export const unavailableProjectAdapter: UiDesignerProjectAdapter = {
   async getProfile() {
     return unavailable('Project profile adapter is not connected; no project dimensions were loaded.')
+  },
+  async listSceneFiles() {
+    return unavailable('Project scene listing adapter is not connected; no project scenes were loaded.')
   },
 }
 
@@ -208,6 +212,9 @@ export function createDesktopUiDesignerAdapters(projectPath?: string, lifecycle?
       const profileRequest = projectPath ? { ...request, project: projectPath } : request
       return asResult<UiDesignerProjectProfileResult>(await api.uiDesigner.getProjectProfile(profileRequest), 'Project profile inspection failed.')
     },
+    async listSceneFiles() {
+      return asResult<UiDesignerSceneFileRecord[]>(await api.uiDesigner.listSceneFiles({ project: projectPath }), 'Project scene files are unavailable.')
+    },
   }
   const runtime: UiDesignerRuntimeAdapter = {
     async checkRuntime() { const result = asResult<UiRuntimeStatus>(await api.uiDesigner.checkRuntime({ project: projectPath }), 'Runtime inspection failed.'); return result.value ?? { state: 'error', message: result.message } },
@@ -255,7 +262,7 @@ export const codeMirrorAdapter: UiCodeEditorAdapter = {
     }
     const editor = CodeMirror.fromTextArea(textarea, {
       value: options.value,
-      mode: options.mode,
+      mode: options.mode === 'json' ? { name: 'javascript', json: true } : options.mode,
       lineNumbers: options.lineNumbers,
       foldGutter: options.foldGutter,
       indentUnit: 2,
@@ -273,6 +280,7 @@ export const codeMirrorAdapter: UiCodeEditorAdapter = {
       gutters: options.foldGutter ? ['CodeMirror-linenumbers', 'CodeMirror-lint-markers', 'CodeMirror-foldgutter'] : ['CodeMirror-linenumbers', 'CodeMirror-lint-markers'],
     })
     const lint = () => {
+      if (options.mode !== 'javascript') return
       editor.clearGutter('CodeMirror-lint-markers')
       try { Function(editor.getValue()) } catch (error) {
         const message = error instanceof Error ? error.message : String(error)

@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import type {
   UiDesignerDocument,
+  UiDesignerSceneFileRecord,
   UiFileResult,
 } from '../../../../contract/ui-designer.ts';
 import { normalizeUiDesignerPaneSize } from '../../../../contract/ui-designer-geometry.ts';
@@ -14,6 +15,53 @@ import {
 
 export const UI_DESIGNER_FILE_EXTENSION = '.mzui';
 export const UI_DESIGNER_RECENT_LIMIT = 10;
+
+const UI_SCENE_FILE_SCAN_MAX_DEPTH = 6;
+const UI_SCENE_FILE_SCAN_MAX_FILES = 200;
+const UI_SCENE_FILE_SCAN_EXCLUDED_DIRS = new Set(['node_modules', '.git']);
+const UI_SCENE_NAME_PATTERN = /^Scene_[A-Za-z0-9_$]+$/;
+
+function readSceneFileSceneName(filePath: string): string | null {
+  try {
+    const raw: unknown = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    if (!raw || typeof raw !== 'object') return null;
+    const sceneName = (raw as { meta?: { sceneName?: unknown } }).meta?.sceneName;
+    return typeof sceneName === 'string' && UI_SCENE_NAME_PATTERN.test(sceneName) ? sceneName : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Lists .mzui scene documents inside the current RPG Maker project so event
+ * actions can target any saved scene, not just the ones open in the editor.
+ * The scan is bounded (depth, file count, excluded directories); unreadable
+ * or invalid documents are skipped rather than failing the whole listing.
+ */
+export function listUiDesignerSceneFiles(projectRoot: string): UiDesignerSceneFileRecord[] {
+  const root = path.resolve(projectRoot);
+  if (!fs.existsSync(root)) return [];
+  const records: UiDesignerSceneFileRecord[] = [];
+  const walk = (directory: string, depth: number): void => {
+    if (depth > UI_SCENE_FILE_SCAN_MAX_DEPTH || records.length >= UI_SCENE_FILE_SCAN_MAX_FILES) return;
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
+    catch { return; }
+    for (const entry of entries) {
+      if (records.length >= UI_SCENE_FILE_SCAN_MAX_FILES) return;
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (depth < UI_SCENE_FILE_SCAN_MAX_DEPTH && !UI_SCENE_FILE_SCAN_EXCLUDED_DIRS.has(entry.name)) walk(fullPath, depth + 1);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith(UI_DESIGNER_FILE_EXTENSION)) continue;
+      const sceneName = readSceneFileSceneName(fullPath);
+      if (sceneName) records.push({ path: path.relative(root, fullPath).split(path.sep).join('/'), sceneName });
+    }
+  };
+  walk(root, 0);
+  return records.sort((left, right) => left.path.localeCompare(right.path));
+}
 
 function normalizePanePreferences(value: Record<string, unknown>): Record<string, unknown> {
   const next = { ...value };

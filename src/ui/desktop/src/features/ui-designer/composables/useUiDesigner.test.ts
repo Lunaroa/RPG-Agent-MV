@@ -13,6 +13,23 @@ import { useUiDesigner } from './useUiDesigner'
 
 const success = <T>(value?: T) => ({ status: 'success' as const, message: 'ok', value })
 
+test('applies a scene JSON edit as one undoable step and rejects invalid input', () => {
+  const designer = useUiDesigner()
+  const before = designer.activeScene.value.history.availableUndoSteps
+  const document = designer.document.value
+  const source = JSON.stringify({ ...document, meta: { ...document.meta, description: 'json edit' } }, null, 2)
+  const applied = designer.applyJsonDocument(source)
+  assert.equal(applied.ok, true)
+  assert.equal(designer.document.value.meta.description, 'json edit')
+  assert.equal(designer.activeScene.value.history.availableUndoSteps, before + 1)
+  designer.undo()
+  assert.equal(designer.document.value.meta.description, document.meta.description)
+
+  assert.equal(designer.applyJsonDocument('{ not json').ok, false)
+  assert.equal(designer.applyJsonDocument('{}').ok, false)
+  assert.equal(designer.document.value.meta.description, document.meta.description)
+})
+
 test('Inspector draft flush commits once and one undo restores the original property', () => {
   const designer = useUiDesigner()
   designer.addNode('text', 'node_root')
@@ -430,6 +447,9 @@ test('project profile dimensions seed only newly created scenes across project s
       assert.equal(request?.project, 'projects/sample')
       return success({ engine: 'MV' as const, engineVersion: '1.6.2', screenWidth: 960, screenHeight: 540, uiAreaWidth: 960, uiAreaHeight: 540 })
     },
+    async listSceneFiles() {
+      return success([{ path: 'ui/title.mzui', sceneName: 'Scene_Profile_Title' }])
+    },
   }
   const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { project } })
   assert.equal(designer.canCreateScene.value, false)
@@ -444,6 +464,9 @@ test('project profile dimensions seed only newly created scenes across project s
       async getProfile(request?: { project?: string }) {
         assert.equal(request?.project, 'projects/next')
         return success({ engine: 'MZ' as const, engineVersion: '1.10.0', screenWidth: 1280, screenHeight: 720, uiAreaWidth: 1280, uiAreaHeight: 720 })
+      },
+      async listSceneFiles() {
+        return success([])
       },
     },
   }), true)

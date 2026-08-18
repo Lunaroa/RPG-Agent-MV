@@ -370,6 +370,8 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
             :resource-picker="field.kind === 'resource' ? () => pickFieldResource(field) : undefined"
             :resource-picker-disabled="field.kind === 'resource' && !designer.hasProject"
             :format-on-blur="Boolean(designer.preferences.autoFormat)"
+            :code-font-family="designer.preferences.codeFontFamily"
+            :code-font-size="designer.preferences.codeFontSize"
             :issues="issuesForField(field)"
             :code-adapter="designer.adapters.code"
             :draft-coordinator="designer.draftCoordinator"

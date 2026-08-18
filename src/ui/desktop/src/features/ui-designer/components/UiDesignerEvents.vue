@@ -2,6 +2,7 @@
 import { computed, isRef, ref, type Ref } from 'vue'
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import type { UiEventAction, UiEventName, UiNode, UiValidationIssue, UiValidationReport } from '@contract/ui-designer'
+import { UI_DESIGNER_BUILTIN_SCENE_NAMES } from '@contract/ui-designer'
 import { UI_DESIGNER_NODE_SCRIPT_COMPLETIONS } from '@contract/ui-designer-script'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 import UiCodeMirrorEditor from './UiCodeMirrorEditor.vue'
@@ -30,6 +31,14 @@ const actionTypes: UiEventAction['type'][] = ['none', 'newGame', 'continue', 'op
 const eventLabels: Record<UiEventName, UiDesignerMessageKey> = { onClick: 'eventOnClick', onHoverEnter: 'eventOnHoverEnter', onHoverLeave: 'eventOnHoverLeave', onShow: 'eventOnShow', onHide: 'eventOnHide', onUpdate: 'eventOnUpdate', onFocus: 'eventOnFocus', onBlur: 'eventOnBlur' }
 const actionLabels: Record<UiEventAction['type'], UiDesignerMessageKey> = { none: 'actionNone', newGame: 'actionNewGame', continue: 'actionContinue', options: 'actionOptions', exit: 'actionExit', gotoScene: 'actionGotoScene', toggleNode: 'actionToggleNode', playSe: 'actionPlaySe', url: 'actionUrl', script: 'actionScript', setVariable: 'actionSetVariable', setSwitch: 'actionSetSwitch', showMessage: 'actionShowMessage', tweenProp: 'actionTweenProp', wait: 'actionWait' }
 const openedScenes = computed(() => designer.scenes.map((scene) => ({ value: scene.document.meta.sceneName, label: `${scene.document.meta.sceneName}${scene.sourcePath ? ` · ${scene.sourcePath.split(/[\\/]/).pop()}` : ''}` })))
+const projectScenes = computed(() => {
+  const openedValues = new Set(openedScenes.value.map((scene) => scene.value))
+  return designer.sceneFiles
+    .filter((file) => !openedValues.has(file.sceneName))
+    .map((file) => ({ value: file.sceneName, label: `${file.sceneName} · ${file.path}` }))
+})
+const builtinScenes = computed(() => UI_DESIGNER_BUILTIN_SCENE_NAMES.map((name) => ({ value: name, label: name })))
+const knownSceneTargets = computed(() => new Set([...openedScenes.value, ...projectScenes.value, ...builtinScenes.value].map((option) => option.value)))
 const conditionLabels: Record<'switch' | 'variable' | 'code', UiDesignerMessageKey> = { switch: 'conditionSwitchOn', variable: 'conditionVariable', code: 'conditionCode' }
 const easingLabels: Record<'Linear' | 'EaseIn' | 'EaseOut' | 'EaseInOut' | 'Bounce', UiDesignerMessageKey> = { Linear: 'easingLinear', EaseIn: 'easingEaseIn', EaseOut: 'easingEaseOut', EaseInOut: 'easingEaseInOut', Bounce: 'easingBounce' }
 const switchLabels: Record<'on' | 'off' | 'toggle', UiDesignerMessageKey> = { on: 'switchOn', off: 'switchOff', toggle: 'switchToggle' }
@@ -98,7 +107,7 @@ const actionField = (action: UiEventAction, key: string): string | number => {
 const setActionType = (index: number, type: UiEventAction['type']) => {
   flushDraftContext()
   const base = { type } as UiEventAction
-  if (type === 'gotoScene') Object.assign(base, { sceneName: openedScenes.value[0]?.value ?? '' })
+  if (type === 'gotoScene') Object.assign(base, { sceneName: openedScenes.value[0]?.value ?? projectScenes.value[0]?.value ?? '' })
   if (type === 'toggleNode') Object.assign(base, { targetNodeId: props.node.id })
   if (type === 'playSe') Object.assign(base, { seName: '' })
   if (type === 'url') Object.assign(base, { url: '' })
@@ -111,10 +120,13 @@ const setActionType = (index: number, type: UiEventAction['type']) => {
   updateActions(actions.value.map((action, actionIndex) => actionIndex === index ? base : action))
 }
 const sceneOptionsFor = (action: UiEventAction) => {
-  const options: Array<{ value: string; label: string; unavailable?: boolean }> = [...openedScenes.value]
   const value = action.type === 'gotoScene' ? action.sceneName : ''
-  if (value && !options.some((option) => option.value === value)) options.push({ value, label: `${value} · ${t('sceneTargetMissing')}`, unavailable: true })
-  return options
+  const missing = value && !knownSceneTargets.value.has(value) ? [{ value, label: `${value} · ${t('sceneTargetMissing')}`, unavailable: true }] : []
+  return missing
+}
+const sceneTargetKnown = (action: UiEventAction) => {
+  const value = action.type === 'gotoScene' ? action.sceneName : ''
+  return !value || knownSceneTargets.value.has(value)
 }
 </script>
 
@@ -134,8 +146,13 @@ const sceneOptionsFor = (action: UiEventAction) => {
           <el-button-group><el-button :data-ui-id="`ui-designer-event-${activeEvent}-${index}-move-up`" size="small" text :aria-label="t('actionMoveUp')" :disabled="index === 0" @click="moveAction(index, -1)">↑</el-button><el-button :data-ui-id="`ui-designer-event-${activeEvent}-${index}-move-down`" size="small" text :aria-label="t('actionMoveDown')" :disabled="index === actions.length - 1" @click="moveAction(index, 1)">↓</el-button><el-button size="small" text type="danger" :aria-label="t('deleteNode')" @click="removeAction(index)">×</el-button></el-button-group>
         </div>
         <template v-if="action.type === 'gotoScene'">
-          <el-select :model-value="actionField(action, 'sceneName')" size="small" :placeholder="t('sceneTargetChoose')" @update:model-value="updateAction(index, { sceneName: $event })"><el-option v-for="option in sceneOptionsFor(action)" :key="option.value" :label="option.label" :value="option.value" :disabled="option.unavailable" /></el-select>
-          <p v-if="!openedScenes.some((scene) => scene.value === action.sceneName)" class="action-warning">{{ t('sceneTargetMissing') }}</p>
+          <el-select :model-value="actionField(action, 'sceneName')" size="small" filterable allow-create default-first-option :placeholder="t('sceneTargetChoose')" @update:model-value="updateAction(index, { sceneName: $event })">
+            <el-option-group v-if="openedScenes.length" :label="t('sceneTargetGroupOpen')"><el-option v-for="option in openedScenes" :key="`open-${option.value}`" :label="option.label" :value="option.value" /></el-option-group>
+            <el-option-group v-if="projectScenes.length" :label="t('sceneTargetGroupProject')"><el-option v-for="option in projectScenes" :key="`project-${option.value}`" :label="option.label" :value="option.value" /></el-option-group>
+            <el-option-group :label="t('sceneTargetGroupBuiltin')"><el-option v-for="option in builtinScenes" :key="`builtin-${option.value}`" :label="option.label" :value="option.value" /></el-option-group>
+            <el-option v-for="option in sceneOptionsFor(action)" :key="`missing-${option.value}`" :label="option.label" :value="option.value" :disabled="option.unavailable" />
+          </el-select>
+          <p v-if="!sceneTargetKnown(action)" class="action-warning">{{ t('sceneTargetMissing') }}</p>
         </template>
         <el-input v-else-if="action.type === 'toggleNode'" :model-value="actionField(action, 'targetNodeId')" size="small" :placeholder="t('targetNodePlaceholder')" @update:model-value="updateAction(index, { targetNodeId: $event })" />
         <div v-else-if="action.type === 'playSe'" class="action-resource-control">
@@ -153,7 +170,7 @@ const sceneOptionsFor = (action: UiEventAction) => {
         </div>
         <el-input v-else-if="action.type === 'url'" :model-value="actionField(action, 'url')" size="small" :placeholder="t('urlPlaceholder')" @update:model-value="updateAction(index, { url: $event })" />
         <template v-else-if="action.type === 'script'">
-          <UiCodeMirrorEditor :data-ui-id="`ui-designer-event-${activeEvent}-${index}-script`" :adapter="designer.adapters.code" :model-value="String(actionField(action, 'code'))" :rows="4" :debounce-ms="1000" :format-on-blur="Boolean(designer.preferences.autoFormat)" :completion-items="scriptCompletionItems" :scene-id="designer.activeSceneId" :draft-coordinator="designer.draftCoordinator" @update:model-value="updateAction(index, { code: $event })" />
+          <UiCodeMirrorEditor :data-ui-id="`ui-designer-event-${activeEvent}-${index}-script`" :adapter="designer.adapters.code" :model-value="String(actionField(action, 'code'))" :rows="4" :debounce-ms="1000" :format-on-blur="Boolean(designer.preferences.autoFormat)" :font-family="designer.preferences.codeFontFamily" :font-size="designer.preferences.codeFontSize" :completion-items="scriptCompletionItems" :scene-id="designer.activeSceneId" :draft-coordinator="designer.draftCoordinator" @update:model-value="updateAction(index, { code: $event })" />
           <UiScriptContextHint kind="action" :issues="codeIssuesFor(index)" />
         </template>
         <el-input v-else-if="action.type === 'showMessage'" :model-value="actionField(action, 'message')" size="small" @update:model-value="updateAction(index, { message: $event })" />
@@ -184,7 +201,7 @@ const sceneOptionsFor = (action: UiEventAction) => {
             <el-input-number :model-value="action.condition.value ?? 0" size="small" @update:model-value="updateCondition(index, { value: $event ?? 0 })" />
           </div>
           <template v-else>
-            <UiCodeMirrorEditor :data-ui-id="`ui-designer-event-${activeEvent}-${index}-condition-script`" :adapter="designer.adapters.code" :model-value="action.condition.code ?? ''" :rows="3" :debounce-ms="1000" :format-on-blur="Boolean(designer.preferences.autoFormat)" :completion-items="scriptCompletionItems" :scene-id="designer.activeSceneId" :draft-coordinator="designer.draftCoordinator" @update:model-value="updateCondition(index, { code: $event })" />
+            <UiCodeMirrorEditor :data-ui-id="`ui-designer-event-${activeEvent}-${index}-condition-script`" :adapter="designer.adapters.code" :model-value="action.condition.code ?? ''" :rows="3" :debounce-ms="1000" :format-on-blur="Boolean(designer.preferences.autoFormat)" :font-family="designer.preferences.codeFontFamily" :font-size="designer.preferences.codeFontSize" :completion-items="scriptCompletionItems" :scene-id="designer.activeSceneId" :draft-coordinator="designer.draftCoordinator" @update:model-value="updateCondition(index, { code: $event })" />
             <UiScriptContextHint kind="condition" :issues="codeIssuesFor(index, true)" />
           </template>
         </div>

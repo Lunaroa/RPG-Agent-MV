@@ -1074,6 +1074,28 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
     scene._mzuiUiRoot = new global.PIXI.Container();
     scene.addChild(scene._mzuiUiRoot);
   }
+  function configurePreviewDomInput() {
+    if (typeof document === 'undefined' || !document) return;
+    var errorPrinter = typeof document.getElementById === 'function' ? document.getElementById('errorPrinter') : null;
+    if (errorPrinter && errorPrinter.style) errorPrinter.style.pointerEvents = 'none';
+    var graphics = global.Graphics;
+    var gameVideo = global.Video && global.Video._element
+      ? global.Video._element
+      : graphics && graphics._video
+        ? graphics._video
+        : typeof document.getElementById === 'function'
+          ? document.getElementById('gameVideo') || document.getElementById('GameVideo')
+          : null;
+    if (gameVideo && gameVideo.style) gameVideo.style.pointerEvents = 'none';
+    var renderer = graphics && graphics.app && graphics.app.renderer
+      ? graphics.app.renderer
+      : graphics && graphics._renderer;
+    var accessibility = renderer && renderer.plugins && renderer.plugins.accessibility;
+    // PIXI's accessibility root spans the renderer even when this runtime has
+    // no accessible HTML children. Keyboard focus is owned by MZUIRuntime, so
+    // empty areas must remain transparent to pointer hit testing.
+    if (accessibility && accessibility.div && accessibility.div.style) accessibility.div.style.pointerEvents = 'none';
+  }
   function readyCanvasSize() {
     if (!global.Graphics) throw new Error('The project MV/MZ Graphics host is unavailable.');
     var width = Math.round(Number(global.Graphics.width || global.Graphics.boxWidth || global.Graphics._width || 816));
@@ -1140,6 +1162,7 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
     }
     if (runtime && typeof runtime.cleanup === 'function') runtime.cleanup();
     resizeCanvas(message.payload.scene);
+    configurePreviewDomInput();
     requireSessionStorage(activeExecutionMode !== 'full-preview');
     runtime = global.MZUIRuntime.create();
     runtime.mount(message.payload.scene, { root: hostScene._mzuiUiRoot, context: { sceneApi: hostScene }, sceneApi: hostScene, executionMode: activeExecutionMode });
@@ -1341,7 +1364,7 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
     var originalStart = global.Scene_Boot && global.Scene_Boot.prototype.start;
     if (!originalStart) throw new Error('The project MV/MZ Scene_Boot host is unavailable.');
     sceneBootOriginalStart = originalStart;
-    sceneBootInstalledStart = global.Scene_Boot.prototype.start = function () { originalStart.apply(this, arguments); global.SceneManager.goto(Scene_MZUIDesignerCanvasHost); };
+    sceneBootInstalledStart = global.Scene_Boot.prototype.start = function () { originalStart.apply(this, arguments); configurePreviewDomInput(); global.SceneManager.goto(Scene_MZUIDesignerCanvasHost); };
   }
 
   try {

@@ -54,11 +54,17 @@ export function resolveUiParticleFrames(props: UiParticleProps, elapsedMs: numbe
     const particleLifetimeMs = Math.max(250, (finite(props.lifetime, 1) + lifetimeRandom) * 16.6667)
     const emissionOffset = index * Math.max(1, finite(props.emissionInterval, 1)) * 16.6667 / particleLifetimeMs
     const phase = ((Math.max(0, finite(elapsedMs)) / particleLifetimeMs) + basePhase + emissionOffset) % 1
-    const spreadX = props.emissionArea === 'point' ? 0 : (basePhase * 2 - 1) * halfWidth
+    const circleRadius = Math.min(halfWidth, halfHeight)
+    const circleAngle = basePhase * Math.PI * 2
+    const circleDistance = Math.sqrt((basePhase * 7.13) % 1) * circleRadius
+    const spreadX = props.emissionArea === 'point' ? 0
+      : props.emissionArea === 'circle'
+        ? Math.cos(circleAngle) * circleDistance
+        : (basePhase * 2 - 1) * halfWidth
     const spreadY = props.emissionArea === 'rectangle'
       ? (((basePhase * 1.7) % 1) * 2 - 1) * halfHeight
       : props.emissionArea === 'circle'
-        ? Math.sin(basePhase * Math.PI * 2) * halfHeight
+        ? Math.sin(circleAngle) * circleDistance
         : 0
     const seconds = phase * particleLifetimeMs / 1000
     const opacity = finite(props.startOpacity, 255) + (finite(props.endOpacity) - finite(props.startOpacity, 255)) * phase

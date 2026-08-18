@@ -310,6 +310,37 @@ export async function confirmProjectStagingBeforeClose(workflowRoot: string, win
   return true;
 }
 
+const rendererCloseGuardSenders = new Set<number>();
+
+function onRendererCloseGuardRegistration(event: Electron.IpcMainEvent, payload: unknown): void {
+  const registered = Boolean((payload as { registered?: boolean } | null)?.registered);
+  if (registered) rendererCloseGuardSenders.add(event.sender.id);
+  else rendererCloseGuardSenders.delete(event.sender.id);
+}
+
+export function rendererHasCloseGuard(win: BrowserWindow): boolean {
+  return !win.isDestroyed() && rendererCloseGuardSenders.has(win.webContents.id);
+}
+
+export function requestRendererCloseResolution(win: BrowserWindow): Promise<boolean> {
+  if (!rendererHasCloseGuard(win)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const senderId = win.webContents.id;
+    const listener = (event: Electron.IpcMainEvent, payload: unknown) => {
+      if (event.sender.id !== senderId) return;
+      ipcMain.removeListener('app:close-response', listener);
+      resolve(Boolean((payload as { proceed?: boolean } | null)?.proceed));
+    };
+    ipcMain.on('app:close-response', listener);
+    try {
+      win.webContents.send('app:close-request');
+    } catch {
+      ipcMain.removeListener('app:close-response', listener);
+      resolve(true);
+    }
+  });
+}
+
 function providerSummaryForIpc(provider: Record<string, unknown>): Record<string, unknown> {
   const id = typeof provider.id === 'string' ? provider.id : '';
   const label = typeof provider.label === 'string' ? provider.label.trim() : '';
@@ -1567,6 +1598,7 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
     BrowserWindow.fromWebContents(event.sender)?.close();
     return { ok: true };
   });
+  ipcMain.on('app:close-guard', onRendererCloseGuardRegistration);
   ipcMain.handle('window:isMaximized', (event) => {
     return { maximized: Boolean(BrowserWindow.fromWebContents(event.sender)?.isMaximized()) };
   });
@@ -2257,6 +2289,8 @@ export function cleanupIpcHandlers(): void {
   ipcMain.removeHandler('window:minimize');
   ipcMain.removeHandler('window:toggleMaximize');
   ipcMain.removeHandler('window:close');
+  ipcMain.removeListener('app:close-guard', onRendererCloseGuardRegistration);
+  rendererCloseGuardSenders.clear();
   ipcMain.removeHandler('window:isMaximized');
   ipcMain.removeHandler('window:openExternalUrl');
   ipcMain.removeHandler('app:getVersion');

@@ -78,7 +78,7 @@ onBeforeUnmount(() => window.removeEventListener('agent-rpg:ui-designer-format',
       </ul>
     </el-alert>
     <UiScriptContextHint kind="scene" :issues="codeIssues" />
-    <UiCodeMirrorEditor ref="editorRef" :adapter="designer.adapters.code" :model-value="code" :rows="18" :debounce-ms="1000" :format-on-blur="Boolean(designer.preferences.autoFormat)" :scene-id="designer.activeSceneId" :completion-items="completionItems" :draft-coordinator="designer.draftCoordinator" @update:model-value="updateCode" />
+    <UiCodeMirrorEditor ref="editorRef" :adapter="designer.adapters.code" :model-value="code" :rows="18" :debounce-ms="1000" :format-on-blur="Boolean(designer.preferences.autoFormat)" :font-family="designer.preferences.codeFontFamily" :font-size="designer.preferences.codeFontSize" :scene-id="designer.activeSceneId" :completion-items="completionItems" :draft-coordinator="designer.draftCoordinator" @update:model-value="updateCode" />
   </section>
 </template>
 
@@ -86,6 +86,6 @@ onBeforeUnmount(() => window.removeEventListener('agent-rpg:ui-designer-format',
 .code-panel { display: flex; flex: 1; flex-direction: column; gap: 9px; width: 100%; height: 100%; min-height: 0; padding: 12px; box-sizing: border-box; background: var(--app-bg); }
 .code-panel :deep(.code-mirror-editor), .code-panel :deep(.editor-host) { flex: 1; }
 .code-head { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
-.code-panel :deep(.CodeMirror) { min-height: 300px; height: 100%; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; line-height: 1.5; }
+.code-panel :deep(.CodeMirror) { min-height: 300px; height: 100%; line-height: 1.5; }
 .code-issues { margin: 0; padding-left: 16px; }.code-issues li { margin-bottom: 4px; }.status-detail { color: var(--app-ink-soft); font-size: 10px; }
 </style>

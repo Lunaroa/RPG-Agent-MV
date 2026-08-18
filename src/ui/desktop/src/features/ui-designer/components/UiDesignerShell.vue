@@ -9,6 +9,7 @@ import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 import { normalizePaneSize } from '../models/geometry'
 import UiDesignerCanvas from './UiDesignerCanvas.vue'
 import UiDesignerCodePanel from './UiDesignerCodePanel.vue'
+import UiDesignerJsonPanel from './UiDesignerJsonPanel.vue'
 import UiDesignerInspector from './UiDesignerInspector.vue'
 import UiDesignerNodePanel from './UiDesignerNodePanel.vue'
 import UiDesignerSceneTabs from './UiDesignerSceneTabs.vue'
@@ -299,7 +300,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <section class="ui-designer-shell" :class="{ 'editor-preview-active': fullscreenPreview, 'code-mode-active': designer.editingMode === 'code' && !fullscreenPreview }" data-ui-id="ui-designer-shell">
+    <section class="ui-designer-shell" :class="{ 'editor-preview-active': fullscreenPreview, 'code-mode-active': (designer.editingMode === 'code' || designer.editingMode === 'json') && !fullscreenPreview }" data-ui-id="ui-designer-shell">
     <UiDesignerToolbar :designer="designer" @home="showWelcome = true" @settings="surface = 'settings'" @help="surface = 'help'" @shortcuts="surface = 'shortcuts'" @tour="openTour" @export="exportCompleted = false; surface = 'export'" />
     <UiDesignerSceneTabs v-show="!fullscreenPreview" :designer="designer" @new-scene="openNewScene" />
     <div class="designer-workspace" :style="workspaceStyle">
@@ -312,6 +313,7 @@ onBeforeUnmount(() => {
         <template v-else>
           <UiDesignerCanvas ref="canvasRef" v-show="designer.editingMode === 'design' || fullscreenPreview" :designer="designer" @edit-node="editPrimaryNode" />
           <UiDesignerCodePanel v-show="designer.editingMode === 'code' && !fullscreenPreview" :designer="designer" />
+          <UiDesignerJsonPanel v-if="designer.editingMode === 'json' && !fullscreenPreview" :designer="designer" />
         </template>
       </main>
       <div v-show="!fullscreenPreview" class="workspace-splitter" role="separator" :aria-label="t('rightPane')" @pointerdown="beginPaneDrag('right', $event)" />

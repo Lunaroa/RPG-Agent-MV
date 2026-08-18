@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict'
+﻿import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import test from 'node:test'
 import { compileScript, parse } from '@vue/compiler-sfc'
@@ -366,6 +366,23 @@ test('route teardown waits for the renderer owner before leaving the designer', 
   assert.match(routedView, /if \(shellRef\.value && !\(await shellRef\.value\.disposePreview\('unload'\)\)\) return false/)
   assert.match(shell, /if \(rawDesigner\.isPreviewing\.value\) rawDesigner\.stopPreview\(\)/)
   assert.match(shell, /disposePreview\('unload'\)\.then\(\(\) => restorePreviewState\(\)\)/)
+})
+
+test('window close consults the renderer lifecycle instead of the beforeunload veto', () => {
+  const preload = fs.readFileSync(new URL('../../../../electron/preload.ts', import.meta.url), 'utf8')
+  const main = fs.readFileSync(new URL('../../../../electron/main.ts', import.meta.url), 'utf8')
+  const ipcHandlers = fs.readFileSync(new URL('../../../../electron/ipc-handlers.ts', import.meta.url), 'utf8')
+  assert.match(preload, /ipcRenderer\.on\('app:close-request', listener\)/)
+  assert.match(preload, /ipcRenderer\.send\('app:close-guard', \{ registered: true \}\)/)
+  assert.match(preload, /ipcRenderer\.send\('app:close-response', \{ proceed \}\)/)
+  assert.match(ipcHandlers, /ipcMain\.on\('app:close-guard', onRendererCloseGuardRegistration\)/)
+  assert.match(ipcHandlers, /export function requestRendererCloseResolution/)
+  assert.match(main, /const rendererProceed = await requestRendererCloseResolution\(win\)/)
+  assert.match(main, /if \(closeGuardRunning\) \{\s*void offerForceClose\(mainWindow\)/)
+  assert.match(main, /win\.destroy\(\)/)
+  assert.match(routedView, /:lifecycle-adapter="lifecycleAdapter"/)
+  assert.match(routedView, /window\.api\?\.lifecycle\?\.onCloseRequest/)
+  assert.match(routedView, /guard\.confirmDiscard \? await guard\.confirmDiscard\(\) : false/)
 })
 
 test('scene-state fatal keeps the route barrier on one active owner and retries backend cleanup', () => {

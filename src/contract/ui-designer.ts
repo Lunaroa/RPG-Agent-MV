@@ -288,6 +288,32 @@ export interface UiGotoSceneAction extends UiActionBase {
   sceneName: string
 }
 
+/**
+ * Scene classes every RPG Maker MV/MZ runtime registers, offered as gotoScene
+ * targets alongside the project's own .mzui scenes. Scene_End is MV-only and
+ * Scene_GameEnd is MZ-only; both are listed because the designer serves both
+ * engines and the runtime resolves whichever class exists.
+ */
+export const UI_DESIGNER_BUILTIN_SCENE_NAMES: readonly string[] = [
+  'Scene_Title',
+  'Scene_Map',
+  'Scene_Menu',
+  'Scene_Item',
+  'Scene_Skill',
+  'Scene_Equip',
+  'Scene_Status',
+  'Scene_Options',
+  'Scene_Load',
+  'Scene_Save',
+  'Scene_Battle',
+  'Scene_Shop',
+  'Scene_Name',
+  'Scene_Gameover',
+  'Scene_End',
+  'Scene_GameEnd',
+  'Scene_Debug',
+]
+
 export interface UiToggleNodeAction extends UiActionBase {
   type: 'toggleNode'
   targetNodeId: string
@@ -879,6 +905,12 @@ export interface UiDesignerRecentFileRecord {
   exists: boolean
 }
 
+export interface UiDesignerSceneFileRecord {
+  /** Project-relative .mzui path (posix separators). */
+  path: string
+  sceneName: string
+}
+
 export interface UiDesignerRecoveryRecord {
   id: string
   sourcePath: string
@@ -901,6 +933,7 @@ export interface UiDesignerResourceAdapter {
 
 export interface UiDesignerProjectAdapter {
   getProfile(request?: UiDesignerProjectProfileRequest): Promise<UiFileResult<UiDesignerProjectProfileResult>>
+  listSceneFiles(): Promise<UiFileResult<UiDesignerSceneFileRecord[]>>
 }
 
 export interface UiDesignerRuntimeAdapter {
@@ -958,7 +991,7 @@ export interface UiCodeEditorAdapter {
 
 export interface UiCodeEditorMountOptions {
   value: string
-  mode: 'javascript'
+  mode: 'javascript' | 'json'
   lineNumbers: boolean
   foldGutter: boolean
   searchReplace: boolean

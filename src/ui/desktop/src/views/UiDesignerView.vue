@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
+import type { UiDesignerLifecycleAdapter } from '@contract/ui-designer'
 import type { UiDesignerController } from '../features/ui-designer/composables/useUiDesigner'
 import UiDesignerShell from '../features/ui-designer/components/UiDesignerShell.vue'
 import { createDesktopUiDesignerAdapters } from '../features/ui-designer/adapters'
@@ -25,6 +26,30 @@ const shellRef = ref<{
 let projectSwitchBusy = false
 let lastProjectPath = ''
 let unregisterLifecycle: (() => void) | undefined
+
+// The desktop host drives window closing: the main process asks the renderer
+// to settle preview cleanup and unsaved scenes before it allows the close, so
+// the browser beforeunload veto (which silently swallows Electron closes) is
+// replaced by this adapter whenever the preload bridge is available.
+const lifecycleAdapter = computed<UiDesignerLifecycleAdapter | undefined>(() => {
+  const onCloseRequest = window.api?.lifecycle?.onCloseRequest
+  if (typeof onCloseRequest !== 'function') return undefined
+  return {
+    registerGuard: (guard) => onCloseRequest(async () => {
+      const designer = shellRef.value?.designer
+      if (!designer) return true
+      try {
+        if (designer.isEditorPreviewing) designer.stopEditorPreview()
+        if (designer.isPreviewing && !(await designer.stopPreview())) return false
+        if (shellRef.value && !(await shellRef.value.disposePreview('unload'))) return false
+        if (!designer.isDirty) return true
+        return guard.confirmDiscard ? await guard.confirmDiscard() : false
+      } catch {
+        return false
+      }
+    }),
+  }
+})
 
 onMounted(async () => {
   await productPlugins.load()
@@ -112,7 +137,7 @@ watch(
 </script>
 
 <template>
-  <UiDesignerShell ref="shellRef" :adapters="desktopAdapters" :project-path="projectStore.currentProject || undefined" :manage-project-context="false" />
+  <UiDesignerShell ref="shellRef" :adapters="desktopAdapters" :project-path="projectStore.currentProject || undefined" :lifecycle-adapter="lifecycleAdapter" :manage-project-context="false" />
 </template>
 
 <style scoped>

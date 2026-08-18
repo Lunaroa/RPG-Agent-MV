@@ -404,6 +404,31 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     runtime.cleanup();
   });
 
+  test('interactive button and container views receive a rectangle hit area that tracks prop updates', () => {
+    const context = makeContext();
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    runtime.mount(scene, { root: new context.PIXI.Container() });
+
+    const buttonView = runtime.nodeViews.button;
+    assert.equal(buttonView.interactive, true);
+    assert.equal(typeof buttonView.containsPoint, 'undefined');
+    assert.ok(buttonView.hitArea);
+    assert.equal(buttonView.hitArea.x, 0);
+    assert.equal(buttonView.hitArea.y, 0);
+    assert.equal(buttonView.hitArea.width, 100);
+    assert.equal(buttonView.hitArea.height, 80);
+
+    runtime.patchNodes([{ nodeId: 'button', props: { width: 240, height: 60 } }]);
+    assert.equal(buttonView.hitArea.width, 240);
+    assert.equal(buttonView.hitArea.height, 60);
+
+    const spriteView = runtime.nodeViews.sprite;
+    assert.equal(spriteView.interactive === true, false);
+    runtime.cleanup();
+  });
+
   test('normalizes button SE resource paths while preserving legacy names and rejecting non-SE assets', () => {
     const context = makeContext();
     const played: string[] = [];
@@ -821,7 +846,7 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.equal(layer instanceof context.PIXI.ParticleContainer, false);
     assert.equal(layer.__mzuiParticleChildType, 'graphics');
     assert.ok(particle instanceof context.PIXI.Graphics);
-    assert.deepEqual({ x: particle.x, y: particle.y }, { x: 28, y: -22.5 });
+    assert.deepEqual({ x: particle.x, y: particle.y }, { x: 78, y: 17.5 });
     assert.deepEqual({ x: particle.__mzuiVelocityX, y: particle.__mzuiVelocityY }, { x: 3, y: -2.5 });
     assert.equal(particle.__mzuiLife, 5);
     assert.equal(particle.scale.x, 2);
@@ -833,10 +858,14 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.ok(runtime.nodeViews.particle.__mzuiGlowFilter instanceof context.PIXI.Filter);
     assert.deepEqual(Array.from(runtime.nodeViews.particle.__mzuiGlowFilter.uniforms.mzuiGlowOffset), [2 / 816, 2 / 624]);
     assert.equal(runtime.nodeViews.particle.__mzuiGlowFilter.uniforms.mzuiGlowStrength, 0.25);
-    assert.match(runtime.nodeViews.particle.__mzuiGlowFilter.fragment, /texture2D\(uSampler/);
+    const glowFragment = runtime.nodeViews.particle.__mzuiGlowFilter.fragment;
+    assert.match(glowFragment, /float mzuiSampleAlpha\(vec2 uv\)/);
+    assert.match(glowFragment, /step\(vec2\(0\.0\), uv\) \* step\(uv, vec2\(1\.0\)\)/);
+    assert.match(glowFragment, /vec2 diagonal = d \* 0\.70710678/);
+    assert.match(glowFragment, /base\.rgb \+ premultipliedGlow/);
 
     runtime.update();
-    assert.deepEqual({ x: particle.x, y: particle.y }, { x: 32, y: -23 });
+    assert.deepEqual({ x: particle.x, y: particle.y }, { x: 82, y: 17 });
     assert.equal(particle.scale.x, 2.4);
     assert.equal(particle.alpha, 180 / 255);
     assert.equal(particle.tint, 0xcc0033);
@@ -855,13 +884,13 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     props.emissionArea = 'circle';
     randomValues.push(0, 1, 0.5, 0.5, 0.5);
     runtime.update();
-    assert.deepEqual({ x: state.particles[0].x, y: state.particles[0].y }, { x: 42, y: -1 });
+    assert.deepEqual({ x: state.particles[0].x, y: state.particles[0].y }, { x: 92, y: 39 });
     props.maxParticles = 0;
     runtime.update();
     Object.assign(props, { maxParticles: 1, emissionArea: 'point', velocityX: 0, velocityY: 0, velocityRandomX: 0, velocityRandomY: 0, gravityX: 0, gravityY: 0 });
     randomValues.push(0.5, 0.5, 0.5);
     runtime.update();
-    assert.deepEqual({ x: state.particles[0].x, y: state.particles[0].y }, { x: 0, y: 0 });
+    assert.deepEqual({ x: state.particles[0].x, y: state.particles[0].y }, { x: 50, y: 40 });
     runtime.cleanup();
   });
 
@@ -1578,7 +1607,7 @@ function makeContext(): Record<string, any> {
   const context: Record<string, any> = {
     console,
     URL,
-    PIXI: { Container, Graphics, Text, NineSlicePlane, ParticleContainer, Sprite: PixiSprite, TilingSprite, Filter, Texture: { from: (value: string) => ({ source: value, baseTexture: { resource: { source: {} } } }) }, filters: { BlurFilter: class { blur = 0 }, GlowFilter: class { distance = 0; destroyed = false; destroy() { this.destroyed = true; } } } },
+    PIXI: { Container, Graphics, Text, NineSlicePlane, ParticleContainer, Sprite: PixiSprite, TilingSprite, Filter, Rectangle: class { constructor(public x = 0, public y = 0, public width = 0, public height = 0) {} }, Texture: { from: (value: string) => ({ source: value, baseTexture: { resource: { source: {} } } }) }, filters: { BlurFilter: class { blur = 0 }, GlowFilter: class { distance = 0; destroyed = false; destroy() { this.destroyed = true; } } } },
     Sprite,
     Window_Base: WindowBase,
     Scene_Base: SceneBase,

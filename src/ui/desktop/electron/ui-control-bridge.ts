@@ -297,6 +297,51 @@ const PREVIEW_FRAME_DIAGNOSTIC_SCRIPT = `(async function () {
     }
   } catch (error) { out.tickProbeError = String(error); }
   try { out.bodyText = String(document.body && document.body.innerText || '').slice(0, 400); } catch (error) { out.bodyTextError = String(error); }
+  try {
+    var probeCanvas = document.querySelector('canvas') || null;
+    var probeRect = probeCanvas ? probeCanvas.getBoundingClientRect() : null;
+    var probePt = probeRect ? { x: probeRect.left + probeRect.width / 2, y: probeRect.top + probeRect.height / 2 } : null;
+    out.uiClickProbe = {
+      canvasCount: document.querySelectorAll('canvas').length,
+      canvasRect: probeRect ? { x: probeRect.x, y: probeRect.y, width: probeRect.width, height: probeRect.height } : null,
+      canvasPointerEvents: probeCanvas ? getComputedStyle(probeCanvas).pointerEvents : null,
+      elementAtCenter: probePt ? String((document.elementFromPoint(probePt.x, probePt.y) || {}).tagName || '') + (probePt ? '.' + String((document.elementFromPoint(probePt.x, probePt.y) || {}).className || '') : '') : null,
+      interactionPlugin: Boolean(window.Graphics && Graphics.app && Graphics.app.renderer && Graphics.app.renderer.plugins && Graphics.app.renderer.plugins.interaction),
+      interactionSupportsTouch: Boolean(window.Graphics && Graphics.app && Graphics.app.renderer && Graphics.app.renderer.plugins && Graphics.app.renderer.plugins.interaction && Graphics.app.renderer.plugins.interaction.supportsTouchEvents),
+    };
+    var probeScene = window.SceneManager && SceneManager._scene;
+    var probeRuntime = probeScene && probeScene._mzuiCanvasRuntime;
+    if (probeRuntime) {
+      var probeButtons = (probeRuntime.scene && Array.isArray(probeRuntime.scene.nodes) ? probeRuntime.scene.nodes : []).filter(function (node) { return node && node.type === 'button'; });
+      out.uiClickProbe.runtimeMode = probeRuntime.executionMode || null;
+      out.uiClickProbe.allowsUserExecution = typeof probeRuntime.allowsUserExecution === 'function' ? probeRuntime.allowsUserExecution() : null;
+      out.uiClickProbe.buttons = probeButtons.slice(0, 8).map(function (node) {
+        var view = probeRuntime.nodeViews && probeRuntime.nodeViews[node.id];
+        return {
+          nodeId: node.id,
+          hasEvents: Boolean(node.events && node.events.onClick),
+          actions: node.events && node.events.onClick && Array.isArray(node.events.onClick.actions) ? node.events.onClick.actions.map(function (a) { return a.type; }) : [],
+          viewInteractive: view ? view.interactive : null,
+          viewEventMode: view ? String(view.eventMode) : null,
+          viewDisabled: view ? Boolean(view.__mzuiDisabled) : null,
+          hitArea: view && view.hitArea ? { x: view.hitArea.x, y: view.hitArea.y, width: view.hitArea.width, height: view.hitArea.height } : null,
+        };
+      });
+      var errorsBefore = (probeRuntime.errors || []).length;
+      var target = probeButtons.filter(function (node) { return node.events && node.events.onClick; })[0] || probeButtons[0];
+      if (target) {
+        var view2 = probeRuntime.nodeViews && probeRuntime.nodeViews[target.id];
+        var stateBefore = view2 ? view2.__mzuiButtonState : null;
+        probeRuntime.dispatchActionsForNode(target, 'onClick', { type: 'pointertap', target: view2 || null });
+        out.uiClickProbe.syntheticDispatch = {
+          nodeId: target.id,
+          stateBefore: stateBefore,
+          errorsAdded: (probeRuntime.errors || []).length - errorsBefore,
+          runtimeErrors: (probeRuntime.errors || []).slice(-3).map(function (e) { return String(e.label) + ': ' + String(e.message).slice(0, 160); }),
+        };
+      }
+    }
+  } catch (error) { out.uiClickProbeError = String(error && error.stack || error).slice(0, 500); }
   try { out.brightness = window.$gameScreen ? $gameScreen.brightness() : null; } catch (error) { out.brightnessError = String(error); }
   try { out.transferring = Boolean(window.$gamePlayer && $gamePlayer.isTransferring && $gamePlayer.isTransferring()); } catch (error) { out.transferringError = String(error); }
   try { out.imagesReady = !window.ImageManager || !ImageManager.isReady || ImageManager.isReady(); } catch (error) { out.imagesReadyError = String(error); }

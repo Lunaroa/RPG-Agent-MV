@@ -1434,13 +1434,15 @@
 
   function particleEmissionPosition(props) {
     var area = props.emissionArea || 'point';
-    if (area === 'rectangle') return { x: (Math.random() - 0.5) * finite(props.width, 0), y: (Math.random() - 0.5) * finite(props.height, 0) };
+    var width = finite(props.width, 0);
+    var height = finite(props.height, 0);
+    if (area === 'rectangle') return { x: Math.random() * width, y: Math.random() * height };
     if (area === 'circle') {
       var angle = Math.random() * Math.PI * 2;
-      var radius = Math.sqrt(Math.random()) * Math.min(Math.abs(finite(props.width, 0)), Math.abs(finite(props.height, 0))) * 0.5;
-      return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
+      var radius = Math.sqrt(Math.random()) * Math.min(width, height) / 2;
+      return { x: width / 2 + Math.cos(angle) * radius, y: height / 2 + Math.sin(angle) * radius };
     }
-    return { x: 0, y: 0 };
+    return { x: width / 2, y: height / 2 };
   }
 
   function particleOpacity(from, to, progress) {
@@ -1567,19 +1569,25 @@
       'uniform sampler2D uSampler;',
       'uniform vec2 mzuiGlowOffset;',
       'uniform float mzuiGlowStrength;',
+      'float mzuiSampleAlpha(vec2 uv) {',
+      '  vec2 inside = step(vec2(0.0), uv) * step(uv, vec2(1.0));',
+      '  return texture2D(uSampler, clamp(uv, vec2(0.0), vec2(1.0))).a * inside.x * inside.y;',
+      '}',
       'void main(void) {',
       '  vec4 base = texture2D(uSampler, vTextureCoord);',
       '  vec2 d = mzuiGlowOffset;',
-      '  float halo = texture2D(uSampler, vTextureCoord + vec2(d.x, 0.0)).a;',
-      '  halo = max(halo, texture2D(uSampler, vTextureCoord - vec2(d.x, 0.0)).a);',
-      '  halo = max(halo, texture2D(uSampler, vTextureCoord + vec2(0.0, d.y)).a);',
-      '  halo = max(halo, texture2D(uSampler, vTextureCoord - vec2(0.0, d.y)).a);',
-      '  halo = max(halo, texture2D(uSampler, vTextureCoord + d).a);',
-      '  halo = max(halo, texture2D(uSampler, vTextureCoord - d).a);',
-      '  halo = max(halo, texture2D(uSampler, vTextureCoord + vec2(d.x, -d.y)).a);',
-      '  halo = max(halo, texture2D(uSampler, vTextureCoord + vec2(-d.x, d.y)).a);',
+      '  vec2 diagonal = d * 0.70710678;',
+      '  float halo = mzuiSampleAlpha(vTextureCoord + vec2(d.x, 0.0));',
+      '  halo = max(halo, mzuiSampleAlpha(vTextureCoord - vec2(d.x, 0.0)));',
+      '  halo = max(halo, mzuiSampleAlpha(vTextureCoord + vec2(0.0, d.y)));',
+      '  halo = max(halo, mzuiSampleAlpha(vTextureCoord - vec2(0.0, d.y)));',
+      '  halo = max(halo, mzuiSampleAlpha(vTextureCoord + diagonal));',
+      '  halo = max(halo, mzuiSampleAlpha(vTextureCoord - diagonal));',
+      '  halo = max(halo, mzuiSampleAlpha(vTextureCoord + vec2(diagonal.x, -diagonal.y)));',
+      '  halo = max(halo, mzuiSampleAlpha(vTextureCoord + vec2(-diagonal.x, diagonal.y)));',
       '  float glowAlpha = max(0.0, halo - base.a) * mzuiGlowStrength;',
-      '  gl_FragColor = vec4(base.rgb + vec3(glowAlpha), max(base.a, glowAlpha));',
+      '  vec3 premultipliedGlow = vec3(glowAlpha) * (1.0 - base.a);',
+      '  gl_FragColor = vec4(base.rgb + premultipliedGlow, max(base.a, glowAlpha));',
       '}',
     ].join('\n');
     // Let each bundled PIXI version extract its own uniform metadata; passing
@@ -1698,6 +1706,7 @@
     if (node.type === 'nineSlice' && view) {
       applyNineSliceBorders(view, props);
     }
+    syncInteractiveHitArea(node, view);
     applyNodeTransform(node, view, scene);
   }
 
@@ -2297,6 +2306,26 @@
     return node.__mzuiAnimationActive;
   }
 
+  // Interactive containers (button windows, event containers) have no
+  // containsPoint of their own, so PIXI's hit test can never reach them
+  // unless an explicit hitArea covers the node rectangle. Sprites and
+  // graphics hit-test through their own geometry and are left alone.
+  function syncInteractiveHitArea(node, view) {
+    if (!view || view.interactive !== true || typeof view.containsPoint === 'function') return;
+    var PIXI = global.PIXI || {};
+    if (typeof PIXI.Rectangle !== 'function') return;
+    var props = node.props || {};
+    var width = finite(props.width, 0);
+    var height = finite(props.height, 0);
+    if (width <= 0 || height <= 0) return;
+    var rect = view.hitArea;
+    if (!rect || typeof rect !== 'object') rect = view.hitArea = new PIXI.Rectangle(0, 0, width, height);
+    rect.x = 0;
+    rect.y = 0;
+    rect.width = width;
+    rect.height = height;
+  }
+
   function bindNodeEvents(runtime, node, view) {
     if (!view || typeof view.on !== 'function') return;
     if (node.type === 'button') {
@@ -2314,7 +2343,7 @@
         runtime.listeners.push(function () { if (typeof view.off === 'function') view.off(eventName, visualEvents[eventName]); });
       });
     }
-    if (!node.events) return;
+    if (!node.events) { syncInteractiveHitArea(node, view); return; }
     var eventMap = { onClick: 'pointertap', onHoverEnter: 'pointerover', onHoverLeave: 'pointerout', onFocus: 'focus', onBlur: 'blur' };
     Object.keys(eventMap).forEach(function (name) {
       var handler = node.events[name];
@@ -2332,6 +2361,7 @@
       view.on(eventMap[name], listener);
       runtime.listeners.push(function () { if (typeof view.off === 'function') view.off(eventMap[name], listener); });
     });
+    syncInteractiveHitArea(node, view);
   }
 
   function installKeyboardFocusManager(runtime) {

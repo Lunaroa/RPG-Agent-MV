@@ -13,6 +13,7 @@ import {
   initializeIpcHandlers,
   patchWorkspaceSettings,
   readWorkspaceWindowOptions,
+  requestRendererCloseResolution,
   saveWorkspaceWindowState,
   shutdownMapPreview,
   shutdownInteractivePlaytest,
@@ -95,6 +96,25 @@ function scheduleWindowStateSave(): void {
   }, 250);
 }
 
+async function offerForceClose(win: BrowserWindow): Promise<void> {
+  if (win.isDestroyed()) return;
+  const language = currentProductLanguage();
+  const result = await dialog.showMessageBox(win, {
+    type: 'warning',
+    title: electronText(language, 'main.closeInProgressTitle'),
+    message: electronText(language, 'main.closeInProgressTitle'),
+    detail: electronText(language, 'main.closeInProgressDetail'),
+    buttons: [electronText(language, 'main.forceClose'), electronText(language, 'main.closeWait')],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  });
+  if (result.response !== 0 || win.isDestroyed()) return;
+  void shutdownInteractivePlaytest().catch(() => undefined);
+  void shutdownMapPreview().catch(() => undefined);
+  win.destroy();
+}
+
 async function createWindow() {
   initFileLogger();
 
@@ -158,11 +178,20 @@ async function createWindow() {
       saveWorkspaceWindowState(mainWindow);
       if (allowWindowClose) return;
       event.preventDefault();
-      if (closeGuardRunning) return;
+      if (closeGuardRunning) {
+        void offerForceClose(mainWindow);
+        return;
+      }
       closeGuardRunning = true;
       void (async () => {
-        const confirmed = await confirmProjectStagingBeforeClose(userDataRoot, mainWindow!);
-        if (!confirmed || !mainWindow || mainWindow.isDestroyed()) {
+        const win = mainWindow!;
+        const rendererProceed = await requestRendererCloseResolution(win);
+        if (!rendererProceed || win.isDestroyed()) {
+          closeGuardRunning = false;
+          return;
+        }
+        const confirmed = await confirmProjectStagingBeforeClose(userDataRoot, win);
+        if (!confirmed || win.isDestroyed()) {
           closeGuardRunning = false;
           return;
         }
@@ -170,7 +199,7 @@ async function createWindow() {
         await shutdownMapPreview();
         closeGuardRunning = false;
         allowWindowClose = true;
-        mainWindow.close();
+        win.close();
       })().catch((error) => {
         closeGuardRunning = false;
         const message = error instanceof Error ? error.message : String(error);

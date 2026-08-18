@@ -257,8 +257,8 @@ export function moveNodeToEdge(document: UiDesignerDocument, nodeId: string, edg
   if (!siblings) throw new Error('Node parent is missing')
   const index = siblings.indexOf(nodeId)
   if (index >= 0) siblings.splice(index, 1)
-  if (edge === 'top') siblings.unshift(nodeId)
-  else siblings.push(nodeId)
+  if (edge === 'top') siblings.push(nodeId)
+  else siblings.unshift(nodeId)
   if (cloned.parentId === null && source) {
     let movableIndex = 0
     for (let index = 0; index < source.length; index += 1) {

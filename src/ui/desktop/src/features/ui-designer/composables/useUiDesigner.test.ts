@@ -164,7 +164,7 @@ test('selecting an oversized sprite keeps source pixels but fits the visible nod
   assert.ok(selected.props.height * selected.props.scaleY <= designer.document.value.canvas.height)
 })
 
-test('closing the only opened tab creates a fresh untitled clean scene', async () => {
+test('closing the only opened tab leaves no scene behind', async () => {
   let clearedRecovery: string | undefined
   const file: UiDesignerPersistenceAdapter = {
     async open() {
@@ -188,11 +188,8 @@ test('closing the only opened tab creates a fresh untitled clean scene', async (
   const openedId = designer.activeScene.value.id
   assert.equal(await designer.closeScene(designer.scenes.value[0].id), true)
   assert.equal(await designer.closeScene(openedId), true)
-  const replacement = designer.scenes.value[0]
-  assert.equal(replacement.sourcePath, undefined)
-  assert.equal(replacement.openedMetadata, undefined)
-  assert.equal(replacement.recoveryId, undefined)
-  assert.equal(replacement.history.isDirty, false)
+  assert.equal(designer.scenes.value.length, 0)
+  assert.equal(designer.activeScene.value, undefined)
   assert.equal(clearedRecovery, 'recovery-opened')
 })
 
@@ -669,6 +666,41 @@ test('reparenting a node into a container immediately clamps it inside the desti
   assert.ok(child.props.y >= container.props.y)
   assert.ok(child.props.x + child.props.width <= container.props.x + container.props.width)
   assert.ok(child.props.y + child.props.height <= container.props.y + container.props.height)
+})
+
+test('reparenting without a clipping destination preserves the node geometry exactly', () => {
+  const designer = useUiDesigner()
+  const spriteId = designer.addNode('sprite', 'node_root', { x: 100, y: 80 })!
+  designer.updateNodeProperty(spriteId, 'width', 101)
+  designer.updateNodeProperty(spriteId, 'height', 63)
+  const containerId = designer.addNode('container', 'node_root', { x: 300, y: 200 })!
+
+  const assertGeometry = () => {
+    const sprite = designer.document.value.nodes.find((node) => node.id === spriteId)!
+    assert.deepEqual([sprite.props.x, sprite.props.y, sprite.props.width, sprite.props.height], [100, 80, 101, 63])
+  }
+
+  assert.equal(designer.reparent(spriteId, containerId, 'inner'), true)
+  assertGeometry()
+  assert.equal(designer.reparent(spriteId, 'node_root', 'inner'), true)
+  assertGeometry()
+  assert.equal(designer.reparent(spriteId, containerId, 'inner'), true)
+  assertGeometry()
+})
+
+test('resizing a text node scales its font size instead of stretching glyphs', () => {
+  const designer = useUiDesigner()
+  const textId = designer.addNode('text', 'node_root', { x: 100, y: 100 })!
+  const node = () => designer.document.value.nodes.find((item) => item.id === textId)!
+  const origin = nodeRect(node())
+  const baseFontSize = node().type === 'text' ? node().props.fontSize : 0
+  assert.ok(baseFontSize > 0)
+  designer.previewNodeResizeWithSnap(textId, origin, 'se', { x: origin.width, y: origin.height }, { preserveAspect: false, fromCenter: false })
+  assert.equal(designer.commitDraftRect(textId), true)
+  const resized = node()
+  assert.equal(resized.type === 'text' ? resized.props.fontSize : 0, baseFontSize * 2)
+  assert.equal(resized.props.scaleX, 1)
+  assert.equal(resized.props.scaleY, 1)
 })
 
 test('resource property execution rejects unsafe nested paths before document mutation', () => {

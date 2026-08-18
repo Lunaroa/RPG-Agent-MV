@@ -13,6 +13,7 @@ import {
   disposeFabricNodeObject,
   fabricNodeVisualSignature,
   positionFabricObjectFromRect,
+  positionFabricTextFromRect,
   scopeNodes,
   type UiFabricNodeObject,
 } from '../fabric/fabricNodeFactory'
@@ -82,7 +83,12 @@ const syncFabricSelection = () => {
   const selected = ids.map((id) => objects.get(id)).filter((object): object is UiFabricNodeObject => Boolean(object))
   syncingSelection = true
   if (!selected.length) canvas.discardActiveObject()
-  else if (selected.length === 1) canvas.setActiveObject(selected[0])
+  else if (selected.length === 1) {
+    canvas.setActiveObject(selected[0])
+    // Controller-driven focus (tree panel, keyboard) must raise the node too;
+    // pointer-driven selection is already raised by preserveObjectStacking.
+    canvas.bringObjectToFront(selected[0])
+  }
   else {
     const selection = new ActiveSelection(selected, { canvas, hasControls: false, lockScalingX: true, lockScalingY: true, lockRotation: true })
     canvas.setActiveObject(selection)
@@ -282,7 +288,8 @@ const scaleObject = (target: FabricObject, shiftKey: boolean, altKey: boolean, c
     const object = id === state.nodeId ? target as UiFabricNodeObject : objects.get(id)
     const draftNode = nodeById(id)
     if (!draftRect || !object || !draftNode) continue
-    positionFabricObjectFromRect(object, draftNode, draftRect)
+    if (draftNode.type === 'text' && object instanceof Textbox) positionFabricTextFromRect(object, draftNode, draftRect)
+    else positionFabricObjectFromRect(object, draftNode, draftRect)
     if (draftNode.type === 'container') syncContainerLabel(id)
   }
 }
@@ -396,7 +403,9 @@ onMounted(() => {
     viewportTransform: [1, 0, 0, 1, props.workspaceMargin, props.workspaceMargin],
     selection: true,
     selectionKey: ['shiftKey', 'ctrlKey', 'metaKey'],
-    preserveObjectStacking: true,
+    // A focused node rises above overlapping siblings while it stays selected,
+    // so the user can always grab the node they just focused in the tree.
+    preserveObjectStacking: false,
     uniformScaling: false,
     uniScaleKey: 'shiftKey',
     centeredKey: 'altKey',

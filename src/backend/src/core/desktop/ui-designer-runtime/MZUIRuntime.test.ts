@@ -35,7 +35,7 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.equal(runtime.mounted, false);
   });
 
-  test('paints the first tree sibling on top by attaching views in reverse tree order', () => {
+  test('paints the last tree sibling on top by attaching views in tree order', () => {
     const context = makeContext();
     vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-order.js' });
     const runtime = context.MZUIRuntime.create();
@@ -49,8 +49,8 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     scene.zOrder = ['root', 'second'];
     runtime.mount(scene, { root: new context.PIXI.Container() });
     const displayRoot = runtime.nodeViews.root.parent;
-    assert.equal(displayRoot.children[0], runtime.nodeViews.second);
-    assert.equal(displayRoot.children[1], runtime.nodeViews.root);
+    assert.equal(displayRoot.children[0], runtime.nodeViews.root);
+    assert.equal(displayRoot.children[1], runtime.nodeViews.second);
     runtime.cleanup();
   });
 

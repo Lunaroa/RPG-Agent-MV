@@ -249,11 +249,21 @@ const PROJECT_RESOURCES_ROOT_NODE_ID = '__project_resources__'
 const isFavoritesSelection = computed(() => selectedCategoryId.value === FAVORITES_NODE_ID)
 
 function categoryAllowedInSelectionMode(categoryId: string): boolean {
-  return Boolean(categoryId)
+  if (!categoryId) return false
+  if (!isSelectionMode.value) return true
+  // Selection mode only offers categories whose assets match the requested kind;
+  // group nodes stay when any child survives the same filter.
+  if (categoryId === 'img') return props.resourceKind === 'image'
+  if (categoryId === 'audio') return props.resourceKind === 'audio'
+  return projectAssetCategoryMatchesUiDesignerResourceKind(categoryId, props.resourceKind)
 }
 
 function selectionTreeNodes(nodes: ProjectAssetCategoryTreeNode[]): ProjectAssetCategoryTreeNode[] {
-  return nodes
+  if (!isSelectionMode.value) return nodes
+  const visit = (items: ProjectAssetCategoryTreeNode[]): ProjectAssetCategoryTreeNode[] => items
+    .map((node) => ({ ...node, children: node.children ? visit(node.children) : node.children }))
+    .filter((node) => categoryAllowedInSelectionMode(node.id) || Boolean(node.children?.length))
+  return visit(nodes)
 }
 
 function categoryForCurrentResourcePath(nodes: ProjectAssetCategoryTreeNode[]): string | undefined {

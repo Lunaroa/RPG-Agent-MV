@@ -51,7 +51,7 @@ const loadSceneTemplate = async (name: string) => {
     <h2>{{ t('welcomeTitle') }}</h2>
     <p>{{ t('welcomeBody') }}</p>
     <div class="welcome-actions">
-      <el-button data-ui-id="ui-designer-welcome-return" data-testid="ui-designer-welcome-return" @click="emit('returnToScene')">{{ t('returnToScene') }}</el-button>
+      <el-button v-if="designer.scenes.length" data-ui-id="ui-designer-welcome-return" data-testid="ui-designer-welcome-return" @click="emit('returnToScene')">{{ t('returnToScene') }}</el-button>
       <el-button data-ui-id="ui-designer-welcome-new-scene" data-testid="ui-designer-new" type="primary" @click="emit('newScene')">{{ t('newScene') }}</el-button>
       <el-button data-testid="ui-designer-open" :disabled="!designer.canSave" @click="void openScene()">{{ t('open') }}</el-button>
     </div>

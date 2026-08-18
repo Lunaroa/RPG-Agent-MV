@@ -320,9 +320,9 @@
             self.reportError(error, 'node:' + node.type, { node: node.id, type: node.type });
           }
         });
-        // The tree's first sibling is the front-most layer; PIXI paints the
-        // last-added child on top, so attach views in reverse tree order.
-        nodes.slice().reverse().forEach(function (node) {
+        // The tree's last sibling is the front-most layer; PIXI paints the
+        // last-added child on top, so attach views in tree order.
+        nodes.forEach(function (node) {
           var view = self.nodeViews[node.id];
           if (!view) return;
           var parent = node.parentId ? self.nodeViews[node.parentId] : self.displayRoot;

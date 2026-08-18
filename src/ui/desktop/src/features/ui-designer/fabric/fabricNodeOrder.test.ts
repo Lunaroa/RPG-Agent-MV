@@ -4,7 +4,7 @@ import { createDefaultNode, createUiDocument } from '../models/document'
 import { reparentNode } from '../models/tree'
 import { scopeNodes } from './fabricNodeFactory'
 
-test('canvas stacking paints the first tree sibling on top', () => {
+test('canvas stacking paints the last tree sibling on top', () => {
   const document = createUiDocument('Scene_Order')
   const sprite = createDefaultNode('sprite', { id: 'node_sprite_001', name: 'Sprite_1', parentId: 'node_root' })
   const container = createDefaultNode('container', { id: 'node_container_001', name: 'Container_1', parentId: 'node_root' })
@@ -12,10 +12,10 @@ test('canvas stacking paints the first tree sibling on top', () => {
   document.nodes.push(sprite, container, button)
   document.nodes[0].children.push(sprite.id, container.id, button.id)
 
-  assert.deepEqual(scopeNodes(document, 'node_root').map((node) => node.id), [button.id, container.id, sprite.id])
+  assert.deepEqual(scopeNodes(document, 'node_root').map((node) => node.id), [sprite.id, container.id, button.id])
 
   const moved = reparentNode(document, button.id, sprite.id, 'before')
-  assert.deepEqual(scopeNodes(moved, 'node_root').map((node) => node.id), [container.id, sprite.id, button.id])
+  assert.deepEqual(scopeNodes(moved, 'node_root').map((node) => node.id), [button.id, sprite.id, container.id])
 })
 
 test('an explicit z-index still overrides the tree stacking order', () => {

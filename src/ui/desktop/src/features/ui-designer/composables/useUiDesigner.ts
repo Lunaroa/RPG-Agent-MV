@@ -763,16 +763,10 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     const timer = recoveryTimers.get(scene.id)
     if (timer) { clearTimeout(timer); recoveryTimers.delete(scene.id) }
     if (scenes.value.length === 1) {
-      // Keep one clean tab available, but never retain the closed file's identity
-      // or recovery snapshot.  Reusing the old object here made Save target the
-      // previously opened path after the user closed its only tab.
-      if (scene.recoveryId) {
-        const recoveryResult = await clearRecoverySnapshot(adapters.file, scene.recoveryId)
-        if (!recoveryResult.ok) { fileMessage.value = recoveryResult.message; return false }
-      }
-      const replacement = createSceneState(createUiDocument(), undefined, {}, historyLimit())
-      scenes.value[0] = replacement
-      activeSceneId.value = replacement.id
+      // The final tab closes for real.  With no scene open the shell shows the
+      // explicit home page instead of a freshly minted placeholder tab.
+      scenes.value.splice(0, 1)
+      activeSceneId.value = ''
       selectedIds.value = ['node_root']
       return true
     }
@@ -1069,7 +1063,9 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     try {
       let next = reparentNode(document.value, nodeId, targetId, position)
       const moved = findNode(next, nodeId)
-      if (moved?.parentId) {
+      const destination = moved?.parentId ? findNode(next, moved.parentId) : undefined
+      const destinationClips = Boolean(destination && destination.id !== 'node_root' && destination.type === 'container' && destination.props.clip)
+      if (moved && destinationClips) {
         const original = { x: moved.props.x, y: moved.props.y }
         const clamped = clampNodeRectToParent(next, nodeId, nodeRect(moved))
         const targetPosition = {
@@ -1784,8 +1780,15 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     let next = cloneUiDocument(document.value)
     let changed = false
     for (const [id, pendingRect] of Object.entries(pendingRects)) {
+      const baseNode = findNode(document.value, id)
       if (!findNode(next, id)) continue
       next = applyNodeGeometryTransaction(next, id, { kind: 'rect', rect: pendingRect })
+      // Text nodes resize by reflowing at a scaled font size, not by stretching.
+      if (baseNode?.type === 'text') {
+        const baseHeight = Math.max(1, nodeRect(baseNode).height)
+        const mutated = findNode(next, id)
+        if (mutated?.type === 'text') mutated.props.fontSize = normalizeGeometryInteger(baseNode.props.fontSize * (pendingRect.height / baseHeight), baseNode.props.fontSize, 1)
+      }
       changed = true
     }
     if (changed) replaceActiveDocument(next, 'Resize node')

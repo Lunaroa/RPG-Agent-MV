@@ -278,13 +278,13 @@ describe('ui designer document model', () => {
 
     const firstTopLevel = resolveNodeActionPolicy(document, [topFirst.id], topFirst.id, false)
     assert.equal(firstTopLevel.allowed.moveUp, false)
-    assert.equal(firstTopLevel.allowed.moveTop, false)
-    assert.equal(firstTopLevel.allowed.moveBottom, true)
+    assert.equal(firstTopLevel.allowed.moveTop, true)
+    assert.equal(firstTopLevel.allowed.moveBottom, false)
     const movedTopLevel = moveNodeStep(document, topSecond.id, 'up')
     assert.deepEqual(movedTopLevel.zOrder, ['node_root', topSecond.id, topFirst.id])
     assert.deepEqual(moveNodeStep(movedTopLevel, topSecond.id, 'up').zOrder, movedTopLevel.zOrder)
-    assert.deepEqual(moveNodeToEdge(document, topFirst.id, 'bottom').zOrder, ['node_root', topSecond.id, topFirst.id])
-    assert.deepEqual(moveNodeToEdge(document, topSecond.id, 'top').zOrder, ['node_root', topSecond.id, topFirst.id])
+    assert.deepEqual(moveNodeToEdge(document, topFirst.id, 'bottom').zOrder, ['node_root', topFirst.id, topSecond.id])
+    assert.deepEqual(moveNodeToEdge(document, topSecond.id, 'top').zOrder, ['node_root', topFirst.id, topSecond.id])
   })
 
   test('copies and pastes a subtree with remapped ids', () => {
@@ -640,6 +640,12 @@ describe('ui designer history, geometry and performance', () => {
     assert.equal(sideFree.height, origin.height)
     const centered = resizeRect(origin, 'se', { x: 10, y: 5 }, { preserveAspect: true, fromCenter: true })
     assert.deepEqual({ x: centered.x + centered.width / 2, y: centered.y + centered.height / 2 }, { x: 60, y: 45 })
+    // Aspect-locked corner drags track the pointer along the corner direction:
+    // a pointer moving exactly along the diagonal keeps the corner under the cursor.
+    const diagonal = resizeRect(origin, 'se', { x: 20, y: 10 }, { preserveAspect: true, fromCenter: false })
+    assert.deepEqual([diagonal.x + diagonal.width, diagonal.y + diagonal.height], [130, 80])
+    const offAxis = resizeRect(origin, 'se', { x: 30, y: 60 }, { preserveAspect: true, fromCenter: false })
+    assert.ok(Math.abs(offAxis.width - 148) < 1e-9)
 
     const options = { gridEnabled: true, gridSize: 16, smartEnabled: true, sensitivity: 3, guides: [{ id: 'guide', type: 'vertical' as const, position: 150, locked: false }], targets: [{ id: 'target', rect: { x: 200, y: 20, width: 40, height: 50 } }] }
     const grid = snapRect(resizeRect(origin, 'e', { x: 17, y: 0 }, { preserveAspect: false, fromCenter: false }), origin, 'e', { preserveAspect: false, fromCenter: false }, options)
@@ -768,17 +774,17 @@ describe('ui designer history, geometry and performance', () => {
     assert.equal(topmostNodeAtPoint(document, { x: 700, y: 500 }), undefined)
   })
 
-  test('hit testing treats the first tree sibling as the front-most layer', () => {
+  test('hit testing treats the last tree sibling as the front-most layer', () => {
     const document = createUiDocument()
     const front = createDefaultNode('container', { id: 'hit_front', name: 'Front', parentId: 'node_root', x: 0, y: 0, width: 200, height: 200 })
     const back = createDefaultNode('button', { id: 'hit_back', name: 'Back', parentId: 'node_root', x: 0, y: 0, width: 200, height: 200 })
     document.nodes.push(front, back)
     document.nodes[0].children.push(front.id, back.id)
 
-    assert.equal(topmostNodeAtPoint(document, { x: 100, y: 100 })?.id, front.id)
+    assert.equal(topmostNodeAtPoint(document, { x: 100, y: 100 })?.id, back.id)
 
     const reordered = reparentNode(document, front.id, back.id, 'after')
-    assert.equal(topmostNodeAtPoint(reordered, { x: 100, y: 100 })?.id, back.id)
+    assert.equal(topmostNodeAtPoint(reordered, { x: 100, y: 100 })?.id, front.id)
   })
 
   test('converts canvas pointers with scroll, margin, zoom and pan from one source of truth', () => {

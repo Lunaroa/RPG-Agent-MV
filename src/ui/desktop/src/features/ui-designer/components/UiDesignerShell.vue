@@ -46,46 +46,6 @@ const sceneTemplateOptions = computed(() => ['blank', ...rawDesigner.templates.v
 const sceneTemplateLabels: Record<string, UiDesignerMessageKey> = {
   'builtin:title': 'sceneTemplateTitle', 'builtin:menu': 'sceneTemplateMenu', 'builtin:dialog': 'sceneTemplateDialog', 'builtin:scrolling-credits': 'sceneTemplateScrollingCredits', 'builtin:portrait-frame': 'sceneTemplatePortraitFrame', 'builtin:status-bars': 'sceneTemplateStatusBars', 'builtin:game-over': 'sceneTemplateGameOver', 'builtin:save-slots': 'sceneTemplateSaveSlots', 'builtin:hud-bars': 'sceneTemplateHudBars', 'builtin:item-tooltip': 'sceneTemplateItemTooltip', 'builtin:choice-menu': 'sceneTemplateChoiceMenu', 'builtin:logo-animation': 'sceneTemplateLogoAnimation',
 }
-interface LastActiveDocumentRecord {
-  projectPath: string
-  sourcePath: string
-}
-const LAST_ACTIVE_DOCUMENTS_PREFERENCE = 'lastActiveDocuments'
-let workspaceTrackingReady = false
-let lastActiveDocumentWrite = Promise.resolve(true)
-const currentProjectKey = () => props.projectPath?.trim() ?? ''
-const lastActiveDocumentRecords = () => {
-  const value = rawDesigner.preferences.value[LAST_ACTIVE_DOCUMENTS_PREFERENCE]
-  if (!Array.isArray(value)) return []
-  return value.filter((record): record is LastActiveDocumentRecord => Boolean(
-    record
-    && typeof record === 'object'
-    && typeof (record as LastActiveDocumentRecord).projectPath === 'string'
-    && typeof (record as LastActiveDocumentRecord).sourcePath === 'string',
-  ))
-}
-const rememberLastActiveDocument = (sourcePath?: string) => {
-  const projectPath = currentProjectKey()
-  lastActiveDocumentWrite = lastActiveDocumentWrite.then(async () => {
-    const retained = lastActiveDocumentRecords().filter((record) => record.projectPath !== projectPath)
-    const next = [{ projectPath, sourcePath: sourcePath?.trim() ?? '' }, ...retained].slice(0, 20)
-    return rawDesigner.savePreferences({ [LAST_ACTIVE_DOCUMENTS_PREFERENCE]: next })
-  })
-  return lastActiveDocumentWrite
-}
-const restoreLastActiveDocument = async () => {
-  const remembered = lastActiveDocumentRecords().find((record) => record.projectPath === currentProjectKey())
-  const legacyRecent = remembered ? undefined : rawDesigner.recentFiles.value.find((record) => record.exists)
-  const sourcePath = remembered ? remembered.sourcePath.trim() : legacyRecent?.sourcePath
-  if (!sourcePath) return false
-  const initialSceneId = rawDesigner.activeSceneId.value
-  if (!(await rawDesigner.open({ path: sourcePath }))) return false
-  if (rawDesigner.scenes.value.length > 1 && rawDesigner.scenes.value.some((scene) => scene.id === initialSceneId)) {
-    await rawDesigner.closeScene(initialSceneId)
-  }
-  await rememberLastActiveDocument(rawDesigner.activeScene.value?.sourcePath)
-  return true
-}
 const sceneTemplateLabel = (name: string) => name === 'blank' ? t('blankScene') : sceneTemplateLabels[name] ? t(sceneTemplateLabels[name]) : name
 const shortcutRegistry = createUiDesignerShortcutRegistry()
 const shortcutBindings = ref<UiDesignerShortcutDisplay[]>([])
@@ -255,11 +215,10 @@ watch(() => [designer.preferences.leftPaneWidth, designer.preferences.centerPane
     rightPaneWidth.value = clampPane('right', Number(right ?? 320))
   }
 }, { immediate: true })
-watch(() => designer.scenes.length, (count, previous) => { if (count > 1 || (previous !== undefined && count !== previous)) showWelcome.value = false })
-watch(() => designer.document.nodes.length, (count) => { if (count > 1) showWelcome.value = false })
-watch(() => [rawDesigner.activeSceneId.value, rawDesigner.activeScene.value?.sourcePath] as const, ([, sourcePath]) => {
-  if (workspaceTrackingReady) void rememberLastActiveDocument(sourcePath)
-}, { flush: 'sync' })
+watch(() => designer.scenes.length, (count, previous) => {
+  if (count === 0) showWelcome.value = true
+  else if (count > (previous ?? 0)) showWelcome.value = false
+})
 watch(fullscreenPreview, (active, previous) => {
   if (active && !previous) {
     capturePreviewState()
@@ -319,8 +278,11 @@ onMounted(async () => {
   await rawDesigner.loadPreferences()
   await rawDesigner.loadWelcomeRecords()
   await rawDesigner.loadProjectProfile()
-  showWelcome.value = !(await restoreLastActiveDocument())
-  workspaceTrackingReady = true
+  // The home page is an explicit page: launch lands on it with no scene tabs,
+  // so the pristine placeholder scene the controller starts with is closed.
+  const initialScene = rawDesigner.scenes.value[0]
+  if (initialScene && !initialScene.sourcePath && !rawDesigner.isSceneDirty(initialScene.id)) await rawDesigner.closeScene(initialScene.id)
+  showWelcome.value = true
   if (!Boolean(designer.preferences.tourCompleted)) openTour()
 })
 onBeforeUnmount(() => {

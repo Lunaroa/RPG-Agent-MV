@@ -19,15 +19,13 @@ test('scene labels stay inside scrollable tabs and expose their full name', () =
   assert.match(tabs, /\.scene-tab-label \{[\s\S]*text-overflow: ellipsis;/)
 })
 
-test('designer restores the last working document or stays on the welcome page', () => {
+test('the home page is explicit: launch lands on it and closing the last tab returns to it', () => {
   const shell = compile('./UiDesignerShell.vue')
   assert.match(shell, /const showWelcome = ref\(true\)/)
-  assert.match(shell, /const restoreLastActiveDocument = async \(\) =>/)
-  assert.match(shell, /showWelcome\.value = !\(await restoreLastActiveDocument\(\)\)/)
-  assert.match(shell, /rawDesigner\.recentFiles\.value\.find\(\(record\) => record\.exists\)/)
-  assert.match(shell, /remembered \? remembered\.sourcePath\.trim\(\) : legacyRecent\?\.sourcePath/)
-  assert.match(shell, /sourcePath: sourcePath\?\.trim\(\) \?\? ''/)
-  assert.match(shell, /await rawDesigner\.closeScene\(initialSceneId\)/)
+  assert.doesNotMatch(shell, /restoreLastActiveDocument/)
+  assert.match(shell, /showWelcome\.value = true/)
+  assert.match(shell, /await rawDesigner\.closeScene\(initialScene\.id\)/)
+  assert.match(shell, /if \(count === 0\) showWelcome\.value = true/)
 })
 
 test('Ctrl or Cmd plus S saves the active canvas even from an editable field', () => {

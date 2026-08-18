@@ -18,6 +18,7 @@ import type {
   UiTextNode,
 } from '@contract/ui-designer'
 import { UI_BUTTON_WINDOW_SKIN_RESOURCE_PATH } from '@contract/ui-designer-resources'
+import { nodeRect } from '../models/geometry'
 import { collectNodeSubtreeIds, resolveTreeOrderRanks } from '../models/tree'
 import { uiDesignerText } from '../i18n'
 import { UiLayoutTextbox } from './uiLayoutTextbox'
@@ -561,6 +562,26 @@ export function positionFabricObjectFromRect(object: UiFabricNodeObject, node: U
   object.setCoords()
 }
 
+/**
+ * Preview a text resize by reflowing at a scaled font size instead of stretching
+ * glyphs through object scale. The committed font size lands in commitDraftRect.
+ */
+export function positionFabricTextFromRect(object: UiFabricNodeObject, node: UiTextNode, rect: { x: number; y: number; width: number; height: number }) {
+  const baseHeight = Math.max(1, nodeRect(node).height)
+  object.set({
+    scaleX: 1,
+    scaleY: 1,
+    flipX: false,
+    flipY: false,
+    width: Math.max(20, rect.width),
+    fontSize: Math.max(1, node.props.fontSize * (rect.height / baseHeight)),
+    ...(object instanceof UiLayoutTextbox ? { layoutHeight: Math.max(20, rect.height) } : {}),
+  })
+  if (object instanceof Textbox) object.initDimensions()
+  object.setPositionByOrigin(new Point(rect.x + rect.width * node.props.anchorX, rect.y + rect.height * node.props.anchorY), node.props.anchorX, node.props.anchorY)
+  object.setCoords()
+}
+
 export function animateFabricNode(object: UiFabricNodeObject, node: UiNode, elapsedMs: number) {
   if (node.type !== 'particle' || !(object instanceof UiParticleObject)) return false
   object.setParticleState(node.props, elapsedMs)
@@ -589,6 +610,6 @@ export function scopeNodes(document: UiDesignerDocument, scopeNodeId: string) {
     .sort((left, right) => {
       if (left.id === scopeNodeId) return -1
       if (right.id === scopeNodeId) return 1
-      return left.props.zIndex - right.props.zIndex || (order.get(right.id) ?? 0) - (order.get(left.id) ?? 0)
+      return left.props.zIndex - right.props.zIndex || (order.get(left.id) ?? 0) - (order.get(right.id) ?? 0)
     })
 }

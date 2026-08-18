@@ -444,7 +444,7 @@ export function topmostNodeAtPoint(
       const rect = renderedBounds?.[node.id] ?? nodeRect(node)
       return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height
     })
-    .sort((left, right) => right.props.zIndex - left.props.zIndex || (order.get(left.id) ?? 0) - (order.get(right.id) ?? 0))[0]
+    .sort((left, right) => right.props.zIndex - left.props.zIndex || (order.get(right.id) ?? 0) - (order.get(left.id) ?? 0))[0]
 }
 
 /** Smart-snap peers must share the same parent-local coordinate space and be editable visual targets. */
@@ -654,9 +654,16 @@ export function resizeRect(origin: UiRect, handle: UiResizeHandle, delta: UiPoin
     if (hasX && !hasY) height = width / ratio
     else if (hasY && !hasX) width = height * ratio
     else {
-      const xScale = width / safeOrigin.width
-      const yScale = height / safeOrigin.height
-      const scale = Math.abs(xScale - 1) >= Math.abs(yScale - 1) ? xScale : yScale
+      // Corner handle: project the pointer expansion onto the corner direction so
+      // the grabbed corner tracks the pointer as closely as the aspect lock allows,
+      // instead of jumping on dominant-axis flips.
+      const expandX = width - safeOrigin.width
+      const expandY = height - safeOrigin.height
+      const cornerLengthSquared = safeOrigin.width ** 2 + safeOrigin.height ** 2
+      const scale = Math.max(
+        Math.max(1 / safeOrigin.width, 1 / safeOrigin.height),
+        1 + (expandX * safeOrigin.width + expandY * safeOrigin.height) / cornerLengthSquared,
+      )
       width = safeOrigin.width * scale
       height = safeOrigin.height * scale
     }

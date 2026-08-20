@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { resolveWindowSkinFrameLayout } from './uiWindowSkinTextbox'
+import { resolveWindowSkinBackgroundRect, resolveWindowSkinFrameLayout } from './uiWindowSkinTextbox'
 
 test('window skin frame keeps RPG Maker source cells while fitting small and large buttons', () => {
   const large = resolveWindowSkinFrameLayout(240, 72)
@@ -14,4 +14,9 @@ test('window skin frame keeps RPG Maker source cells while fitting small and lar
   assert.equal(small.vertical.reduce((sum, segment) => sum + segment.targetSize, 0), 18)
   assert.ok(small.horizontal.every((segment) => segment.targetSize >= 0))
   assert.ok(small.vertical.every((segment) => segment.targetSize >= 0))
+})
+
+test('window skin background stays inside the native four-pixel frame margin', () => {
+  assert.deepEqual(resolveWindowSkinBackgroundRect(240, 72), { left: -116, top: -32, width: 232, height: 64 })
+  assert.deepEqual(resolveWindowSkinBackgroundRect(6, 6), { left: 1, top: 1, width: 1, height: 1 })
 })

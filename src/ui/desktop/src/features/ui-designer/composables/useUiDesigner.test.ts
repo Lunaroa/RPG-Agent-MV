@@ -711,7 +711,7 @@ test('reparenting without a clipping destination preserves the node geometry exa
   assertGeometry()
 })
 
-test('resizing a text node scales its font size instead of stretching glyphs', () => {
+test('resizing a text node changes its box without changing font size or scale', () => {
   const designer = useUiDesigner()
   const textId = designer.addNode('text', 'node_root', { x: 100, y: 100 })!
   const node = () => designer.document.value.nodes.find((item) => item.id === textId)!
@@ -721,7 +721,9 @@ test('resizing a text node scales its font size instead of stretching glyphs', (
   designer.previewNodeResizeWithSnap(textId, origin, 'se', { x: origin.width, y: origin.height }, { preserveAspect: false, fromCenter: false })
   assert.equal(designer.commitDraftRect(textId), true)
   const resized = node()
-  assert.equal(resized.type === 'text' ? resized.props.fontSize : 0, baseFontSize * 2)
+  assert.equal(resized.type === 'text' ? resized.props.fontSize : 0, baseFontSize)
+  assert.equal(resized.props.width, origin.width * 2)
+  assert.equal(resized.props.height, origin.height * 2)
   assert.equal(resized.props.scaleX, 1)
   assert.equal(resized.props.scaleY, 1)
 })

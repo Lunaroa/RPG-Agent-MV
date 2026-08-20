@@ -11,7 +11,7 @@ const expectedByAngle = {
   135: ['e-resize', 'se-resize', 's-resize', 'sw-resize', 'w-resize', 'nw-resize', 'n-resize', 'ne-resize'],
 } as const
 
-test('all eight resize controls remain scale-only and rotate their cursor directions with the object', () => {
+test('all eight resize controls feed the dimension-resize gesture and rotate their cursor directions with the object', () => {
   for (const angle of [0, 45, 90, 135] as const) {
     const object = new Rect({ width: 160, height: 80, left: 0, top: 0, originX: 'center', originY: 'center', angle })
     Object.defineProperty(object, 'canvas', {

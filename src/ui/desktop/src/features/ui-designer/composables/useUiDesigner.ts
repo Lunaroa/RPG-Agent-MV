@@ -53,7 +53,6 @@ import {
   panViewport,
   resizeRect,
   rotateSubtreeTransforms,
-  scaleSubtreeRects,
   smartSnapTargetsForNode,
   snapFeedbackFor,
   snapPoint,
@@ -1800,35 +1799,17 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     if (!node) return undefined
     const sized = resizeRect(originRect, handle, delta, modifiers)
     const result = clampNodeRectToParent(document.value, nodeId, localResizeNodeRect(node, originRect, handle, sized.width, sized.height, modifiers.fromCenter), modifiers.preserveAspect)
-    const nextRects = { ...draftRects.value, [nodeId]: result }
-    const subtreeIds = collectNodeSubtreeIds(document.value, [nodeId]).filter((id) => id !== nodeId)
-    if (subtreeIds.length) Object.assign(nextRects, scaleSubtreeRects(document.value, subtreeIds, nodeId, originRect, result, handle, modifiers.fromCenter))
-    draftRects.value = nextRects
+    draftRects.value = { ...draftRects.value, [nodeId]: result }
     return result
   }
   const commitDraftRect = (nodeId: string) => {
     const rect = draftRects.value[nodeId]
     if (!rect) return
-    const transformIds = collectNodeSubtreeIds(document.value, [nodeId])
-    const pendingRects = Object.fromEntries(Object.entries(draftRects.value).filter(([id]) => transformIds.includes(id)))
-    draftRects.value = Object.fromEntries(Object.entries(draftRects.value).filter(([id]) => !(id in pendingRects)))
+    draftRects.value = Object.fromEntries(Object.entries(draftRects.value).filter(([id]) => id !== nodeId))
     if (!findNode(document.value, nodeId) || !resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return false
-    let next = cloneUiDocument(document.value)
-    let changed = false
-    for (const [id, pendingRect] of Object.entries(pendingRects)) {
-      const baseNode = findNode(document.value, id)
-      if (!findNode(next, id)) continue
-      next = applyNodeGeometryTransaction(next, id, { kind: 'rect', rect: pendingRect })
-      // Text nodes resize by reflowing at a scaled font size, not by stretching.
-      if (baseNode?.type === 'text') {
-        const baseHeight = Math.max(1, nodeRect(baseNode).height)
-        const mutated = findNode(next, id)
-        if (mutated?.type === 'text') mutated.props.fontSize = normalizeGeometryInteger(baseNode.props.fontSize * (pendingRect.height / baseHeight), baseNode.props.fontSize, 1)
-      }
-      changed = true
-    }
-    if (changed) replaceActiveDocument(next, 'Resize node')
-    return changed
+    const next = applyNodeGeometryTransaction(document.value, nodeId, { kind: 'rect', rect })
+    replaceActiveDocument(next, 'Resize node')
+    return true
   }
   const previewNodeRotation = (nodeId: string, rotation: number) => {
     const node = findNode(document.value, nodeId)

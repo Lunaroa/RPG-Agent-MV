@@ -10,6 +10,7 @@ export type UiWindowSkinTextboxOptions = UiLayoutTextboxOptions & {
 const WINDOW_SKIN_CELL_SIZE = 96
 const WINDOW_SKIN_FRAME_X = 96
 const WINDOW_SKIN_FRAME_BORDER = 24
+const WINDOW_SKIN_BACK_MARGIN = 4
 
 export const resolveWindowSkinFrameLayout = (width: number, height: number) => resolveNineSliceLayout(
   WINDOW_SKIN_CELL_SIZE,
@@ -23,6 +24,13 @@ export const resolveWindowSkinFrameLayout = (width: number, height: number) => r
     left: WINDOW_SKIN_FRAME_BORDER,
   },
 )
+
+export const resolveWindowSkinBackgroundRect = (width: number, height: number) => ({
+  left: -Math.max(1, width) / 2 + WINDOW_SKIN_BACK_MARGIN,
+  top: -Math.max(1, height) / 2 + WINDOW_SKIN_BACK_MARGIN,
+  width: Math.max(1, Math.max(1, width) - WINDOW_SKIN_BACK_MARGIN * 2),
+  height: Math.max(1, Math.max(1, height) - WINDOW_SKIN_BACK_MARGIN * 2),
+})
 
 const imageSourceSize = (source: CanvasImageSource) => {
   const candidate = source as CanvasImageSource & { naturalWidth?: number; naturalHeight?: number; videoWidth?: number; videoHeight?: number; width?: number; height?: number }
@@ -65,6 +73,7 @@ export class UiWindowSkinTextbox extends UiLayoutTextbox {
     const sourceSize = imageSourceSize(this.windowSkinElement)
     if (sourceSize.width < WINDOW_SKIN_FRAME_X + WINDOW_SKIN_CELL_SIZE || sourceSize.height < WINDOW_SKIN_CELL_SIZE) return
 
+    const background = resolveWindowSkinBackgroundRect(width, height)
     ctx.save()
     ctx.globalAlpha *= 0.75
     ctx.drawImage(
@@ -73,10 +82,10 @@ export class UiWindowSkinTextbox extends UiLayoutTextbox {
       0,
       WINDOW_SKIN_CELL_SIZE,
       WINDOW_SKIN_CELL_SIZE,
-      left,
-      top,
-      width,
-      height,
+      background.left,
+      background.top,
+      background.width,
+      background.height,
     )
     ctx.restore()
 

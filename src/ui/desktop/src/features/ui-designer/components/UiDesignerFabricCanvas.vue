@@ -12,11 +12,11 @@ import {
   createFabricNodeObject,
   disposeFabricNodeObject,
   fabricNodeVisualSignature,
-  positionFabricObjectFromRect,
-  positionFabricTextFromRect,
+  positionFabricNodeFromRect,
   scopeNodes,
   type UiFabricNodeObject,
 } from '../fabric/fabricNodeFactory'
+import { resolveUiContainerLabelLayout } from '../fabric/uiContainerLabel'
 import { useUiDesignerI18n } from '../i18n'
 
 const props = defineProps<{
@@ -44,7 +44,7 @@ const objects = new Map<string, UiFabricNodeObject>()
 const containerLabels = new Map<string, Textbox>()
 
 interface TransformState {
-  action: 'move' | 'scale' | 'rotate'
+  action: 'move' | 'resize' | 'rotate'
   nodeIds: string[]
   subtreeIds: string[]
   origins: Record<string, { x: number; y: number }>
@@ -148,14 +148,10 @@ const syncContainerLabel = (nodeId: string) => {
     containerLabels.set(nodeId, label)
     canvas.add(label)
   }
-  const zoom = Math.max(0.01, props.zoom)
-  const bounds = object.getBoundingRect()
+  const layout = resolveUiContainerLabelLayout(object.getCoords(), props.zoom, node.name)
   label.set({
     text: node.name,
-    left: bounds.left,
-    top: bounds.top - 4 / zoom,
-    width: Math.max(bounds.width, 80 / zoom),
-    fontSize: 12 / zoom,
+    ...layout,
     angle: 0,
     visible: object.visible,
   })
@@ -223,7 +219,7 @@ const startTransform = (event: { transform: { target: FabricObject; action?: str
   const ids = selectionRootNodeIds(props.document, selectedObjectIds(target))
   if (!ids.length) return
   const actionName = event.transform.action ?? ''
-  const action = actionName === 'drag' ? 'move' : actionName.startsWith('rotate') ? 'rotate' : 'scale'
+  const action = actionName === 'drag' ? 'move' : actionName.startsWith('rotate') ? 'rotate' : 'resize'
   const subtreeIds = collectNodeSubtreeIds(props.document, ids)
   const transformIds = action === 'move' ? subtreeIds : ids
   const origins = Object.fromEntries(transformIds.map((id) => {
@@ -261,8 +257,8 @@ const moveObject = (target: FabricObject) => {
     const object = objects.get(id)
     if (!object) continue
     if (selectionMembers?.has(object)) {
-      // fabric moves members with the group and their getBoundingRect() applies
-      // the group transform, so labels can track them without writing geometry.
+      // fabric moves members with the group and getCoords() applies the group
+      // transform, so labels can track them without writing geometry.
       syncContainerLabel(id)
       continue
     }
@@ -283,15 +279,10 @@ const scaleObject = (target: FabricObject, shiftKey: boolean, altKey: boolean, c
   const rect = props.designer.previewNodeResizeWithSnap(node.id, state.originRect, handle, delta, { preserveAspect: shiftKey, fromCenter: altKey })
   if (!rect) return
   const drafts = unwrap(props.designer.draftRects)
-  for (const id of state.subtreeIds) {
-    const draftRect = drafts[id]
-    const object = id === state.nodeId ? target as UiFabricNodeObject : objects.get(id)
-    const draftNode = nodeById(id)
-    if (!draftRect || !object || !draftNode) continue
-    if (draftNode.type === 'text' && object instanceof Textbox) positionFabricTextFromRect(object, draftNode, draftRect)
-    else positionFabricObjectFromRect(object, draftNode, draftRect)
-    if (draftNode.type === 'container') syncContainerLabel(id)
-  }
+  const draftRect = drafts[state.nodeId]
+  if (!draftRect) return
+  positionFabricNodeFromRect(target as UiFabricNodeObject, node, props.document, draftRect)
+  if (node.type === 'container') syncContainerLabel(node.id)
 }
 
 const rotateObject = (target: FabricObject, shiftKey: boolean) => {
@@ -329,7 +320,7 @@ const commitTransform = () => {
   transformState = undefined
   if (!state) return
   if (state.action === 'move') props.designer.commitDraftPositions(state.nodeIds)
-  else if (state.action === 'scale' && state.nodeId) props.designer.commitDraftRect(state.nodeId)
+  else if (state.action === 'resize' && state.nodeId) props.designer.commitDraftRect(state.nodeId)
   else if (state.action === 'rotate' && state.nodeId) props.designer.commitDraftRotation(state.nodeId)
 }
 

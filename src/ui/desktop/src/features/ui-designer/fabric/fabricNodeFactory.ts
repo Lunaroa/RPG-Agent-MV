@@ -2,7 +2,6 @@ import {
   FabricImage,
   type FabricObject,
   Group,
-  Point,
   Rect,
   Shadow,
   Textbox,
@@ -18,12 +17,12 @@ import type {
   UiTextNode,
 } from '@contract/ui-designer'
 import { UI_BUTTON_WINDOW_SKIN_RESOURCE_PATH } from '@contract/ui-designer-resources'
-import { nodeRect } from '../models/geometry'
 import { collectNodeSubtreeIds, resolveTreeOrderRanks } from '../models/tree'
 import { uiDesignerText } from '../i18n'
 import { UiLayoutTextbox } from './uiLayoutTextbox'
 import { UiNineSliceImage } from './uiNineSliceImage'
 import { UiParticleObject } from './uiParticleObject'
+import { resolveUiFabricTextPresentationSync } from './uiFabricTextPresentation'
 import { UiWindowSkinTextbox } from './uiWindowSkinTextbox'
 import { installUiFabricFontFamily, loadUiFabricFont } from './uiFabricFont'
 
@@ -216,6 +215,48 @@ const boundary = (width: number, height: number, options: { fill?: string; strok
   objectCaching: false,
 })
 
+const imageSourceDimensions = (image: FabricImage) => {
+  const source = image.getElement() as CanvasImageSource & { naturalWidth?: number; naturalHeight?: number; videoWidth?: number; videoHeight?: number; width?: number; height?: number }
+  return {
+    width: Math.max(1, source.naturalWidth || source.videoWidth || Number(source.width) || image.width || 1),
+    height: Math.max(1, source.naturalHeight || source.videoHeight || Number(source.height) || image.height || 1),
+  }
+}
+
+const applyImageBounds = (image: FabricImage, width: number, height: number, fillMode: string) => {
+  const source = imageSourceDimensions(image)
+  let cropX = 0
+  let cropY = 0
+  let renderedWidth = source.width
+  let renderedHeight = source.height
+  if (fillMode === 'cover') {
+    const targetRatio = width / height
+    const sourceRatio = source.width / source.height
+    if (sourceRatio > targetRatio) {
+      renderedWidth = source.height * targetRatio
+      cropX = (source.width - renderedWidth) / 2
+    } else if (sourceRatio < targetRatio) {
+      renderedHeight = source.width / targetRatio
+      cropY = (source.height - renderedHeight) / 2
+    }
+  }
+  const widthRatio = width / renderedWidth
+  const heightRatio = height / renderedHeight
+  const scale = fillMode === 'contain' ? Math.min(widthRatio, heightRatio) : 1
+  image.set({
+    left: 0,
+    top: 0,
+    originX: 'center',
+    originY: 'center',
+    width: renderedWidth,
+    height: renderedHeight,
+    cropX,
+    cropY,
+    scaleX: fillMode === 'contain' ? scale : widthRatio,
+    scaleY: fillMode === 'contain' ? scale : heightRatio,
+  })
+}
+
 const clipBoundary = (width: number, height: number) => boundary(width, height, { fill: '#000000' })
 
 const placeholder = (node: UiNode, label: string, fill = '#1d2230') => new Group([
@@ -237,41 +278,12 @@ const placeholder = (node: UiNode, label: string, fill = '#1d2230') => new Group
 
 const imageInBounds = async (node: UiNode, url: string, fillMode: string) => {
   const image = await FabricImage.fromURL(url)
-  const sourceWidth = Math.max(1, image.width)
-  const sourceHeight = Math.max(1, image.height)
-  let cropX = 0
-  let cropY = 0
-  let renderedWidth = sourceWidth
-  let renderedHeight = sourceHeight
-  if (fillMode === 'cover') {
-    const targetRatio = node.props.width / node.props.height
-    const sourceRatio = sourceWidth / sourceHeight
-    if (sourceRatio > targetRatio) {
-      renderedWidth = sourceHeight * targetRatio
-      cropX = (sourceWidth - renderedWidth) / 2
-    } else if (sourceRatio < targetRatio) {
-      renderedHeight = sourceWidth / targetRatio
-      cropY = (sourceHeight - renderedHeight) / 2
-    }
-  }
-  const widthRatio = node.props.width / renderedWidth
-  const heightRatio = node.props.height / renderedHeight
-  const scale = fillMode === 'contain' ? Math.min(widthRatio, heightRatio) : 1
   image.set({
-    left: 0,
-    top: 0,
-    originX: 'center',
-    originY: 'center',
-    width: renderedWidth,
-    height: renderedHeight,
-    cropX,
-    cropY,
-    scaleX: fillMode === 'contain' ? scale : widthRatio,
-    scaleY: fillMode === 'contain' ? scale : heightRatio,
     selectable: false,
     evented: false,
     objectCaching: true,
   })
+  applyImageBounds(image, node.props.width, node.props.height, fillMode)
   return new Group([boundary(node.props.width, node.props.height), image], { objectCaching: false })
 }
 
@@ -421,6 +433,53 @@ const createProgress = (node: Extract<UiNode, { type: 'progressBar' }>) => {
   ], { objectCaching: false })
 }
 
+const applyProgressGeometry = (object: Group, node: Extract<UiNode, { type: 'progressBar' }>) => {
+  const [track, fill] = object.getObjects()
+  if (!(track instanceof Rect) || !(fill instanceof Rect)) return
+  const ratio = Math.max(0, Math.min(1, node.props.maxValue > 0 ? node.props.currentValue / node.props.maxValue : 0))
+  const horizontal = node.props.fillDirection === 'leftToRight' || node.props.fillDirection === 'rightToLeft'
+  const fillWidth = horizontal ? node.props.width * ratio : node.props.width
+  const fillHeight = horizontal ? node.props.height : node.props.height * ratio
+  const directionX = node.props.fillDirection === 'rightToLeft' ? 1 : -1
+  const directionY = node.props.fillDirection === 'bottomToTop' ? 1 : -1
+  track.set({ width: node.props.width, height: node.props.height, rx: node.props.trackRadius, ry: node.props.trackRadius })
+  fill.set({
+    left: horizontal ? directionX * (node.props.width - fillWidth) / 2 : 0,
+    top: horizontal ? 0 : directionY * (node.props.height - fillHeight) / 2,
+    width: Math.max(1, fillWidth),
+    height: Math.max(1, fillHeight),
+    rx: node.props.fillRadius,
+    ry: node.props.fillRadius,
+  })
+}
+
+const applyGroupGeometry = (object: Group, node: UiNode) => {
+  if (node.type === 'progressBar') {
+    applyProgressGeometry(object, node)
+    object.triggerLayout()
+    return
+  }
+  const [frame, content] = object.getObjects()
+  if (frame instanceof Rect) frame.set({ width: node.props.width, height: node.props.height })
+  if (content instanceof FabricImage) {
+    const fillMode = node.type === 'sprite' || node.type === 'frameAnimation'
+      ? node.props.fillMode
+      : node.type === 'container'
+        ? node.props.backgroundFillMode
+        : node.type === 'video'
+          ? 'stretch'
+          : 'contain'
+    applyImageBounds(content, node.props.width, node.props.height, fillMode)
+  } else if (content instanceof Textbox) {
+    content.set({
+      width: Math.max(32, node.props.width - 16),
+      fontSize: Math.max(11, Math.min(16, node.props.height / 4)),
+    })
+    content.initDimensions()
+  }
+  object.triggerLayout()
+}
+
 const createParticle = async (node: UiParticleNode, catalog: UiProjectResourceCatalog | null | undefined) => {
   const particleUrl = previewUrlFor(catalog, node.props.imagePath)
   const imageElement = particleUrl ? await loadFabricImageSource(particleUrl) : undefined
@@ -529,7 +588,18 @@ const applyHierarchyClipPath = (object: UiFabricNodeObject, node: UiNode, docume
 }
 
 export function applyFabricNodeGeometry(object: UiFabricNodeObject, node: UiNode, document: UiDesignerDocument) {
-  if (object instanceof Textbox && (node.type === 'text' || node.type === 'button') && !object.isEditing) applyTextStyle(object, node, object.data.fontFamily, object.data.nativeTextProfile)
+  if (object instanceof Textbox && (node.type === 'text' || node.type === 'button')) {
+    // Clicking the Inspector can leave Fabric's inline editor active even
+    // though its hidden textarea no longer has focus. Inline typing already
+    // changed object.text, while Inspector typing changes the document first.
+    // Sync the latter immediately without disturbing the former's caret.
+    const textSync = resolveUiFabricTextPresentationSync(object.isEditing, object.text, node.props.content)
+    if (textSync.shouldSync) {
+      applyTextStyle(object, node, object.data.fontFamily, object.data.nativeTextProfile)
+      if (object instanceof UiLayoutTextbox) object.initDimensions()
+      if (textSync.syncEditingTextarea && object.hiddenTextarea) object.hiddenTextarea.value = node.props.content
+    }
+  }
   if (object instanceof UiNineSliceImage && node.type === 'nineSlice') {
     object.set({ width: Math.max(1, node.props.width), height: Math.max(1, node.props.height) })
     object.setNineSliceLayout({
@@ -540,6 +610,8 @@ export function applyFabricNodeGeometry(object: UiFabricNodeObject, node: UiNode
     }, node.props.showGuides)
   }
   if (object instanceof UiParticleObject && node.type === 'particle') object.setParticleState(node.props)
+  else if (object instanceof Group) applyGroupGeometry(object, node)
+  else if (object instanceof Rect && node.type !== 'nineSlice') object.set({ width: node.props.width, height: node.props.height })
   object.set({
     ...commonObjectOptions(node, document),
     left: node.props.x,
@@ -554,32 +626,21 @@ export function applyFabricNodeGeometry(object: UiFabricNodeObject, node: UiNode
   object.setCoords()
 }
 
-export function positionFabricObjectFromRect(object: UiFabricNodeObject, node: UiNode, rect: { x: number; y: number; width: number; height: number }) {
-  const baseWidth = Math.max(1, object.width)
-  const baseHeight = Math.max(1, object.height)
-  object.set({ scaleX: rect.width / baseWidth, scaleY: rect.height / baseHeight, flipX: false, flipY: false })
-  object.setPositionByOrigin(new Point(rect.x + rect.width * node.props.anchorX, rect.y + rect.height * node.props.anchorY), node.props.anchorX, node.props.anchorY)
-  object.setCoords()
-}
-
-/**
- * Preview a text resize by reflowing at a scaled font size instead of stretching
- * glyphs through object scale. The committed font size lands in commitDraftRect.
- */
-export function positionFabricTextFromRect(object: UiFabricNodeObject, node: UiTextNode, rect: { x: number; y: number; width: number; height: number }) {
-  const baseHeight = Math.max(1, nodeRect(node).height)
-  object.set({
-    scaleX: 1,
-    scaleY: 1,
-    flipX: false,
-    flipY: false,
-    width: Math.max(20, rect.width),
-    fontSize: Math.max(1, node.props.fontSize * (rect.height / baseHeight)),
-    ...(object instanceof UiLayoutTextbox ? { layoutHeight: Math.max(20, rect.height) } : {}),
-  })
-  if (object instanceof Textbox) object.initDimensions()
-  object.setPositionByOrigin(new Point(rect.x + rect.width * node.props.anchorX, rect.y + rect.height * node.props.anchorY), node.props.anchorX, node.props.anchorY)
-  object.setCoords()
+export function positionFabricNodeFromRect(object: UiFabricNodeObject, node: UiNode, document: UiDesignerDocument, rect: { x: number; y: number; width: number; height: number }) {
+  const scaleX = Math.max(Math.abs(Number.isFinite(node.props.scaleX) ? node.props.scaleX : 1), 0.0001)
+  const scaleY = Math.max(Math.abs(Number.isFinite(node.props.scaleY) ? node.props.scaleY : 1), 0.0001)
+  const draftNode = {
+    ...node,
+    props: {
+      ...node.props,
+      x: rect.x + rect.width * node.props.anchorX,
+      y: rect.y + rect.height * node.props.anchorY,
+      width: rect.width / scaleX,
+      height: rect.height / scaleY,
+    },
+  } as UiNode
+  const draftDocument = { ...document, nodes: document.nodes.map((candidate) => candidate.id === node.id ? draftNode : candidate) }
+  applyFabricNodeGeometry(object, draftNode, draftDocument)
 }
 
 export function animateFabricNode(object: UiFabricNodeObject, node: UiNode, elapsedMs: number) {

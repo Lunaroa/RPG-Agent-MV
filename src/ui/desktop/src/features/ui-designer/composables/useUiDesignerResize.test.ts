@@ -62,13 +62,13 @@ test('resize stays continuous regardless of grid and snap settings while modifie
   assert.equal(centered.height, origin.height + 10)
 })
 
-test('resizing a container scales its whole subtree in the same transaction', () => {
+test('resizing a container changes only the container dimensions', () => {
   const designer = useUiDesigner()
   const containerId = designer.addNode('container', 'node_root', { x: 240, y: 180 })!
   const childId = designer.addNode('sprite', containerId, { x: 264, y: 212 })!
   const container = designer.document.value.nodes.find((candidate) => candidate.id === containerId)!
   const child = designer.document.value.nodes.find((candidate) => candidate.id === childId)!
-  const childBefore = { rotate: child.props.rotate, scaleX: child.props.scaleX, scaleY: child.props.scaleY }
+  const childBefore = { ...child.props }
   const origin = nodeRect(container)
 
   const preview = designer.previewNodeResizeWithSnap(
@@ -78,13 +78,33 @@ test('resizing a container scales its whole subtree in the same transaction', ()
     { x: 72, y: 36 },
     { preserveAspect: false, fromCenter: false },
   )!
-  assert.deepEqual(designer.draftRects.value[childId], { x: 271, y: 219, width: 208, height: 98 })
+  assert.equal(designer.draftRects.value[childId], undefined)
   assert.equal(designer.commitDraftRect(containerId), true)
 
   const containerAfter = designer.document.value.nodes.find((candidate) => candidate.id === containerId)!
   const childAfter = designer.document.value.nodes.find((candidate) => candidate.id === childId)!
   assert.deepEqual(nodeRect(containerAfter), preview)
-  assert.deepEqual([childAfter.props.x, childAfter.props.y, childAfter.props.width, childAfter.props.height], [271, 219, 208, 98])
-  assert.deepEqual([childAfter.props.rotate, childAfter.props.scaleX, childAfter.props.scaleY], [childBefore.rotate, childBefore.scaleX, childBefore.scaleY])
+  assert.deepEqual(childAfter.props, childBefore)
   assert.equal(designer.draftRects.value[childId], undefined)
+})
+
+test('resizing text preserves font size and explicit scale', () => {
+  const designer = useUiDesigner()
+  const nodeId = designer.addNode('text', 'node_root', { x: 80, y: 60 })!
+  const node = designer.document.value.nodes.find((candidate) => candidate.id === nodeId)!
+  if (node.type !== 'text') throw new Error('expected text node')
+  node.props.fontSize = 31
+  node.props.scaleX = 1.5
+  node.props.scaleY = 0.75
+  const origin = nodeRect(node)
+
+  designer.previewNodeResizeWithSnap(nodeId, origin, 'se', { x: 60, y: 30 }, { preserveAspect: false, fromCenter: false })
+  assert.equal(designer.commitDraftRect(nodeId), true)
+
+  const resized = designer.document.value.nodes.find((candidate) => candidate.id === nodeId)!
+  assert.equal(resized.type, 'text')
+  if (resized.type !== 'text') return
+  assert.equal(resized.props.fontSize, 31)
+  assert.equal(resized.props.scaleX, 1.5)
+  assert.equal(resized.props.scaleY, 0.75)
 })

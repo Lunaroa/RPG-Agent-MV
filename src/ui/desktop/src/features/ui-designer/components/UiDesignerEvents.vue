@@ -41,7 +41,6 @@ const builtinScenes = computed(() => UI_DESIGNER_BUILTIN_SCENE_NAMES.map((name) 
 const knownSceneTargets = computed(() => new Set([...openedScenes.value, ...projectScenes.value, ...builtinScenes.value].map((option) => option.value)))
 const conditionLabels: Record<'switch' | 'variable' | 'code', UiDesignerMessageKey> = { switch: 'conditionSwitchOn', variable: 'conditionVariable', code: 'conditionCode' }
 const easingLabels: Record<'Linear' | 'EaseIn' | 'EaseOut' | 'EaseInOut' | 'Bounce', UiDesignerMessageKey> = { Linear: 'easingLinear', EaseIn: 'easingEaseIn', EaseOut: 'easingEaseOut', EaseInOut: 'easingEaseInOut', Bounce: 'easingBounce' }
-const switchLabels: Record<'on' | 'off' | 'toggle', UiDesignerMessageKey> = { on: 'switchOn', off: 'switchOff', toggle: 'switchToggle' }
 const unwrap = <T,>(value: T | Ref<T>): T => isRef(value) ? value.value : value
 const validation = computed<UiValidationReport>(() => unwrap(designer.validation))
 const scriptCompletionItems = computed(() => [...UI_DESIGNER_NODE_SCRIPT_COMPLETIONS, ...designer.document.nodes.flatMap((node) => [node.id, node.name])])
@@ -94,6 +93,9 @@ const removeCondition = (index: number) => { flushDraftContext(); updateAction(i
 const updateCondition = (index: number, patch: Partial<NonNullable<UiEventAction['condition']>>) => {
   const condition = actions.value[index]?.condition
   if (condition) updateAction(index, { condition: { ...condition, ...patch } })
+}
+const updateSwitchValue = (index: number, value: unknown) => {
+  if (value === 'on' || value === 'off') updateAction(index, { switchVal: value })
 }
 const setConditionType = (index: number, type: NonNullable<UiEventAction['condition']>['type']) => {
   flushDraftContext()
@@ -179,9 +181,22 @@ const sceneTargetKnown = (action: UiEventAction) => {
           <el-select :model-value="actionField(action, 'variableOp')" size="small" @update:model-value="updateAction(index, { variableOp: $event })"><el-option v-for="operator in ['=', '+', '-', '*', '/']" :key="operator" :label="operator" :value="operator" /></el-select>
           <el-input-number :model-value="Number(actionField(action, 'variableVal'))" :min="0" size="small" @update:model-value="updateAction(index, { variableVal: $event ?? 0 })" />
         </div>
-        <div v-else-if="action.type === 'setSwitch'" class="action-params">
+        <div v-else-if="action.type === 'setSwitch'" class="set-switch-params">
           <UiNamedEntryField kind="switch" :model-value="Number(actionField(action, 'switchId'))" :ui-id="`ui-designer-event-${activeEvent}-${index}-switch`" @update:model-value="updateAction(index, { switchId: $event })" />
-          <el-select :model-value="actionField(action, 'switchVal')" size="small" @update:model-value="updateAction(index, { switchVal: $event })"><el-option v-for="value in ['on', 'off', 'toggle']" :key="value" :label="t(switchLabels[value as keyof typeof switchLabels])" :value="value" /></el-select>
+          <el-switch
+            v-if="actionField(action, 'switchVal') !== 'toggle'"
+            :model-value="actionField(action, 'switchVal')"
+            active-value="on"
+            inactive-value="off"
+            inline-prompt
+            :active-text="t('switchOn')"
+            :inactive-text="t('switchOff')"
+            @update:model-value="updateSwitchValue(index, $event)"
+          />
+          <el-dropdown v-else trigger="click" @command="updateSwitchValue(index, $event)">
+            <el-button size="small" plain>{{ t('switchToggle') }}</el-button>
+            <template #dropdown><el-dropdown-menu><el-dropdown-item command="on">{{ t('switchOn') }}</el-dropdown-item><el-dropdown-item command="off">{{ t('switchOff') }}</el-dropdown-item></el-dropdown-menu></template>
+          </el-dropdown>
         </div>
         <div v-else-if="action.type === 'tweenProp'" class="action-params">
           <el-input :model-value="actionField(action, 'tweenNodeId')" size="small" :placeholder="t('nodeIdPlaceholder')" @update:model-value="updateAction(index, { tweenNodeId: $event })" />
@@ -221,6 +236,9 @@ const sceneTargetKnown = (action: UiEventAction) => {
 .action-card { display: flex; flex-direction: column; gap: 6px; padding: 7px; border: 1px solid var(--app-border); border-radius: 5px; background: color-mix(in srgb, var(--app-bg) 88%, var(--app-accent) 12%); }
 .action-head { display: flex; align-items: center; gap: 5px; color: var(--app-ink-soft); font-size: 10px; }
 .action-head .el-select { flex: 1; }
+.set-switch-params { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.set-switch-params > :first-child { flex: 1; min-width: 0; }
+.set-switch-params > .el-switch, .set-switch-params > .el-dropdown { flex: none; }
 .hint { margin: 2px 0 0; color: var(--app-ink-soft); font-size: 10px; line-height: 1.4; }
 .action-warning { margin: 0; color: var(--el-color-warning); font-size: 10px; }
 .action-resource-control { min-width: 0; }.action-resource-control > * { width: 100%; min-width: 0; }

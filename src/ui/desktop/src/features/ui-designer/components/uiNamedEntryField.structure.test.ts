@@ -39,6 +39,9 @@ test('switch and variable references show names through the system entry selecto
   }
   assert.match(conditions, /kind="switch"/)
   assert.match(conditions, /kind="variable"/)
+  assert.match(events, /class="set-switch-params"[\s\S]*kind="switch"[\s\S]*<el-switch/)
+  assert.match(events, /actionField\(action, 'switchVal'\) !== 'toggle'/)
+  assert.doesNotMatch(events, /action\.type === 'setSwitch'[\s\S]{0,500}<el-select/)
   assert.match(events, /ui-designer-event-\$\{activeEvent\}-\$\{index\}-variable/)
   assert.match(events, /ui-designer-event-\$\{activeEvent\}-\$\{index\}-switch/)
   assert.match(settings, /allow-none/)

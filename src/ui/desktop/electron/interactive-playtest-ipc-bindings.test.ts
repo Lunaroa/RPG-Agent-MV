@@ -218,4 +218,32 @@ describe('interactive playtest IPC bindings', () => {
       /does not accept Battle Test field/i,
     );
   });
+
+  test('passes the current UI designer scene only to isolated UI scene preview', async () => {
+    const starts: Array<{ project: string; options: Record<string, unknown> }> = [];
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    registerInteractivePlaytestIpcHandlers({
+      handle: (channel, listener) => { handlers.set(channel, listener); },
+      removeHandler: () => undefined,
+    }, {
+      start: async (project, options) => { starts.push({ project, options }); return { confirmationRequired: false }; },
+      current: () => ({ confirmationRequired: false }),
+      runtimeInfo: () => ({ engine: 'rpg-maker-mv', source: 'project-local', executable: 'Game.exe', configurable: false, status: 'ready' }),
+      stop: async () => ({ confirmationRequired: false }),
+    }, {
+      getLastProject: () => '',
+      resolveProject: (project) => project,
+      resolveSession: () => undefined,
+      revealEvidence: () => undefined,
+      selectRuntime: async (_event, request) => ({ canceled: true, engine: request.engine, configured: false }),
+    });
+    const uiScene = { version: '1.1.0', meta: { sceneName: 'Scene_Sample' } };
+
+    await handlers.get('playtest:start')?.(null, { project: 'sample', mode: 'ui_designer_scene', uiScene });
+    assert.deepEqual(starts[0]?.options, { mode: 'ui_designer_scene', uiScene });
+    await assert.rejects(
+      () => handlers.get('playtest:start')?.(null, { project: 'sample', mode: 'project', uiScene }),
+      /project does not accept uiScene/,
+    );
+  });
 });

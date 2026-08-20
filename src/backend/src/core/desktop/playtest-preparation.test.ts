@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 
 import type { InteractiveParticleAnimationPreview } from '../../../../contract/types.ts';
+import type { UiRuntimeSceneExport } from '../../../../contract/ui-designer.ts';
 import { writeJson } from '../rmmv/json.ts';
 import { RPG_MAKER_MZ_ENGINE_FILES } from '../rmmv/rpg-maker-engine.ts';
 import { cleanupIsolatedProject } from './isolated-project-preparation.ts';
@@ -14,6 +15,7 @@ import {
   PreparationWorkerError,
   prepareBattleTestInWorker,
   prepareParticlePreviewInWorker,
+  prepareUiDesignerGamePreviewInWorker,
   prepareUiDesignerRendererInWorker,
 } from './playtest-preparation.ts';
 
@@ -84,6 +86,26 @@ describe('playtest preparation worker host', { concurrency: false }, () => {
       assert.equal(preparation.sourceAccessMode, 'protocol-read-only');
       assert.equal(fs.existsSync(path.join(preparation.temporaryProject, 'data')), false);
       assert.equal(fs.existsSync(path.join(preparation.temporaryProject, 'js')), false);
+    } finally {
+      cleanupIsolatedProject(preparation);
+    }
+  });
+
+  test('prepares a UI designer game preview with deterministic scene registration in the worker', async () => {
+    fs.writeFileSync(path.join(project, 'js', 'plugins.js'), 'var $plugins = [];\n', 'utf8');
+    const preparation = await prepareUiDesignerGamePreviewInWorker(root, project, uiDesignerScene());
+    try {
+      const launcher = fs.readFileSync(
+        path.join(preparation.temporaryProject, 'js', 'plugins', 'RpgAgentUiDesignerPreview.js'),
+        'utf8',
+      );
+      const pluginsSource = fs.readFileSync(path.join(preparation.temporaryProject, 'js', 'plugins.js'), 'utf8');
+      const plugins = JSON.parse(pluginsSource.slice(pluginsSource.indexOf('['), pluginsSource.lastIndexOf(']') + 1));
+
+      assert.equal(preparation.sceneName, 'Scene_Sample');
+      assert.match(launcher, /runtime\.registerScene\(sceneName, scene\.meta\.sceneBase, scene\)/);
+      assert.match(launcher, /current unsaved state/);
+      assert.equal(plugins.find((entry: { name: string }) => entry.name === 'MZUIRuntime').parameters.AutoRegister, 'false');
     } finally {
       cleanupIsolatedProject(preparation);
     }
@@ -170,6 +192,19 @@ function animation(): InteractiveParticleAnimationPreview {
     alignBottom: false,
     flashTimings: [],
     soundTimings: [],
+  };
+}
+
+function uiDesignerScene(): UiRuntimeSceneExport {
+  return {
+    version: '1.1.0',
+    runtimeVersion: '>=1.1.0',
+    meta: { sceneName: 'Scene_Sample', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624, author: '', description: 'current unsaved state' },
+    transitions: { enter: { type: 'fade', duration: 300 }, exit: { type: 'fade', duration: 300 } },
+    globalFilter: { blur: 0, glow: 0, preset: '' },
+    nodes: [],
+    zOrder: [],
+    sceneScript: { version: '1.1.0', source: '' },
   };
 }
 

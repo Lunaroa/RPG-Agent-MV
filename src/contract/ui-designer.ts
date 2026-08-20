@@ -983,6 +983,18 @@ export interface UiDesignerRendererHostAdapter {
   syncResources?(request: Omit<UiDesignerRendererResourceSyncRequest, 'project'>): Promise<UiFileResult<UiDesignerRendererResourceSyncResult>>
 }
 
+export interface UiDesignerGamePreviewSession {
+  runId: string
+  status: import('./types.ts').InteractivePlaytestRunStatus
+  error?: string
+}
+
+export interface UiDesignerGamePreviewAdapter {
+  start(projectPath: string, scene: UiRuntimeSceneExport): Promise<UiFileResult<UiDesignerGamePreviewSession>>
+  stop(): Promise<UiFileResult<UiDesignerGamePreviewSession | null>>
+  onStatus?(callback: (session: UiDesignerGamePreviewSession) => void): () => void
+}
+
 export interface UiCodeEditorAdapter {
   available: boolean
   label: string
@@ -1027,6 +1039,7 @@ export interface UiDesignerAdapterBundle {
   resource?: UiDesignerResourceAdapter
   runtime?: UiDesignerRuntimeAdapter
   rendererHost?: UiDesignerRendererHostAdapter
+  gamePreview?: UiDesignerGamePreviewAdapter
   code?: UiCodeEditorAdapter
   lifecycle?: UiDesignerLifecycleAdapter
 }

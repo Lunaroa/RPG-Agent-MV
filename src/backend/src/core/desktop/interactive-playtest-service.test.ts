@@ -13,6 +13,8 @@ import {
 } from './interactive-playtest-service.ts';
 import type { BattleTestProjectPreparation } from './battle-test-preparation.ts';
 import type { ParticleAnimationPreviewPreparation } from './particle-animation-preview-preparation.ts';
+import type { UiDesignerGamePreviewPreparation } from './ui-designer-game-preview-preparation.ts';
+import type { UiRuntimeSceneExport } from '../../../../contract/ui-designer.ts';
 
 describe('interactive desktop playtest lifecycle', { concurrency: false }, () => {
   let root: string;
@@ -489,6 +491,41 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     assert.equal(cleanupCalls, 1);
   });
 
+  test('launches the current UI designer scene from an isolated project without staging confirmation', async () => {
+    const child = new FakeChild();
+    const spawnCalls: Array<{ executable: string; args: readonly string[]; options: InteractivePlaytestSpawnOptions }> = [];
+    const isolated = createUiDesignerPreparation(project);
+    let cleanupCalls = 0;
+    const service = createService(root, {
+      child,
+      spawnCalls,
+      stagingStatus: () => stagedStatus('unrelated-staged-draft'),
+      prepareUiDesignerPreview: () => isolated,
+      verifyIsolatedSource: () => ({ sourceUnchanged: true, savesUnchanged: true, stagingUnchanged: true }),
+      cleanupIsolated: (preparation) => {
+        cleanupCalls += 1;
+        fs.rmSync(preparation.temporaryProject, { recursive: true, force: true });
+      },
+    });
+
+    const starting = service.start(project, { mode: 'ui_designer_scene', uiScene: uiDesignerScene() });
+    queueMicrotask(() => child.emitSpawn());
+    const running = await starting;
+    assert.equal(running.confirmationRequired, false);
+    assert.equal(running.run?.mode, 'ui_designer_scene');
+    assert.equal(running.run?.sceneName, 'Scene_Sample');
+    assert.equal(running.run?.temporaryProject, true);
+    assert.equal(running.run?.sourceSaveRisk, false);
+    assert.equal(spawnCalls[0].executable, isolated.executable);
+    assert.deepEqual(spawnCalls[0].args, []);
+    assert.equal(spawnCalls[0].options.cwd, isolated.temporaryProject);
+
+    child.emitExit(0, null);
+    assert.equal(service.current().run?.status, 'exited');
+    assert.equal(service.current().run?.temporaryProjectCleaned, true);
+    assert.equal(cleanupCalls, 1);
+  });
+
   test('redacts the project-local MZ executable path from launch failures and logs', async () => {
     const child = new FakeChild();
     const localRuntime = path.join(project, 'Game.exe');
@@ -582,6 +619,7 @@ function createService(workflowRoot: string, options: {
   forceKill?: InteractivePlaytestDependencies['forceKillProcessTree'];
   prepareBattleTest?: InteractivePlaytestDependencies['prepareBattleTest'];
   prepareParticlePreview?: InteractivePlaytestDependencies['prepareParticlePreview'];
+  prepareUiDesignerPreview?: InteractivePlaytestDependencies['prepareUiDesignerPreview'];
   verifyIsolatedSource?: InteractivePlaytestDependencies['verifyIsolatedSource'];
   cleanupIsolated?: InteractivePlaytestDependencies['cleanupIsolated'];
   inspectProject?: InteractivePlaytestDependencies['inspectProject'];
@@ -638,6 +676,7 @@ function createService(workflowRoot: string, options: {
     forceKillProcessTree: options.forceKill || (async () => ({ ok: true })),
     ...(options.prepareBattleTest ? { prepareBattleTest: options.prepareBattleTest } : {}),
     ...(options.prepareParticlePreview ? { prepareParticlePreview: options.prepareParticlePreview } : {}),
+    ...(options.prepareUiDesignerPreview ? { prepareUiDesignerPreview: options.prepareUiDesignerPreview } : {}),
     ...(options.verifyIsolatedSource ? { verifyIsolatedSource: options.verifyIsolatedSource } : {}),
     ...(options.cleanupIsolated ? { cleanupIsolated: options.cleanupIsolated } : {}),
     randomUUID: () => '00000000-0000-4000-8000-000000000001',
@@ -682,6 +721,36 @@ function createParticlePreparation(sourceProject: string): ParticleAnimationPrev
     engine: 'rpg-maker-mz',
     appDirectory,
     effectName: 'fx/Spark',
+  };
+}
+
+function createUiDesignerPreparation(sourceProject: string): UiDesignerGamePreviewPreparation {
+  const temporaryProject = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-designer-preview-copy-'));
+  const executable = path.join(temporaryProject, 'Game.exe');
+  fs.writeFileSync(executable, 'isolated runner', 'utf8');
+  return {
+    sourceProject,
+    temporaryProject,
+    sourceFingerprint: 'source-hash',
+    saveFingerprint: 'save-hash',
+    staging: { files: [], digest: 'staging-hash' },
+    savesExcluded: true,
+    engine: 'rpg-maker-mv',
+    executable,
+    sceneName: 'Scene_Sample',
+  };
+}
+
+function uiDesignerScene(): UiRuntimeSceneExport {
+  return {
+    version: '1.1.0',
+    runtimeVersion: '>=1.1.0',
+    meta: { sceneName: 'Scene_Sample', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624, author: '', description: '' },
+    transitions: { enter: { type: 'fade', duration: 300 }, exit: { type: 'fade', duration: 300 } },
+    globalFilter: { blur: 0, glow: 0, preset: '' },
+    nodes: [],
+    zOrder: [],
+    sceneScript: { version: '1.1.0', source: '' },
   };
 }
 

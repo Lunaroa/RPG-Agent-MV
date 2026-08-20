@@ -4,11 +4,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { InteractiveParticleAnimationPreview } from '../../../../contract/types.ts';
+import type { UiRuntimeSceneExport } from '../../../../contract/ui-designer.ts';
 import type {
   BattleTestConfiguration,
   BattleTestProjectPreparation,
 } from './battle-test-preparation.ts';
 import type { ParticleAnimationPreviewPreparation } from './particle-animation-preview-preparation.ts';
+import type { UiDesignerGamePreviewPreparation } from './ui-designer-game-preview-preparation.ts';
 import type {
   PlaytestPreparationWorkerRequest,
   PlaytestPreparationWorkerResponse,
@@ -235,11 +237,28 @@ async function runPreparationWorker(
   }
 }
 
+export async function prepareUiDesignerGamePreviewInWorker(
+  workflowRoot: string,
+  project: string,
+  scene: UiRuntimeSceneExport,
+  dependencies: PlaytestPreparationHostDependencies = {},
+): Promise<UiDesignerGamePreviewPreparation> {
+  const challenge = createOwnedEmptyIsolatedProject(project, { temporaryPrefix: 'rmmv-agent-ui-preview-' });
+  const preparation = await runOwnedPreparationWorker(challenge, {
+    operation: 'ui_designer_scene',
+    workflowRoot: path.resolve(workflowRoot),
+    project: path.resolve(project),
+    ownershipChallenge: challenge,
+    scene,
+  }, dependencies);
+  return preparation as UiDesignerGamePreviewPreparation;
+}
+
 async function runOwnedPreparationWorker(
   challenge: IsolatedProjectOwnershipChallenge,
   request: PlaytestPreparationWorkerRequest,
   dependencies: PlaytestPreparationHostDependencies,
-): Promise<BattleTestProjectPreparation | ParticleAnimationPreviewPreparation | IsolatedProjectPreparation> {
+): Promise<BattleTestProjectPreparation | ParticleAnimationPreviewPreparation | UiDesignerGamePreviewPreparation | IsolatedProjectPreparation> {
   try {
     const preparation = await runPreparationWorker(request, dependencies);
     return attestIsolatedPreparationResponse(challenge, preparation);

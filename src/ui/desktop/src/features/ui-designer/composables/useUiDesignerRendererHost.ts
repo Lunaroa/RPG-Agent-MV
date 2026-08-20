@@ -220,6 +220,7 @@ export interface UiDesignerRendererHostOptions {
   runtimeScene: () => UiRuntimeSceneExport
   executionMode: () => UiDesignerRendererExecutionMode
   active?: () => boolean
+  postMessage?: (message: UiDesignerRendererBridgeMessage) => boolean
   onExecutionModeReady?: (mode: UiDesignerRendererExecutionMode) => void
   onExecutionModeError?: (message: string, cleanupPending?: boolean) => void
   onPreviewExitRequest?: (key: 'Escape' | 'F6' | 'action-exit') => void
@@ -398,9 +399,17 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     catch { return '' }
   }
 
+  const postToFrame = (message: UiDesignerRendererBridgeMessage) => {
+    if (!options.iframe.value?.contentWindow) throw new Error('The isolated UI canvas frame is unavailable for an active renderer session.')
+    if (options.postMessage) {
+      if (!options.postMessage(message)) throw new Error('The isolated UI canvas preview window rejected a renderer message.')
+      return
+    }
+    options.iframe.value.contentWindow.postMessage(message, '*')
+  }
+
   const post = (kind: UiDesignerRendererBridgeMessage['kind'], payload: Record<string, unknown>, sceneId = activeSceneId()) => {
     if (!session) return false
-    if (!options.iframe.value?.contentWindow) throw new Error('The isolated UI canvas frame is unavailable for an active renderer session.')
     const message = validateUiDesignerRendererBridgeMessage({
       version: UI_DESIGNER_RENDERER_BRIDGE_VERSION,
       sessionId: session.sessionId,
@@ -410,7 +419,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       kind,
       payload,
     })
-    options.iframe.value.contentWindow.postMessage(message, '*')
+    postToFrame(message)
     return true
   }
 
@@ -852,7 +861,6 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
     payload: Record<string, unknown>,
     sceneId: string,
   ) => {
-    if (!options.iframe.value?.contentWindow) throw new Error('The isolated UI canvas frame is unavailable for an active renderer session.')
     const message = validateUiDesignerRendererBridgeMessage({
       version: UI_DESIGNER_RENDERER_BRIDGE_VERSION,
       sessionId: active.sessionId,
@@ -862,7 +870,7 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       kind,
       payload,
     })
-    options.iframe.value.contentWindow.postMessage(message, '*')
+    postToFrame(message)
     return true
   }
 
@@ -1449,5 +1457,5 @@ export function useUiDesignerRendererHost(options: UiDesignerRendererHostOptions
       })
   })
 
-  return { status, error, failureCode, failureRecoveryReason, failureDetails, iframeUrl, bounds, diagnostics, executionMode, executionModeReady, stage, stageStatus, scenePhase, requestedScene, actualScene, engineSceneClass, mountedDocumentSceneId, documentSceneName, mountedRevision, mountedExecutionMode, onIframeLoad, onIframeError, retry, refreshCanvas, dispose }
+  return { status, error, failureCode, failureRecoveryReason, failureDetails, iframeUrl, bounds, diagnostics, executionMode, executionModeReady, stage, stageStatus, scenePhase, requestedScene, actualScene, engineSceneClass, mountedDocumentSceneId, documentSceneName, mountedRevision, mountedExecutionMode, onWindowMessage: onMessage, onIframeLoad, onIframeError, retry, refreshCanvas, dispose }
 }

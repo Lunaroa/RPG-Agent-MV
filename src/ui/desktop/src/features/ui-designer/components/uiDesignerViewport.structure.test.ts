@@ -16,17 +16,16 @@ test('canvas viewport compiles with one native-scroll navigation model', () => {
   assert.doesNotMatch(source, /designer\.pan\(\{ x: event\.clientX/)
 })
 
-test('Space release ends only the Space gesture and preview never inherits authoring scroll', () => {
+test('Space release ends only the Space gesture and external preview leaves authoring scroll untouched', () => {
   assert.match(source, /mode: spaceDrag \? 'space' : 'middle'/)
   assert.match(source, /if \(panning\.value\?\.mode === 'space'\) endPan\(\)/)
-  assert.match(source, /if \(isPreviewing\) authoringScroll = \{ x: element\.scrollLeft, y: element\.scrollTop \}/)
-  assert.match(source, /element\.scrollLeft = isPreviewing \? 0 : authoringScroll\.x/)
-  assert.match(source, /element\.scrollTop = isPreviewing \? 0 : authoringScroll\.y/)
+  assert.doesNotMatch(source, /authoringScroll|previewing/)
+  assert.match(source, /previewWindowHandle = openUiDesignerPreviewWindow/)
 })
 
 test('keeps drag pan available when the canvas fits the viewport', () => {
-  assert.match(source, /previewing\.value \? 0 : canvasPanRoom\(viewportSize\.value\.width\)/)
-  assert.match(source, /previewing\.value \? 0 : canvasPanRoom\(viewportSize\.value\.height\)/)
+  assert.match(source, /canvasPanRoom\(viewportSize\.value\.width\)/)
+  assert.match(source, /canvasPanRoom\(viewportSize\.value\.height\)/)
   assert.match(source, /element\.scrollLeft = scrollLayout\.value\.centerScrollX/)
   assert.match(source, /\.canvas-viewport::-webkit-scrollbar \{ display: none; \}/)
   assert.doesNotMatch(source, /scrollLeft = 0; element\.scrollTop = 0/)

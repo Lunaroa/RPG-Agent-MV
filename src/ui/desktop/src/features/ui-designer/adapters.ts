@@ -12,6 +12,7 @@ import type {
   UiDesignerRuntimeAdapter,
   UiDesignerRuntimeStageResult,
   UiDesignerRendererHostAdapter,
+  UiDesignerGamePreviewAdapter,
   UiDesignerRendererHostSession,
   UiDesignerRendererResourceSyncResult,
   UiDesignerSceneDataReadResult,
@@ -129,6 +130,11 @@ export const unavailableRendererHostAdapter: UiDesignerRendererHostAdapter = {
   async syncResources() { return unavailable('The isolated UI canvas renderer resource synchronizer is not connected.') },
 }
 
+export const unavailableGamePreviewAdapter: UiDesignerGamePreviewAdapter = {
+  async start() { return unavailable('Select an RPG Maker project before starting game preview.') },
+  async stop() { return unavailable('The isolated game preview is not connected.') },
+}
+
 function asResult<T>(value: unknown, fallbackMessage: string): UiFileResult<T> {
   if (value && typeof value === 'object') {
     const result = value as Record<string, unknown>
@@ -233,7 +239,33 @@ export function createDesktopUiDesignerAdapters(projectPath?: string, lifecycle?
       return asResult<UiDesignerRendererResourceSyncResult>(await api.uiDesigner.syncRendererResources({ ...request, project: projectPath }), 'Renderer resources could not be synchronized.')
     },
   }
-  return { file, project, resource, runtime, rendererHost, code: codeMirrorAdapter, lifecycle }
+  const gamePreview: UiDesignerGamePreviewAdapter = {
+    async start(project, scene) {
+      for (;;) {
+        const result = await api.playtest.start({ project: project.trim(), mode: 'ui_designer_scene', uiScene: scene })
+        if (result.runtimeSelectionRequired) {
+          const selection = await api.playtest.selectRuntime(result.runtimeSelectionRequired)
+          if (selection.canceled) return { status: 'idle', message: 'Game preview canceled.' }
+          continue
+        }
+        if (result.error) return { status: 'error', message: result.error }
+        if (!result.run || result.run.mode !== 'ui_designer_scene') return { status: 'error', message: 'Game preview did not return an isolated UI scene run.' }
+        return { status: 'success', value: { runId: result.run.runId, status: result.run.status, ...(result.run.error ? { error: result.run.error } : {}) }, message: 'Game preview started.' }
+      }
+    },
+    async stop() {
+      const result = await api.playtest.stop()
+      if (result.error) return { status: 'error', message: result.error }
+      if (!result.run || result.run.mode !== 'ui_designer_scene') return { status: 'success', value: null, message: 'Game preview stopped.' }
+      return { status: 'success', value: { runId: result.run.runId, status: result.run.status, ...(result.run.error ? { error: result.run.error } : {}) }, message: 'Game preview stopped.' }
+    },
+    onStatus(callback) {
+      return api.playtest.onStatus((run) => {
+        if (run.mode === 'ui_designer_scene') callback({ runId: run.runId, status: run.status, ...(run.error ? { error: run.error } : {}) })
+      })
+    },
+  }
+  return { file, project, resource, runtime, rendererHost, gamePreview, code: codeMirrorAdapter, lifecycle }
 }
 
 export const codeMirrorAdapter: UiCodeEditorAdapter = {
@@ -310,13 +342,14 @@ export const codeMirrorAdapter: UiCodeEditorAdapter = {
   },
 }
 
-export function createUiDesignerAdapters(overrides: UiDesignerAdapterBundle = {}): Required<Pick<UiDesignerAdapterBundle, 'file' | 'project' | 'resource' | 'runtime' | 'rendererHost' | 'code'>> & Pick<UiDesignerAdapterBundle, 'lifecycle'> {
+export function createUiDesignerAdapters(overrides: UiDesignerAdapterBundle = {}): Required<Pick<UiDesignerAdapterBundle, 'file' | 'project' | 'resource' | 'runtime' | 'rendererHost' | 'gamePreview' | 'code'>> & Pick<UiDesignerAdapterBundle, 'lifecycle'> {
   return {
     file: overrides.file ?? unavailableFileAdapter,
     project: overrides.project ?? unavailableProjectAdapter,
     resource: overrides.resource ?? unavailableResourceAdapter,
     runtime: overrides.runtime ?? unavailableRuntimeAdapter,
     rendererHost: overrides.rendererHost ?? unavailableRendererHostAdapter,
+    gamePreview: overrides.gamePreview ?? unavailableGamePreviewAdapter,
     code: overrides.code ?? codeMirrorAdapter,
     lifecycle: overrides.lifecycle,
   }

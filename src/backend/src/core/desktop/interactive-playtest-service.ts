@@ -14,6 +14,7 @@ import type {
   InteractivePlaytestRuntimeInfo,
   InteractivePlaytestStagingSummary,
 } from '../../../../contract/types.ts';
+import type { UiRuntimeSceneExport } from '../../../../contract/ui-designer.ts';
 import { writeJsonAtomic } from '../rmmv/json.ts';
 import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import type { RpgMakerEngine } from '../rmmv/rpg-maker-engine.ts';
@@ -42,6 +43,10 @@ import {
   type InteractiveProjectRuntime,
   type InteractiveProjectRuntimeResolution,
 } from './interactive-playtest-runtime.ts';
+import {
+  prepareUiDesignerGamePreviewProject,
+  type UiDesignerGamePreviewPreparation,
+} from './ui-designer-game-preview-preparation.ts';
 
 export interface InteractivePlaytestStream extends EventEmitter {
   on(event: 'data', listener: (chunk: Buffer | string) => void): this;
@@ -87,6 +92,11 @@ export interface InteractivePlaytestDependencies {
     project: string,
     animation: InteractiveParticleAnimationPreview,
   ) => ParticleAnimationPreviewPreparation | Promise<ParticleAnimationPreviewPreparation>;
+  prepareUiDesignerPreview: (
+    workflowRoot: string,
+    project: string,
+    scene: UiRuntimeSceneExport,
+  ) => UiDesignerGamePreviewPreparation | Promise<UiDesignerGamePreviewPreparation>;
   verifyIsolatedSource: typeof verifyIsolatedSourceState;
   cleanupIsolated: typeof cleanupIsolatedProject;
   randomUUID: () => string;
@@ -105,6 +115,7 @@ export interface InteractivePlaytestStartOptions {
   battleback1Name?: string;
   battleback2Name?: string;
   animationPreview?: InteractiveParticleAnimationPreview;
+  uiScene?: UiRuntimeSceneExport;
 }
 
 interface StagingConfirmation {
@@ -132,7 +143,7 @@ export class InteractivePlaytestService {
   #child: InteractivePlaytestChild | null = null;
   #stopRequested = false;
   #stopPromise: Promise<InteractivePlaytestResult> | null = null;
-  #battlePreparation: BattleTestProjectPreparation | ParticleAnimationPreviewPreparation | null = null;
+  #isolatedPreparation: BattleTestProjectPreparation | ParticleAnimationPreviewPreparation | UiDesignerGamePreviewPreparation | null = null;
   #unlaunchedPreparation = false;
   #preparingIsolation = false;
 
@@ -153,6 +164,7 @@ export class InteractivePlaytestService {
       resolveProjectRuntime: dependencies.resolveProjectRuntime || resolveInteractiveProjectRuntime,
       prepareBattleTest: dependencies.prepareBattleTest || prepareBattleTestProject,
       prepareParticlePreview: dependencies.prepareParticlePreview || prepareParticleAnimationPreview,
+      prepareUiDesignerPreview: dependencies.prepareUiDesignerPreview || prepareUiDesignerGamePreviewProject,
       verifyIsolatedSource: dependencies.verifyIsolatedSource || verifyIsolatedSourceState,
       cleanupIsolated: dependencies.cleanupIsolated || cleanupIsolatedProject,
       randomUUID: dependencies.randomUUID || crypto.randomUUID,
@@ -223,9 +235,9 @@ export class InteractivePlaytestService {
         error: 'Another interactive playtest is already being prepared.',
       };
     }
-    if (this.#battlePreparation) {
+    if (this.#isolatedPreparation) {
       this.#retryPendingBattleCleanup();
-      if (this.#battlePreparation) {
+      if (this.#isolatedPreparation) {
         return {
           ...this.current(),
           error: 'A previous isolated playtest project could not be cleaned up. New playtests are blocked until cleanup succeeds.',
@@ -260,7 +272,8 @@ export class InteractivePlaytestService {
     let privateExecutable = '';
     let battlePreparation: BattleTestProjectPreparation | null = null;
     let particlePreparation: ParticleAnimationPreviewPreparation | null = null;
-    if (mode === 'project') {
+    let uiDesignerPreparation: UiDesignerGamePreviewPreparation | null = null;
+    if (mode === 'project' || mode === 'ui_designer_scene') {
       const resolution = this.#dependencies.resolveProjectRuntime(project, engine);
       if (resolution.selectionRequired) {
         return {
@@ -273,18 +286,20 @@ export class InteractivePlaytestService {
       executable = projectRuntime.executable;
       evidenceExecutable = projectRuntime.evidenceExecutable;
       privateExecutable = projectRuntime.privateExecutable || '';
-      let staging: StagingConfirmation;
-      try {
-        staging = buildStagingConfirmation(this.#dependencies.getStagingStatus(this.#workflowRoot, project));
-      } catch (error) {
-        return { confirmationRequired: false, error: errorMessage(error) };
-      }
-      if (staging.staged && options.confirmedStagingHash !== staging.hash) {
-        return {
-          confirmationRequired: true,
-          stagingSummary: staging.summary,
-          stagingSummaryHash: staging.hash,
-        };
+      if (mode === 'project') {
+        let staging: StagingConfirmation;
+        try {
+          staging = buildStagingConfirmation(this.#dependencies.getStagingStatus(this.#workflowRoot, project));
+        } catch (error) {
+          return { confirmationRequired: false, error: errorMessage(error) };
+        }
+        if (staging.staged && options.confirmedStagingHash !== staging.hash) {
+          return {
+            confirmationRequired: true,
+            stagingSummary: staging.summary,
+            stagingSummaryHash: staging.hash,
+          };
+        }
       }
     } else {
       if (engine === 'rpg-maker-mz') {
@@ -318,7 +333,7 @@ export class InteractivePlaytestService {
       } finally {
         this.#preparingIsolation = false;
       }
-      this.#battlePreparation = battlePreparation;
+      this.#isolatedPreparation = battlePreparation;
       this.#unlaunchedPreparation = true;
       launchProject = battlePreparation.temporaryProject;
       if (battlePreparation.engine !== engine) {
@@ -349,12 +364,37 @@ export class InteractivePlaytestService {
       } finally {
         this.#preparingIsolation = false;
       }
-      this.#battlePreparation = particlePreparation;
+      this.#isolatedPreparation = particlePreparation;
       this.#unlaunchedPreparation = true;
       launchProject = particlePreparation.appDirectory;
       if (particlePreparation.engine !== engine) {
         const cleanupError = this.#cleanupUnlaunchedPreparation(particlePreparation, 'Particle preview');
         return { confirmationRequired: false, error: ['Particle preview project engine changed while preparing the isolated copy.', cleanupError].filter(Boolean).join(' ') };
+      }
+    } else if (mode === 'ui_designer_scene') {
+      if (!options.uiScene) return { confirmationRequired: false, error: 'UI designer scene preview data is required.' };
+      this.#preparingIsolation = true;
+      try {
+        uiDesignerPreparation = await this.#dependencies.prepareUiDesignerPreview(this.#workflowRoot, project, options.uiScene);
+      } catch (error) {
+        return { confirmationRequired: false, error: errorMessage(error) };
+      } finally {
+        this.#preparingIsolation = false;
+      }
+      this.#isolatedPreparation = uiDesignerPreparation;
+      this.#unlaunchedPreparation = true;
+      launchProject = uiDesignerPreparation.temporaryProject;
+      if (uiDesignerPreparation.engine !== engine) {
+        const cleanupError = this.#cleanupUnlaunchedPreparation(uiDesignerPreparation, 'UI designer preview');
+        return { confirmationRequired: false, error: ['UI designer preview project engine changed while preparing the isolated copy.', cleanupError].filter(Boolean).join(' ') };
+      }
+      if (engine === 'rpg-maker-mv' && projectRuntime?.launchStyle === 'embedded') {
+        if (!uiDesignerPreparation.executable) {
+          const cleanupError = this.#cleanupUnlaunchedPreparation(uiDesignerPreparation, 'UI designer preview');
+          return { confirmationRequired: false, error: ['Game.exe was not found in the isolated RPG Maker MV project.', cleanupError].filter(Boolean).join(' ') };
+        }
+        executable = uiDesignerPreparation.executable;
+        evidenceExecutable = executable;
       }
     } else if (mode !== 'project') {
       return { confirmationRequired: false, error: `Unsupported interactive playtest mode: ${String(mode)}` };
@@ -387,6 +427,7 @@ export class InteractivePlaytestService {
         stagedFileCount: battlePreparation.staging.files.length,
       } : {}),
       ...(particlePreparation ? { effectName: particlePreparation.effectName } : {}),
+      ...(uiDesignerPreparation ? { sceneName: uiDesignerPreparation.sceneName } : {}),
       lifecycleOnly: true,
       artifactDir,
       artifactPath: artifactLocations.artifactPath,
@@ -398,7 +439,7 @@ export class InteractivePlaytestService {
     this.#currentRun = run;
     this.#runs.set(runId, run);
     this.#stopRequested = false;
-    this.#battlePreparation = battlePreparation || particlePreparation;
+    this.#isolatedPreparation = battlePreparation || particlePreparation || uiDesignerPreparation;
     this.#unlaunchedPreparation = false;
     this.#publish(run, 'launch requested');
 
@@ -414,7 +455,7 @@ export class InteractivePlaytestService {
 
       let child: InteractivePlaytestChild;
       try {
-        const args = mode === 'project'
+        const args = mode === 'project' || mode === 'ui_designer_scene'
           ? projectRuntime?.launchStyle === 'external'
             ? engine === 'rpg-maker-mv' ? [launchProject, 'test'] : [launchProject]
             : []
@@ -602,9 +643,9 @@ export class InteractivePlaytestService {
   }
 
   #retryPendingBattleCleanup(): void {
-    if (!this.#battlePreparation) return;
+    if (!this.#isolatedPreparation) return;
     if (this.#unlaunchedPreparation || !this.#currentRun) {
-      this.#cleanupUnlaunchedPreparation(this.#battlePreparation, 'Isolated preview');
+      this.#cleanupUnlaunchedPreparation(this.#isolatedPreparation, 'Isolated preview');
       return;
     }
     const existingError = this.#currentRun.error;
@@ -612,27 +653,29 @@ export class InteractivePlaytestService {
   }
 
   #cleanupUnlaunchedPreparation(
-    preparation: BattleTestProjectPreparation | ParticleAnimationPreviewPreparation,
+    preparation: BattleTestProjectPreparation | ParticleAnimationPreviewPreparation | UiDesignerGamePreviewPreparation,
     label: string,
   ): string {
     try {
       this.#dependencies.cleanupIsolated(preparation);
-      if (this.#battlePreparation === preparation) {
-        this.#battlePreparation = null;
+      if (this.#isolatedPreparation === preparation) {
+        this.#isolatedPreparation = null;
         this.#unlaunchedPreparation = false;
       }
       return '';
     } catch (error) {
-      this.#battlePreparation = preparation;
+      this.#isolatedPreparation = preparation;
       this.#unlaunchedPreparation = true;
       return `${label} temporary project cleanup failed; its isolation owner was retained. ${errorMessage(error)}`;
     }
   }
 
   #finalizeBattlePreparation(): { patch: Partial<InteractivePlaytestRun>; error?: string } {
-    const preparation = this.#battlePreparation;
+    const preparation = this.#isolatedPreparation;
     if (!preparation) return { patch: {} };
-    const label = this.#currentRun?.mode === 'particle_preview' ? 'Particle preview' : 'Battle Test';
+    const label = this.#currentRun?.mode === 'particle_preview'
+      ? 'Particle preview'
+      : this.#currentRun?.mode === 'ui_designer_scene' ? 'UI designer preview' : 'Battle Test';
     const failures: string[] = [];
     let sourceUnchanged = false;
     let savesUnchanged = false;
@@ -658,7 +701,7 @@ export class InteractivePlaytestService {
       failures.push(`${label} temporary project cleanup failed: ${errorMessage(error)}`);
     }
     if (temporaryProjectCleaned) {
-      this.#battlePreparation = null;
+      this.#isolatedPreparation = null;
       this.#unlaunchedPreparation = false;
     }
     return {
@@ -747,7 +790,7 @@ function initializeArtifacts(
   fs.writeFileSync(artifacts.stderrPath, '', 'utf8');
   fs.writeFileSync(
     artifacts.logPath,
-    `RPG Agent MV ${run.mode === 'battle_test' ? 'isolated Battle Test' : run.mode === 'particle_preview' ? 'isolated MZ particle preview' : 'interactive source playtest'}\nEvidence scope: process lifecycle and isolation only; this does not prove battle, story, or playability correctness.\n`,
+    `RPG Agent MV ${run.mode === 'battle_test' ? 'isolated Battle Test' : run.mode === 'particle_preview' ? 'isolated MZ particle preview' : run.mode === 'ui_designer_scene' ? 'isolated UI designer scene preview' : 'interactive source playtest'}\nEvidence scope: process lifecycle and isolation only; this does not prove battle, story, or playability correctness.\n`,
     'utf8',
   );
 }

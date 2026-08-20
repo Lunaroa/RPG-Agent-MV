@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test, vi } from 'vitest'
-import type { UiDesignerAdapterBundle, UiDesignerPersistenceAdapter } from '@contract/ui-designer'
+import type { UiDesignerAdapterBundle, UiDesignerGamePreviewSession, UiDesignerPersistenceAdapter } from '@contract/ui-designer'
 import { createUiDocument } from '../models/document'
 import { exportRuntimeDocument } from '../models/export'
 import { nodeRect } from '../models/geometry'
@@ -12,6 +12,22 @@ vi.mock('../adapters', () => ({
 import { useUiDesigner } from './useUiDesigner'
 
 const success = <T>(value?: T) => ({ status: 'success' as const, message: 'ok', value })
+
+const createGamePreviewHarness = () => {
+  let listener: ((session: UiDesignerGamePreviewSession) => void) | undefined
+  const start = vi.fn(async (_project: string, _scene: ReturnType<typeof exportRuntimeDocument>) => success<UiDesignerGamePreviewSession>({ runId: 'ui-game-preview', status: 'running' }))
+  const stop = vi.fn(async () => success<UiDesignerGamePreviewSession | null>({ runId: 'ui-game-preview', status: 'stopped' }))
+  return {
+    adapter: {
+      start,
+      stop,
+      onStatus(callback: (session: UiDesignerGamePreviewSession) => void) { listener = callback; return () => { listener = undefined } },
+    },
+    start,
+    stop,
+    emit(session: UiDesignerGamePreviewSession) { listener?.(session) },
+  }
+}
 
 test('applies a scene JSON edit as one undoable step and rejects invalid input', () => {
   const designer = useUiDesigner()
@@ -210,7 +226,7 @@ test('closing the only opened tab leaves no scene behind', async () => {
   assert.equal(clearedRecovery, 'recovery-opened')
 })
 
-test('embedded preview hides editor chrome only after the renderer acknowledges the requested mode', () => {
+test('editor preview enters a separate runtime without taking over the authoring mode', () => {
   const rendererHost = {
     async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
     async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
@@ -218,31 +234,33 @@ test('embedded preview hides editor chrome only after the renderer acknowledges 
   }
   const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { rendererHost } })
   designer.editingMode.value = 'code'
-  assert.equal(designer.startPreview(), true)
-  assert.equal(designer.isPreviewing.value, false)
+  assert.equal(designer.startEditorPreview(), true)
+  assert.equal(designer.isEditorPreviewing.value, false)
   assert.equal(designer.editingMode.value, 'code')
   assert.equal(designer.previewStatus.value, 'preparing')
-  assert.equal(designer.canStartPreview.value, false)
-  assert.equal(designer.acknowledgePreviewExecutionMode('full-preview'), true)
-  assert.equal(designer.isPreviewing.value, true)
+  assert.equal(designer.canStartEditorPreview.value, false)
+  assert.equal(designer.acknowledgePreviewExecutionMode('editor-preview'), true)
+  assert.equal(designer.isEditorPreviewing.value, true)
+  assert.equal(designer.isPreviewing.value, false)
   assert.equal(designer.editingMode.value, 'design')
   assert.equal(designer.previewStatus.value, 'running')
-  assert.equal(designer.stopPreview(), true)
-  assert.equal(designer.isPreviewing.value, true)
+  assert.equal(designer.stopEditorPreview(), true)
+  assert.equal(designer.isEditorPreviewing.value, true)
   assert.equal(designer.previewStatus.value, 'preparing')
   assert.equal(designer.acknowledgePreviewExecutionMode('authoring'), true)
-  assert.equal(designer.isPreviewing.value, false)
+  assert.equal(designer.isEditorPreviewing.value, false)
   assert.equal(designer.editingMode.value, 'code')
   assert.equal(designer.previewStatus.value, 'stopped')
 })
 
-test('editor preview and in-game preview keep distinct embedded execution modes', () => {
+test('editor preview and in-game preview use separate runtime paths', async () => {
   const rendererHost = {
     async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
     async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
     async stop() { return success(null) },
   }
-  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { rendererHost } })
+  const game = createGamePreviewHarness()
+  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { rendererHost, gamePreview: game.adapter } })
   designer.editingMode.value = 'code'
 
   assert.equal(designer.startEditorPreview(), true)
@@ -262,15 +280,42 @@ test('editor preview and in-game preview keep distinct embedded execution modes'
   assert.equal(designer.isEditorPreviewing.value, false)
   assert.equal(designer.editingMode.value, 'code')
 
-  assert.equal(designer.startPreview(), true)
-  assert.equal(designer.previewExecutionMode.value, 'full-preview')
-  assert.equal(designer.isPreviewing.value, false)
-  assert.equal(designer.acknowledgePreviewExecutionMode('full-preview'), true)
+  designer.document.value.meta.description = 'unsaved game preview state'
+  assert.equal(await designer.startPreview(), true)
+  assert.equal(designer.previewExecutionMode.value, 'authoring')
   assert.equal(designer.isPreviewing.value, true)
   assert.equal(designer.isEditorPreviewing.value, false)
+  assert.equal(designer.editingMode.value, 'code')
+  assert.equal(game.start.mock.calls[0]?.[1].meta.description, 'unsaved game preview state')
+  assert.equal(await designer.stopPreview(), true)
+  assert.equal(game.stop.mock.calls.length, 1)
+  assert.equal(designer.isPreviewing.value, false)
 })
 
-test('embedded preview failure leaves the controller in authoring mode without an external session', () => {
+test('project switching waits for an in-flight game preview start before stopping it', async () => {
+  let releaseStart!: (result: ReturnType<typeof success<UiDesignerGamePreviewSession>>) => void
+  const pendingStart = new Promise<ReturnType<typeof success<UiDesignerGamePreviewSession>>>((resolve) => { releaseStart = resolve })
+  const stop = vi.fn(async () => success<UiDesignerGamePreviewSession | null>({ runId: 'ui-game-preview', status: 'stopped' }))
+  const gamePreview = {
+    start: vi.fn(async () => pendingStart),
+    stop,
+    onStatus() { return () => undefined },
+  }
+  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { gamePreview } })
+
+  const starting = designer.startPreview()
+  assert.equal(designer.previewStatus.value, 'preparing')
+  const switching = designer.setProjectContext('projects/next', { gamePreview })
+  releaseStart(success<UiDesignerGamePreviewSession>({ runId: 'ui-game-preview', status: 'running' }))
+
+  assert.equal(await starting, true)
+  assert.equal(await switching, true)
+  assert.equal(stop.mock.calls.length, 1)
+  assert.equal(designer.isPreviewing.value, false)
+  assert.equal(designer.projectPath.value, 'projects/next')
+})
+
+test('editor preview failure leaves the controller in authoring mode without a game session', () => {
   const rendererHost = {
     async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
     async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
@@ -278,38 +323,39 @@ test('embedded preview failure leaves the controller in authoring mode without a
   }
   const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { rendererHost } })
   designer.editingMode.value = 'code'
-  assert.equal(designer.startPreview(), true)
-  assert.equal(designer.isPreviewing.value, false)
+  assert.equal(designer.startEditorPreview(), true)
+  assert.equal(designer.isEditorPreviewing.value, false)
   assert.equal(designer.editingMode.value, 'code')
-  assert.equal(designer.acknowledgePreviewExecutionMode('full-preview'), true)
+  assert.equal(designer.acknowledgePreviewExecutionMode('editor-preview'), true)
   designer.failPreview('The replacement renderer preparation was superseded.')
   assert.equal(designer.previewStatus.value, 'error')
   assert.equal(designer.previewMessage.value, 'The replacement renderer preparation was superseded.')
   assert.equal(designer.isPreviewing.value, false)
+  assert.equal(designer.isEditorPreviewing.value, false)
   assert.equal(designer.editingMode.value, 'code')
 })
 
-test('preview preparation keeps editor chrome visible and preserves the captured scene on failure', () => {
+test('editor preview preparation keeps the authoring surface live across scene changes', () => {
   const rendererHost = {
     async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
     async confirm() { return success() },
     async stop() { return success(null) },
   }
   const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { rendererHost } })
-  const capturedSceneId = designer.activeSceneId.value
+  const firstSceneId = designer.activeSceneId.value
   assert.equal(designer.newScene('Scene_Preview_Target', { width: 816, height: 624 }), true)
   const otherSceneId = designer.activeSceneId.value
-  assert.equal(designer.selectScene(capturedSceneId), true)
+  assert.equal(designer.selectScene(firstSceneId), true)
   designer.editingMode.value = 'code'
 
-  assert.equal(designer.startPreview(), true)
-  assert.equal(designer.isPreviewing.value, false)
+  assert.equal(designer.startEditorPreview(), true)
+  assert.equal(designer.isEditorPreviewing.value, false)
   assert.equal(designer.editingMode.value, 'code')
-  assert.equal(designer.selectScene(otherSceneId), false)
-  assert.equal(designer.activeSceneId.value, capturedSceneId)
+  assert.equal(designer.selectScene(otherSceneId), true)
+  assert.equal(designer.activeSceneId.value, otherSceneId)
 
   designer.failPreview('The latest scene could not be mounted.')
-  assert.equal(designer.isPreviewing.value, false)
+  assert.equal(designer.isEditorPreviewing.value, false)
   assert.equal(designer.editingMode.value, 'code')
   assert.equal(designer.previewStatus.value, 'error')
 })
@@ -323,7 +369,7 @@ test('error preview retains a cleanup barrier until the authoring retry acknowle
   assert.equal(designer.previewCleanupPending.value, false)
   assert.equal(designer.previewStatus.value, 'stopped')
   assert.equal(designer.previewMessage.value, '')
-  assert.equal(designer.canStartPreview.value, true)
+  assert.equal(designer.canStartEditorPreview.value, true)
 })
 
 test('multiple renderer owners remain in the cleanup barrier until each owner stops once', async () => {
@@ -377,7 +423,7 @@ test('multiple renderer owners remain in the cleanup barrier until each owner st
   assert.deepEqual({ firstStops, secondStops, lateStops }, { firstStops: 1, secondStops: 2, lateStops: 1 })
 })
 
-test('project switching cancels the embedded preview without polling an external session', async () => {
+test('project switching closes the external editor preview without polling a game session', async () => {
   const rendererHost = {
     async start() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
     async confirm() { return success({ sessionId: 'renderer-session', generation: 1, iframeUrl: 'rpg-agent-preview://sample/index.html', engine: 'MV' as const, engineVersion: '1.6.2', runtimeVersion: '1.1.0', resourceRevision: 0 }) },
@@ -385,15 +431,16 @@ test('project switching cancels the embedded preview without polling an external
   }
   const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { rendererHost } })
   designer.editingMode.value = 'code'
-  assert.equal(designer.startPreview(), true)
-  assert.equal(designer.isPreviewing.value, false)
+  assert.equal(designer.startEditorPreview(), true)
+  assert.equal(designer.isEditorPreviewing.value, false)
   assert.equal(designer.editingMode.value, 'code')
   assert.equal(await designer.setProjectContext('projects/next', { rendererHost }), true)
+  assert.equal(designer.isEditorPreviewing.value, false)
   assert.equal(designer.isPreviewing.value, false)
   assert.equal(designer.editingMode.value, 'code')
 })
 
-test('project switching stops preview ownership before asking about dirty source', async () => {
+test('project switching stops editor-preview ownership before asking about dirty source', async () => {
   const observations: Array<{ mode: string; previewing: boolean }> = []
   let designer!: ReturnType<typeof useUiDesigner>
   const rendererHost = {
@@ -410,7 +457,7 @@ test('project switching stops preview ownership before asking about dirty source
     },
   })
   designer.addNode('text')
-  assert.equal(designer.startPreview(), true)
+  assert.equal(designer.startEditorPreview(), true)
   assert.equal(await designer.setProjectContext('projects/next', { rendererHost }), false)
   assert.deepEqual(observations, [{ mode: 'authoring', previewing: false }])
   assert.equal(designer.isPreviewing.value, false)

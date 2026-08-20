@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import { useUiDesignerI18n } from '../i18n'
 
@@ -42,7 +42,6 @@ watch(() => designer.document.meta.sceneName, (value) => {
 })
 onBeforeUnmount(() => { commitSceneName(); unregisterSceneNameDraft() })
 
-const fullscreenPreview = computed(() => designer.isEditorPreviewing || designer.isPreviewing)
 const toggleEditorPreview = () => { void (designer.isEditorPreviewing ? designer.stopEditorPreview() : designer.startEditorPreview()) }
 const toggleGamePreview = () => { void (designer.isPreviewing ? designer.stopPreview() : designer.startPreview()) }
 const selectEditingMode = (mode: 'design' | 'code' | 'json') => {
@@ -52,13 +51,7 @@ const selectEditingMode = (mode: 'design' | 'code' | 'json') => {
 </script>
 
 <template>
-  <header class="ui-designer-toolbar" :class="{ 'preview-toolbar': fullscreenPreview }">
-    <template v-if="fullscreenPreview">
-      <el-button :data-testid="designer.isPreviewing ? 'ui-designer-game-preview-exit' : 'ui-designer-preview-exit'" data-ui-id="ui-designer-preview-exit" class="editor-preview-toggle" size="small" type="success" @click="designer.isPreviewing ? toggleGamePreview() : toggleEditorPreview()">
-        {{ t(designer.isPreviewing ? 'exitGamePreview' : 'exitEditorPreview') }}
-      </el-button>
-    </template>
-    <template v-else>
+  <header class="ui-designer-toolbar">
     <div class="toolbar-brand">
       <span class="toolbar-title">{{ t('title') }}</span>
       <span v-if="designer.isDirty" data-testid="ui-designer-dirty" class="dirty-dot" :title="t('unsaved')" />
@@ -83,11 +76,11 @@ const selectEditingMode = (mode: 'design' | 'code' | 'json') => {
         <el-button data-testid="ui-designer-json-mode" data-ui-id="ui-designer-json-mode" size="small" :type="designer.editingMode === 'json' ? 'primary' : 'default'" @click="selectEditingMode('json')">{{ t('json') }}</el-button>
       </el-button-group>
 
-      <el-button data-testid="ui-designer-preview-toggle" data-ui-id="ui-designer-preview-enter" class="editor-preview-toggle" size="small" :aria-label="t('editorPreview')" :disabled="!designer.canStartEditorPreview" @click="toggleEditorPreview">
-        {{ t('editorPreview') }}
+      <el-button data-testid="ui-designer-preview-toggle" data-ui-id="ui-designer-preview-enter" class="editor-preview-toggle" size="small" :type="designer.isEditorPreviewing ? 'success' : 'default'" :aria-label="t(designer.isEditorPreviewing ? 'exitEditorPreview' : 'editorPreview')" :disabled="!designer.isEditorPreviewing && !designer.canStartEditorPreview" @click="toggleEditorPreview">
+        {{ t(designer.isEditorPreviewing ? 'exitEditorPreview' : 'editorPreview') }}
       </el-button>
-      <el-button data-testid="ui-designer-game-preview-toggle" data-ui-id="ui-designer-game-preview-enter" size="small" :aria-label="t('gamePreview')" :disabled="!designer.canStartPreview" @click="toggleGamePreview">
-        {{ t('gamePreview') }}
+      <el-button data-testid="ui-designer-game-preview-toggle" data-ui-id="ui-designer-game-preview-enter" size="small" :type="designer.isPreviewing ? 'success' : 'default'" :aria-label="t(designer.isPreviewing ? 'exitGamePreview' : 'gamePreview')" :disabled="!designer.isPreviewing && !designer.canStartPreview" @click="toggleGamePreview">
+        {{ t(designer.isPreviewing ? 'exitGamePreview' : 'gamePreview') }}
       </el-button>
 
       <el-button size="small" text @click="emit('settings')">{{ t('settings') }}</el-button>
@@ -107,7 +100,6 @@ const selectEditingMode = (mode: 'design' | 'code' | 'json') => {
       />
       <span class="scene-version">v{{ designer.document.version }}</span>
     </div>
-    </template>
   </header>
 </template>
 
@@ -150,8 +142,6 @@ const selectEditingMode = (mode: 'design' | 'code' | 'json') => {
 }
 
 .editor-preview-toggle { font-weight: 650; }
-.preview-toolbar { justify-content: flex-end; min-height: 40px; border-bottom-color: #ffffff1c; background: #090a0d; }
-
 .toolbar-scene {
   display: flex;
   align-items: center;

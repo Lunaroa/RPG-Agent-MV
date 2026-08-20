@@ -523,6 +523,8 @@ async function loadBackendModules(roots: AppRoots) {
         desktop.playtestPreparation.prepareBattleTestInWorker(workflowRoot, project, configuration),
       prepareParticlePreview: (workflowRoot: string, project: string, animation: unknown) =>
         desktop.playtestPreparation.prepareParticlePreviewInWorker(workflowRoot, project, animation),
+      prepareUiDesignerPreview: (workflowRoot: string, project: string, scene: unknown) =>
+        desktop.playtestPreparation.prepareUiDesignerGamePreviewInWorker(workflowRoot, project, scene),
     },
   );
   uiDesignerRendererHostService = new desktop.uiDesigner.rendererHost.UiDesignerRendererHostService(

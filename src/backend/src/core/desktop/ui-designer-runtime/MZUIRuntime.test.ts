@@ -464,6 +464,74 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.equal(played.at(-1), 'EventConfirm');
   });
 
+  test('bridges RPG Maker TouchInput releases to buttons when PIXI pointer events are unavailable', () => {
+    const context = makeContext();
+    const input = { triggered: false, released: false, x: 50, y: 40 };
+    context.TouchInput = {
+      get x() { return input.x; },
+      get y() { return input.y; },
+      isTriggered: () => input.triggered,
+      isReleased: () => input.released,
+    };
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-touch-input.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    const button = scene.nodes.find((node: any) => node.id === 'button');
+    button.events = { onClick: { actions: [{ type: 'setSwitch', switchId: 1, switchVal: 'toggle' }] } };
+    const switches: Record<number, boolean> = { 1: false };
+    const hostRoot = new context.PIXI.Container();
+    runtime.mount(scene, { root: hostRoot, context: { switches } });
+    context.Graphics = { app: { renderer: { plugins: { interaction: { hitTest: (_point: unknown, root: unknown) => {
+      assert.equal(root, hostRoot);
+      return runtime.nodeViews.button;
+    } } } } } };
+
+    input.triggered = true;
+    runtime.update();
+    assert.equal(runtime.touchPressedNodeId, 'button');
+    assert.equal(runtime.nodeViews.button.__mzuiButtonState, 'pressed');
+    assert.equal(switches[1], false);
+
+    input.triggered = false;
+    input.released = true;
+    runtime.update();
+    assert.equal(runtime.touchPressedNodeId, null);
+    assert.equal(runtime.nodeViews.button.__mzuiButtonState, 'normal');
+    assert.equal(switches[1], true);
+    runtime.cleanup();
+  });
+
+  test('deduplicates TouchInput release after PIXI already dispatched the same button tap', () => {
+    const context = makeContext();
+    const input = { triggered: false, released: false };
+    context.TouchInput = {
+      x: 50,
+      y: 40,
+      isTriggered: () => input.triggered,
+      isReleased: () => input.released,
+    };
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-touch-input-dedupe.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    const button = scene.nodes.find((node: any) => node.id === 'button');
+    button.events = { onClick: { actions: [{ type: 'setSwitch', switchId: 1, switchVal: 'toggle' }] } };
+    const switches: Record<number, boolean> = { 1: false };
+    runtime.mount(scene, { root: new context.PIXI.Container(), context: { switches } });
+    context.Graphics = { app: { renderer: { plugins: { interaction: { hitTest: () => runtime.nodeViews.button } } } } };
+
+    input.triggered = true;
+    runtime.update();
+    runtime.dispatchActionsForNode(button, 'onClick', { type: 'pointertap' });
+    runtime.nodeViews.button.__mzuiLastPixiPointerTapAt = Date.now();
+    assert.equal(switches[1], true);
+
+    input.triggered = false;
+    input.released = true;
+    runtime.update();
+    assert.equal(switches[1], true);
+    runtime.cleanup();
+  });
+
   test('renders MV button text through the engine Bitmap with native font settings', () => {
     assertEngineWindowTextSignature('MV');
   });
@@ -1330,6 +1398,86 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     runtime.cleanup();
   });
 
+  test('creates the official MV message window before a show-message action runs', () => {
+    const context = makeContext();
+    const messages: string[] = [];
+    let windowLayerCreations = 0;
+    let messageWindowCreations = 0;
+    context.Utils = { RPGMAKER_NAME: 'MV' };
+    context.$gameMessage = { add(message: string) { messages.push(message); } };
+    context.Scene_Base.prototype.createWindowLayer = function createWindowLayer(this: any) {
+      windowLayerCreations += 1;
+      this._windowLayer = {};
+    };
+    context.Scene_Map = function SceneMap() {};
+    context.Scene_Map.prototype.createMessageWindow = function createMessageWindow(this: any) {
+      messageWindowCreations += 1;
+      this._messageWindow = { engine: 'MV' };
+    };
+    const activeScene = new context.Scene_Base();
+    context.SceneManager._scene = activeScene;
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = sceneDocument();
+    scene.nodes[0].events = { onClick: { actions: [{ type: 'showMessage', message: 'first' }, { type: 'showMessage', message: 'second' }] } };
+    runtime.mount(scene, { root: activeScene });
+
+    runtime.dispatchActionsForNode(scene.nodes[0], 'onClick', { type: 'pointertap' });
+
+    assert.deepEqual(messages, ['first', 'second']);
+    assert.equal(windowLayerCreations, 1);
+    assert.equal(messageWindowCreations, 1);
+    assert.deepEqual(activeScene._messageWindow, { engine: 'MV' });
+    runtime.cleanup();
+  });
+
+  test('grafts the official MZ message-scene contract before a show-message action runs', () => {
+    const context = makeContext();
+    const messages: string[] = [];
+    let windowLayerCreations = 0;
+    let allWindowCreations = 0;
+    context.Utils = { RPGMAKER_NAME: 'MZ' };
+    context.$gameMessage = { add(message: string) { messages.push(message); } };
+    context.Scene_Base.prototype.createWindowLayer = function createWindowLayer(this: any) {
+      windowLayerCreations += 1;
+      this._windowLayer = {};
+    };
+    context.Scene_Message = function SceneMessage() {};
+    const messagePrototype = context.Scene_Message.prototype;
+    messagePrototype.createAllWindows = function createAllWindows(this: any) {
+      allWindowCreations += 1;
+      this.createMessageWindow();
+      this.createScrollTextWindow();
+      this.createGoldWindow();
+      this.createNameBoxWindow();
+      this.createChoiceListWindow();
+      this.createNumberInputWindow();
+      this.createEventItemWindow();
+      this.associateWindows();
+    };
+    messagePrototype.createMessageWindow = function createMessageWindow(this: any) { this._messageWindow = { engine: 'MZ' }; };
+    messagePrototype.createGoldWindow = function createGoldWindow(this: any) { this._goldWindow = { engine: 'MZ' }; };
+    for (const name of ['messageWindowRect', 'createScrollTextWindow', 'scrollTextWindowRect', 'goldWindowRect', 'createNameBoxWindow', 'createChoiceListWindow', 'createNumberInputWindow', 'createEventItemWindow', 'eventItemWindowRect', 'associateWindows']) {
+      messagePrototype[name] = function messageSceneContract() {};
+    }
+    const activeScene = new context.Scene_Base();
+    context.SceneManager._scene = activeScene;
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = sceneDocument();
+    scene.nodes[0].events = { onClick: { actions: [{ type: 'showMessage', message: 'visible' }] } };
+    runtime.mount(scene, { root: activeScene });
+
+    runtime.dispatchActionsForNode(scene.nodes[0], 'onClick', { type: 'pointertap' });
+
+    assert.deepEqual(messages, ['visible']);
+    assert.equal(windowLayerCreations, 1);
+    assert.equal(allWindowCreations, 1);
+    assert.deepEqual(activeScene._messageWindow, { engine: 'MZ' });
+    assert.deepEqual(activeScene._goldWindow, { engine: 'MZ' });
+    runtime.cleanup();
+  });
+
   test('precompiles nested condition expressions and isolates one bad branch', () => {
     const context = makeContext();
     vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
@@ -1607,7 +1755,7 @@ function makeContext(): Record<string, any> {
   const context: Record<string, any> = {
     console,
     URL,
-    PIXI: { Container, Graphics, Text, NineSlicePlane, ParticleContainer, Sprite: PixiSprite, TilingSprite, Filter, Rectangle: class { constructor(public x = 0, public y = 0, public width = 0, public height = 0) {} }, Texture: { from: (value: string) => ({ source: value, baseTexture: { resource: { source: {} } } }) }, filters: { BlurFilter: class { blur = 0 }, GlowFilter: class { distance = 0; destroyed = false; destroy() { this.destroyed = true; } } } },
+    PIXI: { Container, Graphics, Text, NineSlicePlane, ParticleContainer, Sprite: PixiSprite, TilingSprite, Filter, Point: class { constructor(public x = 0, public y = 0) {} }, Rectangle: class { constructor(public x = 0, public y = 0, public width = 0, public height = 0) {} }, Texture: { from: (value: string) => ({ source: value, baseTexture: { resource: { source: {} } } }) }, filters: { BlurFilter: class { blur = 0 }, GlowFilter: class { distance = 0; destroyed = false; destroy() { this.destroyed = true; } } } },
     Sprite,
     Window_Base: WindowBase,
     Scene_Base: SceneBase,

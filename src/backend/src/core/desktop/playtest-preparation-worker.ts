@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 
 import type { InteractiveParticleAnimationPreview } from '../../../../contract/types.ts';
+import type { UiRuntimeSceneExport } from '../../../../contract/ui-designer.ts';
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { writeJsonAtomic } from '../rmmv/json.ts';
@@ -17,6 +18,10 @@ import {
   prepareUiDesignerRendererOverlay,
   type IsolatedProjectPreparation,
 } from './isolated-project-preparation.ts';
+import {
+  prepareUiDesignerGamePreviewProject,
+  type UiDesignerGamePreviewPreparation,
+} from './ui-designer-game-preview-preparation.ts';
 import type { IsolatedProjectOwnershipChallenge } from './isolated-project-attestation.ts';
 
 interface WorkerOwnershipRequest {
@@ -37,6 +42,12 @@ export type PlaytestPreparationWorkerRequest =
     animation: InteractiveParticleAnimationPreview;
   }
   | WorkerOwnershipRequest & {
+    operation: 'ui_designer_scene';
+    workflowRoot: string;
+    project: string;
+    scene: UiRuntimeSceneExport;
+  }
+  | WorkerOwnershipRequest & {
     operation: 'ui_designer_renderer';
     workflowRoot: string;
     project: string;
@@ -44,7 +55,7 @@ export type PlaytestPreparationWorkerRequest =
   };
 
 export type PlaytestPreparationWorkerResponse =
-  | { ok: true; preparation: BattleTestProjectPreparation | ParticleAnimationPreviewPreparation | IsolatedProjectPreparation }
+  | { ok: true; preparation: BattleTestProjectPreparation | ParticleAnimationPreviewPreparation | UiDesignerGamePreviewPreparation | IsolatedProjectPreparation }
   | { ok: false; error: string };
 
 function errorMessage(error: unknown): string {
@@ -70,10 +81,14 @@ async function main(): Promise<void> {
         ? prepareParticleAnimationPreview(request.workflowRoot, request.project, request.animation, {}, {
           ownershipChallenge: request.ownershipChallenge,
         })
-        : prepareUiDesignerRendererOverlay(request.workflowRoot, request.project, {
+        : request.operation === 'ui_designer_scene'
+          ? prepareUiDesignerGamePreviewProject(request.workflowRoot, request.project, request.scene, {
+            ownershipChallenge: request.ownershipChallenge,
+          })
+          : prepareUiDesignerRendererOverlay(request.workflowRoot, request.project, {
           ownershipChallenge: request.ownershipChallenge,
           ...(request.temporaryPrefix ? { temporaryPrefix: request.temporaryPrefix } : {}),
-        });
+          });
     writeJsonAtomic(responsePath, { ok: true, preparation } satisfies PlaytestPreparationWorkerResponse);
   } catch (error) {
     writeJsonAtomic(responsePath, { ok: false, error: errorMessage(error) } satisfies PlaytestPreparationWorkerResponse);

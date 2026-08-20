@@ -38,7 +38,7 @@ import {
   findNode,
   nextNodeId,
 } from '../models/document'
-import { importRuntimeSceneDocument } from '../models/export'
+import { exportRuntimeDocument, importRuntimeSceneDocument } from '../models/export'
 import {
   alignNodes,
   applyNodeGeometryTransaction,
@@ -183,7 +183,6 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const draftRotations = ref<Record<string, number>>({})
   const snapFeedback = ref<UiSnapFeedback | null>(null)
   const editingMode = ref<'design' | 'code' | 'json'>('design')
-  // The renderer-host iframe is the only preview runtime.
   const isPreviewing = ref(false)
   const isEditorPreviewing = ref(false)
   const previewStatus = ref<UiPreviewState>('idle')
@@ -193,6 +192,9 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const previewDisposalInFlight = ref(false)
   let previewModeBefore: 'design' | 'code' | 'json' | undefined
   let previewExitPending = false
+  let gamePreviewRunId = ''
+  let gamePreviewStartPromise: Promise<unknown> | undefined
+  let removeGamePreviewStatusListener: (() => void) | undefined
   const fileStatus = ref<UiFileStatus>('idle')
   const fileMessage = ref('')
   const runtimeDiagnostics = ref<UiRuntimeDiagnostic[]>([])
@@ -259,9 +261,9 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const canManageRuntime = computed(() => hasProject.value && adapters.runtime !== createUiDesignerAdapters().runtime)
   const canLoadResources = computed(() => hasProject.value && adapters.resource !== createUiDesignerAdapters().resource)
   const canRenderCanvas = computed(() => hasProject.value && adapters.rendererHost !== createUiDesignerAdapters().rendererHost)
-  const canPreview = canRenderCanvas
+  const canPreview = computed(() => hasProject.value && adapters.gamePreview !== createUiDesignerAdapters().gamePreview)
   const previewOccupied = computed(() => previewCleanupPending.value || previewDisposalInFlight.value || previewStatus.value === 'preparing' || isPreviewing.value || isEditorPreviewing.value || previewExecutionMode.value !== 'authoring')
-  const canStartPreview = computed(() => canRenderCanvas.value && !previewOccupied.value)
+  const canStartPreview = computed(() => canPreview.value && !previewOccupied.value)
   const canStartEditorPreview = computed(() => canRenderCanvas.value && !previewOccupied.value)
   const canEditCode = computed(() => adapters.code.available)
   const newSceneCanvasSize = computed(() => projectProfile.value
@@ -413,7 +415,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     const previewWasOccupied = previewOccupied.value
     let previewDisposed = false
     if (previewWasOccupied) {
-      if (isPreviewing.value && !stopPreview()) return false
+      if (isPreviewing.value && !(await stopPreview())) return false
       if (!(await disposePreview('project-change'))) {
         previewStatus.value = 'error'
         previewMessage.value = 'The isolated UI canvas could not finish closing; the project was not changed.'
@@ -444,6 +446,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     projectProfileStatus.value = nextProjectPath?.trim() ? 'busy' : 'idle'
     projectProfileMessage.value = ''
     Object.assign(adapters, createUiDesignerAdapters(nextAdapters))
+    wireGamePreviewStatus()
     projectPath.value = nextProjectPath
     await loadProjectProfile()
     void loadWelcomeRecords()
@@ -808,7 +811,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   }
 
   const activateScene = (sceneId: string) => {
-    if (previewOccupied.value) return false
+    if (previewOccupied.value && previewExecutionMode.value !== 'editor-preview' && !isEditorPreviewing.value) return false
     if (sceneId === activeSceneId.value) return true
     const next = scenes.value.find((scene) => scene.id === sceneId)
     if (!next) return false
@@ -1604,24 +1607,67 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     return savePreferences({ snapEnabled: enabled })
   }
 
-  // The embedded renderer host owns the iframe process.  These controller
-  // methods only coordinate the embedded iframe execution mode and never
-  // start an external Game/NW process.
-  const startPreview = () => {
+  const finishGamePreview = (status: 'stopped' | 'error', message = '') => {
+    gamePreviewRunId = ''
+    isPreviewing.value = false
+    previewCleanupPending.value = false
+    previewStatus.value = status
+    previewMessage.value = message.slice(0, 2_048)
+  }
+
+  function wireGamePreviewStatus() {
+    removeGamePreviewStatusListener?.()
+    removeGamePreviewStatusListener = adapters.gamePreview?.onStatus?.((session) => {
+      if (!gamePreviewRunId || session.runId !== gamePreviewRunId) return
+      if (session.status === 'running' || session.status === 'starting') {
+        isPreviewing.value = true
+        previewStatus.value = session.status === 'running' ? 'running' : 'preparing'
+        return
+      }
+      if (session.status === 'failed' || session.status === 'stop_failed') finishGamePreview('error', session.error || 'The isolated game preview failed.')
+      else if (session.status === 'stopped' || session.status === 'exited') finishGamePreview('stopped')
+    })
+  }
+  wireGamePreviewStatus()
+
+  const startPreview = async () => {
     if (previewOccupied.value) return isPreviewing.value
     if (!canStartPreview.value) {
       previewStatus.value = 'unavailable'
-      previewMessage.value = 'The isolated UI canvas renderer is not connected.'
+      previewMessage.value = 'The isolated game preview is not connected.'
       return false
     }
     flushDrafts(activeSceneId.value)
-    previewModeBefore = editingMode.value
-    previewExitPending = false
     previewCleanupPending.value = false
     previewMessage.value = ''
-    previewExecutionMode.value = 'full-preview'
+    previewExecutionMode.value = 'authoring'
     previewStatus.value = 'preparing'
-    return true
+    const startPromise = adapters.gamePreview.start(projectPath.value!.trim(), exportRuntimeDocument(document.value))
+    gamePreviewStartPromise = startPromise
+    try {
+      const result = await startPromise
+      if (result.status !== 'success' || !result.value) {
+        finishGamePreview(result.status === 'idle' ? 'stopped' : 'error', result.message)
+        return false
+      }
+      gamePreviewRunId = result.value.runId
+      if (result.value.status === 'failed' || result.value.status === 'stop_failed') {
+        finishGamePreview('error', result.value.error || result.message)
+        return false
+      }
+      if (result.value.status === 'stopped' || result.value.status === 'exited') {
+        finishGamePreview('stopped')
+        return false
+      }
+      isPreviewing.value = true
+      previewStatus.value = result.value.status === 'running' ? 'running' : 'preparing'
+      return true
+    } catch (error) {
+      finishGamePreview('error', error instanceof Error ? error.message : String(error))
+      return false
+    } finally {
+      if (gamePreviewStartPromise === startPromise) gamePreviewStartPromise = undefined
+    }
   }
 
   const startEditorPreview = () => {
@@ -1645,21 +1691,35 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     return true
   }
 
-  const stopPreview = () => {
-    if (!isPreviewing.value && previewExecutionMode.value === 'authoring' && !previewCleanupPending.value) return true
-    previewExitPending = true
-    previewExecutionMode.value = 'authoring'
+  const stopPreview = async () => {
+    if (!isPreviewing.value && !gamePreviewRunId && !gamePreviewStartPromise) return true
     previewStatus.value = 'preparing'
-    return true
+    try {
+      if (gamePreviewStartPromise) await gamePreviewStartPromise
+      if (!isPreviewing.value && !gamePreviewRunId) return true
+      const result = await adapters.gamePreview.stop()
+      if (result.status !== 'success') {
+        previewCleanupPending.value = true
+        previewStatus.value = 'error'
+        previewMessage.value = result.message.slice(0, 2_048)
+        return false
+      }
+      finishGamePreview('stopped')
+      return true
+    } catch (error) {
+      previewCleanupPending.value = true
+      previewStatus.value = 'error'
+      previewMessage.value = (error instanceof Error ? error.message : String(error)).slice(0, 2_048)
+      return false
+    }
   }
 
   const acknowledgePreviewExecutionMode = (mode: UiDesignerRendererExecutionMode) => {
     if (mode !== previewExecutionMode.value) return false
-    if (mode === 'full-preview' || mode === 'editor-preview') {
+    if (mode === 'editor-preview') {
       if (previewStatus.value !== 'preparing') return false
       setEditingMode('design')
-      isPreviewing.value = mode === 'full-preview'
-      isEditorPreviewing.value = mode === 'editor-preview'
+      isEditorPreviewing.value = true
       previewExitPending = false
       previewCleanupPending.value = false
       previewStatus.value = 'running'
@@ -1802,6 +1862,15 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     draftRects.value = { ...draftRects.value, [nodeId]: result }
     return result
   }
+
+  registerPreviewDisposer(async (reason) => {
+    const stopped = await stopPreview()
+    if (reason === 'unload') {
+      removeGamePreviewStatusListener?.()
+      removeGamePreviewStatusListener = undefined
+    }
+    return stopped
+  })
   const commitDraftRect = (nodeId: string) => {
     const rect = draftRects.value[nodeId]
     if (!rect) return

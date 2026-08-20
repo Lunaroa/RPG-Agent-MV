@@ -7,6 +7,7 @@ import type {
   InteractivePlaytestRuntimeSelectionRequired,
   InteractivePlaytestRuntimeSelectionResult,
 } from '../../../contract/types.ts';
+import type { UiRuntimeSceneExport } from '../../../contract/ui-designer.ts';
 import { toIpcPayload } from './ipc-serialize.ts';
 
 export const INTERACTIVE_PLAYTEST_IPC_CHANNELS = [
@@ -35,6 +36,7 @@ interface InteractivePlaytestServiceLike {
       battleback1Name?: string;
       battleback2Name?: string;
       animationPreview?: InteractiveParticleAnimationPreview;
+      uiScene?: UiRuntimeSceneExport;
     },
   ): Promise<InteractivePlaytestResult>;
   current(): InteractivePlaytestResult;
@@ -63,8 +65,8 @@ export function registerInteractivePlaytestIpcHandlers(
     await dependencies.beforeStart?.();
     const body = request && typeof request === 'object' ? request : {};
     assertKnownStartFields(body);
-    const mode = body.mode === 'project' || body.mode === 'battle_test' || body.mode === 'particle_preview' ? body.mode : null;
-    if (!mode) throw new Error('playtest:start mode must be project, battle_test, or particle_preview.');
+    const mode = body.mode === 'project' || body.mode === 'battle_test' || body.mode === 'particle_preview' || body.mode === 'ui_designer_scene' ? body.mode : null;
+    if (!mode) throw new Error('playtest:start mode must be project, battle_test, particle_preview, or ui_designer_scene.');
     assertModeFields(body, mode);
     const requestedProject = typeof body.project === 'string' && body.project.trim()
       ? body.project.trim()
@@ -88,12 +90,18 @@ export function registerInteractivePlaytestIpcHandlers(
       options.battlers = parseBattlers(body.battlers);
       options.battleback1Name = stringField(body.battleback1Name, 'battleback1Name');
       options.battleback2Name = stringField(body.battleback2Name, 'battleback2Name');
-    } else {
+    } else if (mode === 'particle_preview') {
       if (confirmedStagingHash) throw new Error('particle_preview does not accept confirmedStagingHash.');
       if (!body.animationPreview || typeof body.animationPreview !== 'object' || Array.isArray(body.animationPreview)) {
         throw new Error('particle_preview animationPreview must be an object.');
       }
       options.animationPreview = body.animationPreview as unknown as InteractiveParticleAnimationPreview;
+    } else {
+      if (confirmedStagingHash) throw new Error('ui_designer_scene does not accept confirmedStagingHash.');
+      if (!body.uiScene || typeof body.uiScene !== 'object' || Array.isArray(body.uiScene)) {
+        throw new Error('ui_designer_scene uiScene must be an object.');
+      }
+      options.uiScene = body.uiScene as unknown as UiRuntimeSceneExport;
     }
     return toIpcPayload(await service.start(project, options));
   });
@@ -141,6 +149,7 @@ const START_FIELDS = new Set([
   'battleback1Name',
   'battleback2Name',
   'animationPreview',
+  'uiScene',
 ]);
 
 function assertKnownStartFields(body: Record<string, unknown>): void {
@@ -160,6 +169,9 @@ function assertModeFields(body: Record<string, unknown>, mode: InteractivePlayte
   }
   if (mode !== 'particle_preview' && present('animationPreview')) {
     throw new Error(`${mode} does not accept animationPreview.`);
+  }
+  if (mode !== 'ui_designer_scene' && present('uiScene')) {
+    throw new Error(`${mode} does not accept uiScene.`);
   }
 }
 

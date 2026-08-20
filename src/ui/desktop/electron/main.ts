@@ -150,6 +150,29 @@ async function createWindow() {
     },
   });
 
+  mainWindow.webContents.setWindowOpenHandler((details) => {
+    if (details.url !== 'about:blank' || details.frameName !== 'rpg-agent-ui-designer-preview') return { action: 'deny' };
+    return {
+      action: 'allow',
+      overrideBrowserWindowOptions: {
+        parent: mainWindow ?? undefined,
+        modal: false,
+        frame: true,
+        useContentSize: true,
+        show: !backgroundUiControlMode,
+        paintWhenInitiallyHidden: true,
+        backgroundColor: '#090a0d',
+        autoHideMenuBar: true,
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+          backgroundThrottling: false,
+        },
+      },
+    };
+  });
+
   if (backgroundUiControlMode) installUiDesignerRendererLoadDiagnostics(mainWindow.webContents);
 
   if (!backgroundUiControlMode) {

@@ -34,6 +34,33 @@
   function finite(value, fallback) { return typeof value === 'number' && isFinite(value) ? value : fallback; }
   function errorText(error) { return error && error.message ? error.message : String(error); }
 
+  function ensureSceneMessageHost(scene) {
+    if (!scene) throw new Error('The active MV/MZ scene is unavailable for message display.');
+    if (scene._messageWindow) return scene._messageWindow;
+    if (!global.$gameMessage || typeof global.$gameMessage.add !== 'function') throw new Error('The project MV/MZ game-message state is unavailable.');
+    if (typeof scene.createWindowLayer !== 'function') throw new Error('The active MV/MZ scene cannot create an official message window layer.');
+    if (!scene._windowLayer) scene.createWindowLayer();
+    var engine = global.Utils && String(global.Utils.RPGMAKER_NAME || '').toUpperCase();
+    if (engine === 'MZ') {
+      var messagePrototype = global.Scene_Message && global.Scene_Message.prototype;
+      var required = ['createAllWindows', 'createMessageWindow', 'messageWindowRect', 'createScrollTextWindow', 'scrollTextWindowRect', 'createGoldWindow', 'goldWindowRect', 'createNameBoxWindow', 'createChoiceListWindow', 'createNumberInputWindow', 'createEventItemWindow', 'eventItemWindowRect', 'associateWindows'];
+      if (!messagePrototype) throw new Error('The project MZ Scene_Message contract is unavailable.');
+      required.forEach(function (name) {
+        if (typeof messagePrototype[name] !== 'function') throw new Error('The project MZ Scene_Message contract is incomplete: ' + name);
+        if (typeof scene[name] !== 'function') scene[name] = messagePrototype[name];
+      });
+      scene.createAllWindows();
+    } else if (engine === 'MV') {
+      var mapPrototype = global.Scene_Map && global.Scene_Map.prototype;
+      if (!mapPrototype || typeof mapPrototype.createMessageWindow !== 'function') throw new Error('The project MV message-window contract is unavailable.');
+      mapPrototype.createMessageWindow.call(scene);
+    } else {
+      throw new Error('The RPG Maker engine is unsupported for message display: ' + String(engine || 'unknown'));
+    }
+    if (!scene._messageWindow) throw new Error('The project MV/MZ message window was not created.');
+    return scene._messageWindow;
+  }
+
   function canonicalizeLegacySceneScriptSource(source) {
     var output = '';
     var index = 0;
@@ -151,6 +178,7 @@
       sceneTransition: null,
       sceneFilters: [],
       focusedNodeId: null,
+      touchPressedNodeId: null,
       executionMode: 'full-preview',
       allowsUserExecution: function allowsUserExecution() { return this.executionMode !== 'authoring'; },
       makeInvocationArgs: function makeInvocationArgs(node, event, props) {
@@ -214,6 +242,7 @@
         this.effectiveVisibility = {};
         this.visibilityEventsReady = false;
         this.frame = 0;
+        this.touchPressedNodeId = null;
         this.nodeIndex = {};
         (Array.isArray(scene && scene.nodes) ? scene.nodes : []).forEach(function (node) {
           if (node && typeof node.id === 'string') this.nodeIndex[node.id] = node;
@@ -382,6 +411,7 @@
             self.reportError(error, 'node:update', { node: node.id, type: node.type, phase: 'update' });
           }
         });
+        updateTouchInputBridge(this);
         if (this.allowsUserExecution()) {
           // The Runtime itself already carries frame/deltaMs. Passing the
           // established invocation tuple keeps v1.0 callbacks compatible,
@@ -556,7 +586,8 @@
           global.SceneManager.push(global.Scene_Options);
         } else if (action.type === 'exit' && global.SceneManager && typeof global.SceneManager.exit === 'function') {
           global.SceneManager.exit();
-        } else if (action.type === 'showMessage' && global.$gameMessage && typeof global.$gameMessage.add === 'function') {
+        } else if (action.type === 'showMessage') {
+          ensureSceneMessageHost(global.SceneManager && global.SceneManager._scene);
           global.$gameMessage.add(String(action.message || ''));
         } else if (action.type === 'wait') {
           // Wait is consumed by the per-event action queue above. Keeping it
@@ -762,6 +793,7 @@
         this.sceneTransition = null;
         this.sceneFilters = [];
         this.focusedNodeId = null;
+        this.touchPressedNodeId = null;
         this.executionMode = 'full-preview';
       },
     };
@@ -2326,6 +2358,60 @@
     rect.height = height;
   }
 
+  // RPG Maker's own UI consumes pointer input through TouchInput. Some MV/MZ
+  // NW.js builds do not route the same DOM events through PIXI's interaction
+  // emitter, so keep button activation on the engine input path as well.
+  function updateTouchInputBridge(runtime) {
+    var input = global.TouchInput;
+    if (!runtime || !runtime.mounted || !runtime.allowsUserExecution() || !input) return;
+    var triggered = typeof input.isTriggered === 'function' && input.isTriggered();
+    var released = typeof input.isReleased === 'function' && input.isReleased();
+    if (!triggered && !released) return;
+
+    var target = runtimeButtonAtPoint(runtime, finite(input.x, 0), finite(input.y, 0));
+    if (triggered) {
+      runtime.touchPressedNodeId = null;
+      if (!gameMessageIsBusy() && target && !target.view.__mzuiDisabled) {
+        runtime.touchPressedNodeId = target.node.id;
+        runtime.focusNode(target.node.id);
+        target.view.__mzuiButtonState = 'pressed';
+        renderButtonState(target.view, target.node.props || {});
+      }
+    }
+
+    if (!released) return;
+    var pressedNodeId = runtime.touchPressedNodeId;
+    runtime.touchPressedNodeId = null;
+    if (!pressedNodeId) return;
+    var pressedNode = runtime.nodeIndex[pressedNodeId];
+    var pressedView = runtime.nodeViews[pressedNodeId];
+    if (pressedView) {
+      pressedView.__mzuiButtonState = 'normal';
+      renderButtonState(pressedView, pressedNode && pressedNode.props || {});
+    }
+    if (!pressedNode || !pressedView || pressedView.__mzuiDisabled || gameMessageIsBusy()) return;
+    if (!target || target.node.id !== pressedNodeId) return;
+    if (Date.now() - finite(pressedView.__mzuiLastPixiPointerTapAt, 0) < 250) return;
+    playButtonSe(runtime, pressedNode, pressedView.__mzuiSe && pressedView.__mzuiSe.click, 'onClick');
+    runtime.dispatchActionsForNode(pressedNode, 'onClick', { type: 'pointertap', source: 'TouchInput' });
+  }
+
+  function runtimeButtonAtPoint(runtime, x, y) {
+    var interaction = global.Graphics && global.Graphics.app && global.Graphics.app.renderer && global.Graphics.app.renderer.plugins && global.Graphics.app.renderer.plugins.interaction;
+    var PIXI = global.PIXI || {};
+    var hitRoot = runtime.hostRoot || runtime.displayRoot;
+    if (!interaction || typeof interaction.hitTest !== 'function' || typeof PIXI.Point !== 'function' || !hitRoot) return null;
+    var view = interaction.hitTest(new PIXI.Point(x, y), hitRoot);
+    while (view && !view.__mzuiNode) view = view.parent;
+    var node = view && view.__mzuiNode;
+    if (!node || node.type !== 'button' || !runtime.nodeViews[node.id] || effectiveViewVisibility(view) === false) return null;
+    return { node: node, view: view };
+  }
+
+  function gameMessageIsBusy() {
+    return Boolean(global.$gameMessage && typeof global.$gameMessage.isBusy === 'function' && global.$gameMessage.isBusy());
+  }
+
   function bindNodeEvents(runtime, node, view) {
     if (!view || typeof view.on !== 'function') return;
     if (node.type === 'button') {
@@ -2335,7 +2421,7 @@
         pointerdown: function () { if (!view.__mzuiDisabled) { view.__mzuiButtonState = 'pressed'; renderButtonState(view, node.props || {}); } },
         pointerup: function () { view.__mzuiButtonState = 'normal'; renderButtonState(view, node.props || {}); },
         pointerupoutside: function () { view.__mzuiButtonState = 'normal'; renderButtonState(view, node.props || {}); },
-        pointertap: function () { if (!view.__mzuiDisabled) { playButtonSe(runtime, node, view.__mzuiSe && view.__mzuiSe.click, 'onClick'); view.__mzuiButtonState = 'normal'; renderButtonState(view, node.props || {}); } },
+        pointertap: function () { if (!view.__mzuiDisabled) { view.__mzuiLastPixiPointerTapAt = Date.now(); playButtonSe(runtime, node, view.__mzuiSe && view.__mzuiSe.click, 'onClick'); view.__mzuiButtonState = 'normal'; renderButtonState(view, node.props || {}); } },
       };
       Object.keys(visualEvents).forEach(function (eventName) {
         view.interactive = true;

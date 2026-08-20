@@ -1,5 +1,6 @@
 import type { ProductLanguage } from './i18n.ts';
 import type { ProductPluginSettings } from './product-plugin.ts';
+import type { UiRuntimeSceneExport } from './ui-designer.ts';
 export type { ProductLanguage } from './i18n.ts';
 
 // renderer ↔ 后端 的端点单一事实来源（形状侧）。
@@ -1204,7 +1205,7 @@ export type InteractivePlaytestRunStatus =
   | 'failed'
   | 'stop_failed';
 
-export type InteractivePlaytestMode = 'project' | 'battle_test' | 'particle_preview';
+export type InteractivePlaytestMode = 'project' | 'battle_test' | 'particle_preview' | 'ui_designer_scene';
 
 export interface InteractiveBattleTestBattler {
   actorId: number;
@@ -1242,6 +1243,7 @@ export interface InteractivePlaytestStartRequest {
   battleback1Name?: string;
   battleback2Name?: string;
   animationPreview?: InteractiveParticleAnimationPreview;
+  uiScene?: UiRuntimeSceneExport;
 }
 
 export interface InteractivePlaytestRuntimeSelectionRequired {
@@ -1296,6 +1298,7 @@ export interface InteractivePlaytestRun {
   troopName?: string;
   stagedFileCount?: number;
   effectName?: string;
+  sceneName?: string;
   sourceUnchanged?: boolean;
   savesUnchanged?: boolean;
   stagingUnchanged?: boolean;

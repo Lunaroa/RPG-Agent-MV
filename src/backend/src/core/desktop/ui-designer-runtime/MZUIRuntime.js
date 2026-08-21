@@ -178,6 +178,7 @@
       sceneTransition: null,
       sceneFilters: [],
       focusedNodeId: null,
+      touchHoveredNodeId: null,
       touchPressedNodeId: null,
       executionMode: 'full-preview',
       allowsUserExecution: function allowsUserExecution() { return this.executionMode !== 'authoring'; },
@@ -242,6 +243,7 @@
         this.effectiveVisibility = {};
         this.visibilityEventsReady = false;
         this.frame = 0;
+        this.touchHoveredNodeId = null;
         this.touchPressedNodeId = null;
         this.nodeIndex = {};
         (Array.isArray(scene && scene.nodes) ? scene.nodes : []).forEach(function (node) {
@@ -606,10 +608,17 @@
       focusNode: function focusNode(id) {
         var node = findNode(this.scene, id);
         var view = node && this.nodeViews[id];
-        if (!node || !view || node.type !== 'button' || view.__mzuiDisabled) return false;
+        if (!node || !view || node.type !== 'button' || view.__mzuiDisabled || !effectiveViewVisibility(view)) return false;
+        if (this.focusedNodeId === id) {
+          view.__mzuiFocused = true;
+          if (view.__mzuiButtonState !== 'pressed') view.__mzuiButtonState = 'hover';
+          renderButtonState(view, node.props || {});
+          return true;
+        }
         if (this.focusedNodeId && this.focusedNodeId !== id) this.blurNode(this.focusedNodeId);
         this.focusedNodeId = id;
         view.__mzuiFocused = true;
+        if (view.__mzuiButtonState !== 'pressed') view.__mzuiButtonState = 'hover';
         renderButtonState(view, node.props || {});
         this.dispatchActionsForNode(node, 'onFocus', { type: 'focus', target: view });
         return true;
@@ -620,6 +629,7 @@
         if (!node || !view) return false;
         view.__mzuiFocused = false;
         if (this.focusedNodeId === id) this.focusedNodeId = null;
+        if (view.__mzuiButtonState !== 'pressed') view.__mzuiButtonState = view.__mzuiPointerHover ? 'hover' : 'normal';
         renderButtonState(view, node.props || {});
         this.dispatchActionsForNode(node, 'onBlur', { type: 'blur', target: view });
         return true;
@@ -793,6 +803,7 @@
         this.sceneTransition = null;
         this.sceneFilters = [];
         this.focusedNodeId = null;
+        this.touchHoveredNodeId = null;
         this.touchPressedNodeId = null;
         this.executionMode = 'full-preview';
       },
@@ -878,6 +889,16 @@
     return typeof value === 'string' && /\\(?:v|c|i)\[\d+\]|\\n|<\/?(?:b|i)>|<\/?color(?:=[^>]+)?>/i.test(value);
   }
 
+  function singleLineText(value) {
+    return String(value == null ? '' : value).replace(/\r\n?|\n/g, ' ').replace(/\\n/gi, ' ');
+  }
+
+  function horizontalTextScale(layoutWidth, naturalWidth) {
+    var width = Math.max(1, finite(layoutWidth, 1));
+    var natural = Math.max(0, finite(naturalWidth, 0));
+    return natural > width ? width / natural : 1;
+  }
+
   function parseTextRuns(value, context) {
     var source = String(value || '');
     var variables = context && context.variables || (global.$gameVariables && global.$gameVariables._data) || {};
@@ -927,8 +948,8 @@
 
   function renderTextRuns(view, props, context) {
     if (!view || !view.__mzuiTextRuns || typeof view.addChild === 'undefined') return;
-    var resolved = parseTextRuns(props.content, context);
-    var key = JSON.stringify({ content: props.content, variables: context && context.variables, font: props.fontFile, size: props.fontSize, color: props.textColor, wrap: props.wrapWidth });
+    var resolved = parseTextRuns(singleLineText(props.content), context);
+    var key = JSON.stringify({ content: props.content, variables: context && context.variables, font: props.fontFile, size: props.fontSize, color: props.textColor, width: props.width, align: props.align });
     if (view.__mzuiTextRunsKey === key) return;
     view.__mzuiTextRunsKey = key;
     if (Array.isArray(view.children) && typeof view.removeChild === 'function') {
@@ -941,10 +962,8 @@
     var fontSize = finite(props.fontSize, nativeTextProfile().fontSize);
     var stroke = nativeStroke(props);
     var cursorX = 0;
-    var cursorY = 0;
-    var lineHeight = fontSize * 1.2;
     resolved.forEach(function (run) {
-      if (run.kind === 'newline') { cursorX = 0; cursorY += lineHeight; return; }
+      if (run.kind === 'newline') return;
       if (run.kind === 'icon') {
         if (global.Sprite && typeof global.Sprite === 'function') {
           var icon = new global.Sprite(loadBitmap('img/system/IconSet'));
@@ -954,7 +973,7 @@
             var size = 32;
             icon.setFrame((run.iconId % columns) * size, Math.floor(run.iconId / columns) * size, size, size);
           }
-          icon.x = cursorX; icon.y = cursorY; icon.width = fontSize; icon.height = fontSize;
+          icon.x = cursorX; icon.y = 0; icon.width = fontSize; icon.height = fontSize;
           view.addChild(icon);
           cursorX += fontSize;
         }
@@ -972,14 +991,22 @@
         stroke: stroke.color,
         strokeThickness: stroke.width,
       });
-      text.x = cursorX; text.y = cursorY;
+      text.x = cursorX; text.y = 0;
       view.addChild(text);
+      if (typeof text.updateText === 'function') { try { text.updateText(true); } catch (_) {} }
       var measuredWidth = finite(text.width, 0) || run.text.length * fontSize * 0.5;
-      if (finite(props.wrapWidth, 0) > 0 && cursorX > 0 && cursorX + measuredWidth > props.wrapWidth) {
-        cursorX = 0; cursorY += lineHeight; text.x = 0; text.y = cursorY;
-      }
       cursorX += measuredWidth;
     });
+    var compression = horizontalTextScale(props.width, cursorX);
+    var renderedWidth = cursorX * compression;
+    var start = props.align === 'right' ? Math.max(0, finite(props.width, 0) - renderedWidth)
+      : props.align === 'center' ? Math.max(0, (finite(props.width, 0) - renderedWidth) / 2) : 0;
+    if (Array.isArray(view.children)) view.children.forEach(function (child) {
+      child.x = start + finite(child.x, 0) * compression;
+      child.scale = child.scale || { x: 1, y: 1 };
+      child.scale.x = finite(child.scale.x, 1) * compression;
+    });
+    view.__mzuiTextHorizontalScale = 1;
     view.__mzuiRichText = 'safe-runs';
     renderTextBackground(view, props);
   }
@@ -990,7 +1017,7 @@
   // engine's native window-text outline unless the designer sets a stroke.
   function applyPlainTextStyle(view, props) {
     if (!view) return;
-    view.text = String(props.content || '');
+    view.text = singleLineText(props.content);
     view.style = view.style || {};
     var native = nativeTextProfile();
     var stroke = nativeStroke(props);
@@ -1003,8 +1030,8 @@
       stroke: stroke.color,
       strokeThickness: stroke.width,
       letterSpacing: finite(props.letterSpacing, 0),
-      wordWrap: finite(props.wrapWidth, 0) > 0,
-      wordWrapWidth: finite(props.wrapWidth, 0),
+      wordWrap: false,
+      wordWrapWidth: 0,
       align: props.align || 'left',
     });
     view.style.dropShadow = finite(props.shadowBlur, 0) > 0 || Boolean(props.shadowColor);
@@ -1022,6 +1049,12 @@
       finite(textPadding.left, 0)
     );
     view.style.textBaseline = 'alphabetic';
+    if (typeof view.updateText === 'function') { try { view.updateText(true); } catch (_) {} }
+    var designerScaleX = Math.abs(finite(view.__mzuiDesignerScaleX, finite(props.scaleX, 1))) || 1;
+    var naturalWidth = Math.abs(finite(view.width, 0)) / designerScaleX;
+    if (!naturalWidth) naturalWidth = view.text.length * finite(view.style.fontSize, 24) * 0.6;
+    view.__mzuiTextNaturalWidth = naturalWidth;
+    view.__mzuiTextHorizontalScale = horizontalTextScale(props.width, naturalWidth);
   }
 
   // Plain text vertical alignment moves the glyph block inside the node box.
@@ -1034,6 +1067,16 @@
     if (typeof view.updateText === 'function') { try { view.updateText(true); } catch (_) {} }
     var spare = Math.max(0, Math.abs(finite(props.height, 0) * finite(props.scaleY, 1)) - Math.abs(finite(view.height, 0)));
     return align === 'middle' ? spare / 2 : spare;
+  }
+
+  function plainTextHorizontalOffset(view, props) {
+    var width = Math.max(1, finite(props.width, 1));
+    var natural = Math.max(0, finite(view.__mzuiTextNaturalWidth, width));
+    var compression = finite(view.__mzuiTextHorizontalScale, 1);
+    var rendered = natural * compression;
+    var start = props.align === 'right' ? Math.max(0, width - rendered)
+      : props.align === 'center' ? Math.max(0, (width - rendered) / 2) : 0;
+    return (start + finite(props.anchorX, 0) * rendered - finite(props.anchorX, 0) * width) * finite(props.scaleX, 1);
   }
 
   function createDisplayNode(node, runtime) {
@@ -1164,46 +1207,15 @@
     var contentWidth = Math.max(1, finite(props.width, 0) - padding * 2);
     var contentHeight = Math.max(0, finite(props.height, 0) - padding * 2);
     var lineHeight = Math.max(1, Math.ceil(contents.fontSize * 1.3));
-    // The editor textbox wraps per grapheme; mirror that for button labels.
-    var lines = wrapButtonTextLines(contents, String(props.content || ''), contentWidth);
-    var totalHeight = lines.length * lineHeight;
+    var label = singleLineText(props.content);
+    var totalHeight = lineHeight;
     var top = props.verticalAlign === 'middle' || !props.verticalAlign
       ? Math.max(0, (contentHeight - totalHeight) / 2)
       : props.verticalAlign === 'bottom'
         ? Math.max(0, contentHeight - totalHeight)
         : 0;
     var align = props.align || 'center';
-    for (var index = 0; index < lines.length; index += 1) {
-      contents.drawText(lines[index], 0, Math.round(top + index * lineHeight), contentWidth, lineHeight, align);
-    }
-  }
-
-  function wrapButtonTextLines(contents, text, maxWidth) {
-    var source = String(text == null ? '' : text).replace(/\r\n?/g, '\n');
-    var lines = [];
-    source.split('\n').forEach(function (paragraph) {
-      if (!paragraph) { lines.push(''); return; }
-      var current = '';
-      var characters = Array.from(paragraph);
-      for (var index = 0; index < characters.length; index += 1) {
-        var candidate = current + characters[index];
-        if (current && measureButtonText(contents, candidate) > maxWidth) {
-          lines.push(current);
-          current = characters[index];
-        } else {
-          current = candidate;
-        }
-      }
-      if (current) lines.push(current);
-    });
-    return lines;
-  }
-
-  function measureButtonText(contents, text) {
-    try {
-      if (typeof contents.measureTextWidth === 'function') return contents.measureTextWidth(text);
-    } catch (_) {}
-    return text.length * finite(contents.fontSize, 24) * 0.6;
+    contents.drawText(label, 0, Math.round(top), contentWidth, lineHeight, align);
   }
 
   function RectangleLike(x, y, width, height) {
@@ -1876,17 +1888,22 @@
   function applyNodeTransform(node, view, scene) {
     if (!node || !view) return;
     var props = node.props || {};
+    var offsetX = 0;
     var offsetY = 0;
     if (node.type === 'text' && !view.__mzuiTextRuns && view.text !== undefined) {
+      offsetX = plainTextHorizontalOffset(view, props);
       offsetY = plainTextVerticalOffset(view, props);
     }
-    var worldScaleX = finite(view.__mzuiWorldScaleX, finite(props.scaleX, 1));
+    var worldScaleX = finite(view.__mzuiWorldScaleX, finite(props.scaleX, 1)) * finite(view.__mzuiTextHorizontalScale, 1);
     var worldScaleY = finite(view.__mzuiWorldScaleY, finite(props.scaleY, 1));
     var desired = nodeWorldMatrix(node, worldScaleX, worldScaleY, offsetY);
     var parent = node.parentId ? findNode(scene, node.parentId) : null;
     var local = desired;
-    var localX = finite(props.x, 0);
-    var localY = finite(props.y, 0) + offsetY;
+    var rotation = finite(props.rotate, 0) * Math.PI / 180;
+    var worldX = finite(props.x, 0) + Math.cos(rotation) * offsetX - Math.sin(rotation) * offsetY;
+    var worldY = finite(props.y, 0) + Math.sin(rotation) * offsetX + Math.cos(rotation) * offsetY;
+    var localX = worldX;
+    var localY = worldY;
     if (parent) {
       var parentProps = parent.props || {};
       var parentWorld = nodeWorldMatrix(parent, finite(parentProps.scaleX, 1), finite(parentProps.scaleY, 1));
@@ -1896,8 +1913,8 @@
       var inverseB = -parentWorld.b / determinant;
       var inverseC = -parentWorld.c / determinant;
       var inverseD = parentWorld.a / determinant;
-      var dx = finite(props.x, 0) - parentWorld.tx;
-      var dy = finite(props.y, 0) + offsetY - parentWorld.ty;
+      var dx = worldX - parentWorld.tx;
+      var dy = worldY - parentWorld.ty;
       localX = inverseA * dx + inverseC * dy;
       localY = inverseB * dx + inverseD * dy;
       local = {
@@ -2085,11 +2102,11 @@
     if (!view) return;
     view.__mzuiButtonStates = props.imageStates || { normal: '', hover: '', pressed: '', disabled: '' };
     view.__mzuiHoverTint = props.hoverTint || '#ffffff';
-    view.__mzuiPressedScale = finite(props.pressedScale, 1);
     view.__mzuiFocusColor = props.focusColor || '#ffffff';
     view.__mzuiFocusWidth = finite(props.focusWidth, 1);
     view.__mzuiSe = { hover: props.hoverSe || '', click: props.clickSe || '' };
     view.__mzuiButtonState = view.__mzuiButtonState || 'normal';
+    view.__mzuiPointerHover = Boolean(view.__mzuiPointerHover);
     view.__mzuiDisabledCondition = props.disabledCondition || '';
     if (typeof view.__mzuiDisabled !== 'boolean') view.__mzuiDisabled = Boolean(props.disabled);
     renderButtonChrome(view, props);
@@ -2097,7 +2114,17 @@
   }
 
   function renderButtonChrome(view, props) {
-    if (!view || !global.PIXI || typeof global.PIXI.Graphics !== 'function' || typeof view.addChildAt !== 'function') return;
+    if (!view) return;
+    var states = view.__mzuiButtonStates || props.imageStates || {};
+    var usesStateImages = Object.keys(states).some(function (key) { return Boolean(states[key]); });
+    // Window_Base owns the engine windowskin background/frame independently
+    // from ordinary PIXI children. Its opacity hides that native chrome while
+    // leaving contents and our custom state-image child visible.
+    view.opacity = usesStateImages ? 0 : 255;
+    ['_windowBackSprite', '_windowFrameSprite', '_backSprite', '_frameSprite'].forEach(function (key) {
+      if (view[key]) view[key].visible = !usesStateImages;
+    });
+    if (!global.PIXI || typeof global.PIXI.Graphics !== 'function' || typeof view.addChildAt !== 'function') return;
     if (!view.__mzuiButtonChrome) {
       view.__mzuiButtonChrome = new global.PIXI.Graphics();
       view.__mzuiButtonChrome.renderable = true;
@@ -2105,6 +2132,8 @@
     }
     var chrome = view.__mzuiButtonChrome;
     if (typeof chrome.clear === 'function') chrome.clear();
+    chrome.visible = !usesStateImages;
+    if (!chrome.visible) return;
     if (props.backgroundColor && typeof chrome.beginFill === 'function') chrome.beginFill(parseColor(props.backgroundColor, 0x000000), parseAlpha(props.backgroundColor));
     if (props.backgroundColor) drawRect(chrome, 0, 0, finite(props.width, 0), finite(props.height, 0), finite(props.borderRadius, 0));
     if (props.backgroundColor && typeof chrome.endFill === 'function') chrome.endFill();
@@ -2137,12 +2166,6 @@
       view.__mzuiButtonImage.width = finite(props.width, 0);
       view.__mzuiButtonImage.height = finite(props.height, 0);
       view.__mzuiButtonImage.tint = state === 'hover' && props.hoverTint ? parseColor(props.hoverTint, 0xffffff) : 0xffffff;
-    }
-    if (view.scale && typeof view.__mzuiDesignerScaleX === 'number') {
-      var pressedScale = state === 'pressed' ? finite(props.pressedScale, 1) : 1;
-      view.__mzuiWorldScaleX = view.__mzuiDesignerScaleX * pressedScale;
-      view.__mzuiWorldScaleY = view.__mzuiDesignerScaleY * pressedScale;
-      applyNodeTransform(view.__mzuiNode, view, view.__mzuiRuntime && view.__mzuiRuntime.scene);
     }
     if (view.__mzuiFocusFrame) view.__mzuiFocusFrame.visible = Boolean(view.__mzuiFocused);
     if (view.__mzuiFocused && global.PIXI && typeof global.PIXI.Graphics === 'function' && !view.__mzuiFocusFrame) {
@@ -2366,9 +2389,10 @@
     if (!runtime || !runtime.mounted || !runtime.allowsUserExecution() || !input) return;
     var triggered = typeof input.isTriggered === 'function' && input.isTriggered();
     var released = typeof input.isReleased === 'function' && input.isReleased();
+    var target = runtimeButtonAtPoint(runtime, finite(input.x, 0), finite(input.y, 0));
+    syncTouchInputHover(runtime, target);
     if (!triggered && !released) return;
 
-    var target = runtimeButtonAtPoint(runtime, finite(input.x, 0), finite(input.y, 0));
     if (triggered) {
       runtime.touchPressedNodeId = null;
       if (!gameMessageIsBusy() && target && !target.view.__mzuiDisabled) {
@@ -2386,7 +2410,7 @@
     var pressedNode = runtime.nodeIndex[pressedNodeId];
     var pressedView = runtime.nodeViews[pressedNodeId];
     if (pressedView) {
-      pressedView.__mzuiButtonState = 'normal';
+      pressedView.__mzuiButtonState = pressedView.__mzuiFocused || pressedView.__mzuiPointerHover ? 'hover' : 'normal';
       renderButtonState(pressedView, pressedNode && pressedNode.props || {});
     }
     if (!pressedNode || !pressedView || pressedView.__mzuiDisabled || gameMessageIsBusy()) return;
@@ -2394,6 +2418,36 @@
     if (Date.now() - finite(pressedView.__mzuiLastPixiPointerTapAt, 0) < 250) return;
     playButtonSe(runtime, pressedNode, pressedView.__mzuiSe && pressedView.__mzuiSe.click, 'onClick');
     runtime.dispatchActionsForNode(pressedNode, 'onClick', { type: 'pointertap', source: 'TouchInput' });
+  }
+
+  function syncTouchInputHover(runtime, target) {
+    var next = target && !target.view.__mzuiDisabled ? target : null;
+    var previousId = runtime.touchHoveredNodeId;
+    var nextId = next && next.node.id;
+    if (previousId === nextId) return;
+    runtime.touchHoveredNodeId = nextId || null;
+    if (previousId) {
+      var previousNode = runtime.nodeIndex[previousId];
+      var previousView = runtime.nodeViews[previousId];
+      if (previousNode && previousView) setButtonPointerHover(runtime, previousNode, previousView, false, 'TouchInput');
+    }
+    if (next) setButtonPointerHover(runtime, next.node, next.view, true, 'TouchInput');
+  }
+
+  function setButtonPointerHover(runtime, node, view, hovered, source) {
+    if (!node || !view || node.type !== 'button') return false;
+    var nextHovered = Boolean(hovered && !view.__mzuiDisabled);
+    if (Boolean(view.__mzuiPointerHover) === nextHovered) return false;
+    view.__mzuiPointerHover = nextHovered;
+    if (view.__mzuiButtonState !== 'pressed') view.__mzuiButtonState = nextHovered || view.__mzuiFocused ? 'hover' : 'normal';
+    renderButtonState(view, node.props || {});
+    if (nextHovered) {
+      playButtonSe(runtime, node, view.__mzuiSe && view.__mzuiSe.hover, 'onHoverEnter');
+      runtime.dispatchActionsForNode(node, 'onHoverEnter', { type: 'pointerover', source: source });
+    } else {
+      runtime.dispatchActionsForNode(node, 'onHoverLeave', { type: 'pointerout', source: source });
+    }
+    return true;
   }
 
   function runtimeButtonAtPoint(runtime, x, y) {
@@ -2416,12 +2470,12 @@
     if (!view || typeof view.on !== 'function') return;
     if (node.type === 'button') {
       var visualEvents = {
-        pointerover: function () { if (!view.__mzuiDisabled) { view.__mzuiButtonState = 'hover'; playButtonSe(runtime, node, view.__mzuiSe && view.__mzuiSe.hover, 'onHoverEnter'); renderButtonState(view, node.props || {}); } },
-        pointerout: function () { view.__mzuiButtonState = 'normal'; renderButtonState(view, node.props || {}); },
-        pointerdown: function () { if (!view.__mzuiDisabled) { view.__mzuiButtonState = 'pressed'; renderButtonState(view, node.props || {}); } },
-        pointerup: function () { view.__mzuiButtonState = 'normal'; renderButtonState(view, node.props || {}); },
-        pointerupoutside: function () { view.__mzuiButtonState = 'normal'; renderButtonState(view, node.props || {}); },
-        pointertap: function () { if (!view.__mzuiDisabled) { view.__mzuiLastPixiPointerTapAt = Date.now(); playButtonSe(runtime, node, view.__mzuiSe && view.__mzuiSe.click, 'onClick'); view.__mzuiButtonState = 'normal'; renderButtonState(view, node.props || {}); } },
+        pointerover: function () { setButtonPointerHover(runtime, node, view, true, 'PIXI'); },
+        pointerout: function () { setButtonPointerHover(runtime, node, view, false, 'PIXI'); },
+        pointerdown: function () { if (!view.__mzuiDisabled) { runtime.focusNode(node.id); view.__mzuiButtonState = 'pressed'; renderButtonState(view, node.props || {}); } },
+        pointerup: function () { view.__mzuiButtonState = view.__mzuiFocused || view.__mzuiPointerHover ? 'hover' : 'normal'; renderButtonState(view, node.props || {}); },
+        pointerupoutside: function () { view.__mzuiButtonState = view.__mzuiFocused ? 'hover' : 'normal'; renderButtonState(view, node.props || {}); },
+        pointertap: function () { if (!view.__mzuiDisabled) { view.__mzuiLastPixiPointerTapAt = Date.now(); playButtonSe(runtime, node, view.__mzuiSe && view.__mzuiSe.click, 'onClick'); view.__mzuiButtonState = view.__mzuiFocused || view.__mzuiPointerHover ? 'hover' : 'normal'; renderButtonState(view, node.props || {}); } },
       };
       Object.keys(visualEvents).forEach(function (eventName) {
         view.interactive = true;
@@ -2432,6 +2486,7 @@
     if (!node.events) { syncInteractiveHitArea(node, view); return; }
     var eventMap = { onClick: 'pointertap', onHoverEnter: 'pointerover', onHoverLeave: 'pointerout', onFocus: 'focus', onBlur: 'blur' };
     Object.keys(eventMap).forEach(function (name) {
+      if (node.type === 'button' && (name === 'onHoverEnter' || name === 'onHoverLeave')) return;
       var handler = node.events[name];
       if (!handler || !Array.isArray(handler.actions)) return;
       var listener = function listener(event) {
@@ -2452,25 +2507,58 @@
 
   function installKeyboardFocusManager(runtime) {
     if (typeof document === 'undefined' || !document || typeof document.addEventListener !== 'function') return;
-    var listener = function listener(event) {
+    var pressedNodeId = null;
+    var focusableButtons = function focusableButtons() {
+      return (runtime.scene && Array.isArray(runtime.scene.nodes) ? runtime.scene.nodes : []).filter(function (node) {
+        var view = node && runtime.nodeViews[node.id];
+        return node && node.type === 'button' && view && !view.__mzuiDisabled && effectiveViewVisibility(view);
+      }).map(function (node, index) {
+        var view = runtime.nodeViews[node.id];
+        var bounds = worldAabbForView(view, node);
+        return { node: node, index: index, x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+      }).sort(function (left, right) {
+        return left.y - right.y || left.x - right.x || left.index - right.index;
+      }).map(function (entry) { return entry.node; });
+    };
+    var keydown = function keydown(event) {
       if (!runtime.mounted || !event) return;
-      var buttons = (runtime.scene && Array.isArray(runtime.scene.nodes) ? runtime.scene.nodes : []).filter(function (node) {
-        return node && node.type === 'button' && runtime.nodeViews[node.id] && !runtime.nodeViews[node.id].__mzuiDisabled;
-      });
+      var buttons = focusableButtons();
       if (!buttons.length) return;
-      if (event.key === 'Tab') {
+      if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
         if (typeof event.preventDefault === 'function') event.preventDefault();
         var index = buttons.findIndex(function (node) { return node.id === runtime.focusedNodeId; });
-        var next = buttons[(index + (event.shiftKey ? -1 : 1) + buttons.length) % buttons.length];
+        var step = event.key === 'ArrowUp' ? -1 : 1;
+        var next = buttons[index < 0 ? (step < 0 ? buttons.length - 1 : 0) : (index + step + buttons.length) % buttons.length];
         runtime.focusNode(next.id);
       } else if ((event.key === 'Enter' || event.key === ' ') && runtime.focusedNodeId) {
         if (typeof event.preventDefault === 'function') event.preventDefault();
+        if (event.repeat || pressedNodeId) return;
         var focused = findNode(runtime.scene, runtime.focusedNodeId);
-        if (focused) runtime.dispatchActionsForNode(focused, 'onClick', { type: 'click', keyboard: true });
+        var view = focused && runtime.nodeViews[focused.id];
+        if (focused && view && !view.__mzuiDisabled && effectiveViewVisibility(view)) {
+          pressedNodeId = focused.id;
+          view.__mzuiButtonState = 'pressed';
+          renderButtonState(view, focused.props || {});
+          playButtonSe(runtime, focused, view.__mzuiSe && view.__mzuiSe.click, 'onClick');
+          runtime.dispatchActionsForNode(focused, 'onClick', { type: 'click', keyboard: true });
+        }
       }
     };
-    document.addEventListener('keydown', listener);
-    runtime.listeners.push(function () { document.removeEventListener('keydown', listener); });
+    var keyup = function keyup(event) {
+      if (!event || (event.key !== 'Enter' && event.key !== ' ') || !pressedNodeId) return;
+      var node = findNode(runtime.scene, pressedNodeId);
+      var view = node && runtime.nodeViews[pressedNodeId];
+      pressedNodeId = null;
+      if (!node || !view) return;
+      view.__mzuiButtonState = view.__mzuiFocused || view.__mzuiPointerHover ? 'hover' : 'normal';
+      renderButtonState(view, node.props || {});
+    };
+    document.addEventListener('keydown', keydown);
+    document.addEventListener('keyup', keyup);
+    runtime.listeners.push(function () {
+      document.removeEventListener('keydown', keydown);
+      document.removeEventListener('keyup', keyup);
+    });
   }
 
   function playButtonSe(runtime, node, value, eventName) {

@@ -20,6 +20,7 @@ import { UI_BUTTON_WINDOW_SKIN_RESOURCE_PATH } from '@contract/ui-designer-resou
 import { collectNodeSubtreeIds, resolveTreeOrderRanks } from '../models/tree'
 import { uiDesignerText } from '../i18n'
 import { UiLayoutTextbox } from './uiLayoutTextbox'
+import { normalizeUiSingleLineText } from './uiSingleLineText'
 import { UiNineSliceImage } from './uiNineSliceImage'
 import { UiParticleObject } from './uiParticleObject'
 import { resolveUiFabricTextPresentationSync } from './uiFabricTextPresentation'
@@ -329,7 +330,7 @@ const applyTextStyle = (object: Textbox, node: UiTextNode | UiButtonNode, fontFa
   const strokeWidth = node.props.strokeWidth > 0 ? node.props.strokeWidth : (native?.outline?.width ?? 0)
   const strokeColor = node.props.strokeWidth > 0 ? node.props.strokeColor : native?.outline?.color
   object.set({
-    text: node.props.content,
+    text: normalizeUiSingleLineText(node.props.content),
     width: Math.max(20, node.props.width),
     height: Math.max(20, node.props.height),
     fontSize: node.props.fontSize,
@@ -593,11 +594,12 @@ export function applyFabricNodeGeometry(object: UiFabricNodeObject, node: UiNode
     // though its hidden textarea no longer has focus. Inline typing already
     // changed object.text, while Inspector typing changes the document first.
     // Sync the latter immediately without disturbing the former's caret.
-    const textSync = resolveUiFabricTextPresentationSync(object.isEditing, object.text, node.props.content)
+    const presentedContent = normalizeUiSingleLineText(node.props.content)
+    const textSync = resolveUiFabricTextPresentationSync(object.isEditing, object.text, presentedContent)
     if (textSync.shouldSync) {
       applyTextStyle(object, node, object.data.fontFamily, object.data.nativeTextProfile)
       if (object instanceof UiLayoutTextbox) object.initDimensions()
-      if (textSync.syncEditingTextarea && object.hiddenTextarea) object.hiddenTextarea.value = node.props.content
+      if (textSync.syncEditingTextarea && object.hiddenTextarea) object.hiddenTextarea.value = presentedContent
     }
   }
   if (object instanceof UiNineSliceImage && node.type === 'nineSlice') {

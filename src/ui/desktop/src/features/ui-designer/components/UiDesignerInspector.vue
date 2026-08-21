@@ -9,6 +9,7 @@ import UiDesignerConditions from './UiDesignerConditions.vue'
 import UiDesignerEvents from './UiDesignerEvents.vue'
 import UiDesignerAnimations from './UiDesignerAnimations.vue'
 import UiPaddingEditor from './UiPaddingEditor.vue'
+import { normalizeUiSingleLineText } from '../fabric/uiSingleLineText'
 import UiButtonStatesEditor from './UiButtonStatesEditor.vue'
 import UiFrameListEditor from './UiFrameListEditor.vue'
 import ProjectAssetsWorkspace from '../../../components/ProjectAssetsWorkspace.vue'
@@ -145,7 +146,7 @@ const baseFields: FieldDescriptor[] = [
 ]
 
 const GEOMETRY_FIELDS = new Set(['x', 'y', 'width', 'height', 'scaleX', 'scaleY', 'rotate', 'anchorX', 'anchorY', 'zIndex'])
-const CONTENT_RESOURCE_FIELDS = new Set(['content', 'richText', 'wrapWidth', 'currentValue', 'maxValue'])
+const CONTENT_RESOURCE_FIELDS = new Set(['content', 'richText', 'currentValue', 'maxValue'])
 const BEHAVIOR_FIELDS = new Set(['visible', 'clip', 'scrollX', 'scrollY', 'loop', 'clickThrough', 'autoplay', 'muted', 'disabledCondition'])
 const ADVANCED_FIELDS = new Set([
   'borderTop', 'borderRight', 'borderBottom', 'borderLeft', 'showGuides',
@@ -169,7 +170,7 @@ const enumLabels: Record<string, UiDesignerMessageKey> = {
 }
 const enumOptions = (values: string[]): Array<{ label: string; value: string }> => values.map((value) => ({ label: enumLabels[value] ? t(enumLabels[value]) : value, value }))
 const commonText: FieldDescriptor[] = [
-  { key: 'content', kind: 'text', multiline: true }, { key: 'wrapWidth', kind: 'number', min: 0 }, { key: 'richText', kind: 'boolean' }, { key: 'fontFile', kind: 'resource', resourceCategory: 'font' }, { key: 'fontSize', kind: 'number', min: 1 }, { key: 'fontWeight', kind: 'enum', options: enumOptions(['normal', 'bold', 'light']) }, { key: 'italic', kind: 'boolean' }, { key: 'letterSpacing', kind: 'number' }, { key: 'textColor', kind: 'color' }, { key: 'strokeColor', kind: 'color' }, { key: 'strokeWidth', kind: 'number', min: 0 }, { key: 'shadowColor', kind: 'color' }, { key: 'shadowOffsetX', kind: 'number' }, { key: 'shadowOffsetY', kind: 'number' }, { key: 'shadowBlur', kind: 'number', min: 0 }, { key: 'align', kind: 'enum', options: enumOptions(['left', 'center', 'right']) }, { key: 'verticalAlign', kind: 'enum', options: enumOptions(['top', 'middle', 'bottom']) }, { key: 'backgroundColor', kind: 'color' },
+  { key: 'content', kind: 'text', multiline: true }, { key: 'richText', kind: 'boolean' }, { key: 'fontFile', kind: 'resource', resourceCategory: 'font' }, { key: 'fontSize', kind: 'number', min: 1 }, { key: 'fontWeight', kind: 'enum', options: enumOptions(['normal', 'bold', 'light']) }, { key: 'italic', kind: 'boolean' }, { key: 'letterSpacing', kind: 'number' }, { key: 'textColor', kind: 'color' }, { key: 'strokeColor', kind: 'color' }, { key: 'strokeWidth', kind: 'number', min: 0 }, { key: 'shadowColor', kind: 'color' }, { key: 'shadowOffsetX', kind: 'number' }, { key: 'shadowOffsetY', kind: 'number' }, { key: 'shadowBlur', kind: 'number', min: 0 }, { key: 'align', kind: 'enum', options: enumOptions(['left', 'center', 'right']) }, { key: 'verticalAlign', kind: 'enum', options: enumOptions(['top', 'middle', 'bottom']) }, { key: 'backgroundColor', kind: 'color' },
 ]
 const fields = computed<FieldDescriptor[]>(() => {
   const node = selectedNode.value
@@ -179,7 +180,7 @@ const fields = computed<FieldDescriptor[]>(() => {
     sprite: [{ key: 'path', kind: 'resource', resourceCategory: 'image' }, { key: 'fillMode', kind: 'enum', options: enumOptions(['stretch', 'cover', 'contain', 'tile']) }, { key: 'repeatMode', kind: 'enum', options: enumOptions(['none', 'horizontal', 'vertical', 'both']) }, { key: 'tint', kind: 'color' }, { key: 'blendMode', kind: 'enum', options: enumOptions(['normal', 'add', 'multiply', 'screen', 'overlay']) }, { key: 'scrollX', kind: 'number' }, { key: 'scrollY', kind: 'number' }],
     nineSlice: [{ key: 'path', kind: 'resource', resourceCategory: 'image' }, { key: 'borderTop', kind: 'number', min: 0 }, { key: 'borderRight', kind: 'number', min: 0 }, { key: 'borderBottom', kind: 'number', min: 0 }, { key: 'borderLeft', kind: 'number', min: 0 }, { key: 'showGuides', kind: 'boolean' }],
     frameAnimation: [{ key: 'defaultFrameDuration', kind: 'number', min: 0 }, { key: 'loop', kind: 'boolean' }, { key: 'speed', kind: 'number', min: 0.1 }, { key: 'initialFrame', kind: 'number', min: 0 }, { key: 'fillMode', kind: 'enum', options: enumOptions(['stretch', 'cover', 'contain', 'tile']) }],
-    button: [...commonText.map((field) => field.key === 'content' ? { ...field, multiline: false } : field), { key: 'borderColor', kind: 'color' }, { key: 'borderWidth', kind: 'number', min: 0 }, { key: 'borderRadius', kind: 'number', min: 0 }, { key: 'hoverTint', kind: 'color' }, { key: 'pressedScale', kind: 'number', min: 0 }, { key: 'disabledCondition', kind: 'text' }, { key: 'focusColor', kind: 'color' }, { key: 'focusWidth', kind: 'number', min: 0 }, { key: 'hoverSe', kind: 'resource', resourceCategory: 'audio' }, { key: 'clickSe', kind: 'resource', resourceCategory: 'audio' }],
+    button: [...commonText.map((field) => field.key === 'content' ? { ...field, multiline: false } : field), { key: 'borderColor', kind: 'color' }, { key: 'borderWidth', kind: 'number', min: 0 }, { key: 'borderRadius', kind: 'number', min: 0 }, { key: 'hoverTint', kind: 'color' }, { key: 'disabledCondition', kind: 'text' }, { key: 'focusColor', kind: 'color' }, { key: 'focusWidth', kind: 'number', min: 0 }, { key: 'hoverSe', kind: 'resource', resourceCategory: 'audio' }, { key: 'clickSe', kind: 'resource', resourceCategory: 'audio' }],
     text: commonText,
     progressBar: [{ key: 'trackImage', kind: 'resource', resourceCategory: 'image' }, { key: 'trackColor', kind: 'color' }, { key: 'trackRadius', kind: 'number', min: 0 }, { key: 'fillImage', kind: 'resource', resourceCategory: 'image' }, { key: 'fillColor', kind: 'color' }, { key: 'fillRadius', kind: 'number', min: 0 }, { key: 'fillDirection', kind: 'enum', options: enumOptions(['leftToRight', 'rightToLeft', 'bottomToTop', 'topToBottom']) }, { key: 'currentValue', kind: 'number', min: 0 }, { key: 'maxValue', kind: 'number', min: 1 }, { key: 'animateValue', kind: 'boolean' }],
     overlay: [{ key: 'fillColor', kind: 'color' }, { key: 'clickThrough', kind: 'boolean' }],
@@ -278,13 +279,17 @@ const editPrimaryNode = async (nodeId: string) => {
 }
 defineExpose({ editPrimaryNode })
 
+const presentationPropertyValue = (targetId: string, key: string, value: unknown) => {
+  const node = currentDocument.value.nodes.find((candidate) => candidate.id === targetId)
+  return key === 'content' && (node?.type === 'text' || node?.type === 'button') ? normalizeUiSingleLineText(value) : value
+}
 const updateProperty = (key: string, value: unknown, nodeId?: string) => {
   const targetId = nodeId ?? selectedNode.value?.id
-  if (targetId) designer.updateNodeProperty(targetId, key, value)
+  if (targetId) designer.updateNodeProperty(targetId, key, presentationPropertyValue(targetId, key, value))
 }
 const previewProperty = (key: string, value: unknown, nodeId?: string) => {
   const targetId = nodeId ?? selectedNode.value?.id
-  if (targetId) designer.previewNodeProperty(targetId, key, value)
+  if (targetId) designer.previewNodeProperty(targetId, key, presentationPropertyValue(targetId, key, value))
 }
 const commitProperty = (key: string, nodeId?: string) => {
   const targetId = nodeId ?? selectedNode.value?.id

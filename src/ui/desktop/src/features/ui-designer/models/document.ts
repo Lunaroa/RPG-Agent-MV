@@ -227,7 +227,7 @@ export function createDefaultNode(type: UiDesignerNodeType, options: CreateNodeO
         borderWidth: 0,
         borderRadius: 6,
         hoverTint: '#ffffff22',
-        pressedScale: 0.95,
+        pressedScale: 1,
         disabledCondition: '',
         focusColor: '#73daca',
         focusWidth: 2,

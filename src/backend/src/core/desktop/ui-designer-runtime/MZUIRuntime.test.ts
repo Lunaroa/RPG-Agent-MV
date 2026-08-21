@@ -114,6 +114,8 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.equal(runtime.errors.length, 0);
     assert.ok(runtime.nodeViews.container.__mzuiBackground);
     assert.equal(runtime.nodeViews.button.__mzuiButtonStates.normal, '');
+    assert.equal(runtime.nodeViews.button.__mzuiButtonChrome.visible, true);
+    assert.equal(runtime.nodeViews.button.opacity, 255);
     assert.equal(runtime.nodeViews.text.style.fontSize, 24);
     assert.equal(runtime.nodeViews.text.style.fontFamily, 'sans-serif');
     assert.equal(runtime.nodeViews.text.style.stroke, 'rgba(0, 0, 0, 0.5)');
@@ -157,6 +159,8 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.equal(runtime.nodeViews.sprite.__mzuiFillMode, 'contain');
     assert.ok(runtime.nodeViews.button.__mzuiButtonImage);
     assert.ok(runtime.nodeViews.button.__mzuiButtonChrome);
+    assert.equal(runtime.nodeViews.button.__mzuiButtonChrome.visible, false);
+    assert.equal(runtime.nodeViews.button.opacity, 0);
     assert.ok(runtime.nodeViews.text.__mzuiTextBackground);
     assert.ok(runtime.nodeViews.progressBar.__mzuiTrackImage);
     assert.ok(runtime.nodeViews.progressBar.__mzuiFillImage);
@@ -182,6 +186,64 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.equal(runtime.focusedNodeId, null);
     assert.equal(runtime.focusNode(button.id), false);
     runtime.cleanup();
+  });
+
+  test('navigates visible enabled buttons vertically in previews and keeps focus/press visuals unscaled', () => {
+    const context = makeContext();
+    const listeners = new Map<string, (event: any) => void>();
+    context.document = {
+      fonts: {},
+      addEventListener(name: string, listener: (event: any) => void) { listeners.set(name, listener); },
+      removeEventListener(name: string, listener: (event: any) => void) { if (listeners.get(name) === listener) listeners.delete(name); },
+    };
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-keyboard-preview.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    const source = scene.nodes.find((node: any) => node.type === 'button');
+    const makeButton = (id: string, y: number, props: Record<string, unknown> = {}) => {
+      const button = JSON.parse(JSON.stringify(source));
+      button.id = id;
+      button.name = id;
+      button.props.y = y;
+      Object.assign(button.props, props);
+      button.events = { onClick: { actions: [{ type: 'setSwitch', switchId: 1, switchVal: 'toggle' }] } };
+      return button;
+    };
+    scene.nodes = [
+      makeButton('bottom', 180),
+      makeButton('disabled', 80, { disabled: true }),
+      makeButton('top', 20),
+      makeButton('hidden', 120, { visible: false }),
+    ];
+    scene.zOrder = scene.nodes.map((node: any) => node.id);
+    runtime.mount(scene, { root: new context.PIXI.Container(), executionMode: 'editor-preview' });
+
+    let prevented = 0;
+    const key = (name: 'keydown' | 'keyup', value: string, repeat = false) => listeners.get(name)?.({ key: value, repeat, preventDefault() { prevented += 1; } });
+    key('keydown', 'ArrowDown');
+    assert.equal(runtime.focusedNodeId, 'top');
+    assert.equal(runtime.nodeViews.top.__mzuiButtonState, 'hover');
+    key('keydown', 'ArrowDown');
+    assert.equal(runtime.focusedNodeId, 'bottom');
+    key('keydown', 'ArrowDown');
+    assert.equal(runtime.focusedNodeId, 'top');
+    key('keydown', 'ArrowUp');
+    assert.equal(runtime.focusedNodeId, 'bottom');
+
+    const scaleBefore = { ...runtime.nodeViews.bottom.scale };
+    key('keydown', 'Enter');
+    assert.equal(runtime.nodeViews.bottom.__mzuiButtonState, 'pressed');
+    assert.deepEqual(runtime.nodeViews.bottom.scale, scaleBefore);
+    assert.equal(context.$gameSwitches._data[1], true);
+    key('keydown', 'Enter', true);
+    assert.equal(context.$gameSwitches._data[1], true);
+    key('keyup', 'Enter');
+    assert.equal(runtime.nodeViews.bottom.__mzuiButtonState, 'hover');
+    assert.ok(prevented >= 5);
+
+    runtime.cleanup();
+    assert.equal(listeners.has('keydown'), false);
+    assert.equal(listeners.has('keyup'), false);
   });
 
   test('bridges video nodes through an HTML video element and releases it on cleanup', () => {
@@ -456,6 +518,7 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.equal(played.at(-1), 'legacy/Confirm');
 
     view.__mzuiSe.hover = 'audio/bgm/Theme.ogg';
+    view.__listeners.pointerout();
     view.__listeners.pointerover();
     assert.equal(played.includes('audio/bgm/Theme.ogg'), false);
     assert.equal(runtime.errors.some((entry: { label?: string; node?: string; event?: string }) => entry.label === 'button-se' && entry.node === 'button' && entry.event === 'onHoverEnter'), true);
@@ -496,8 +559,51 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     input.released = true;
     runtime.update();
     assert.equal(runtime.touchPressedNodeId, null);
-    assert.equal(runtime.nodeViews.button.__mzuiButtonState, 'normal');
+    assert.equal(runtime.nodeViews.button.__mzuiButtonState, 'hover');
     assert.equal(switches[1], true);
+    runtime.cleanup();
+  });
+
+  test('tracks game hover through TouchInput when PIXI pointerover is unavailable', () => {
+    const context = makeContext();
+    const input = { x: 50, y: 40 };
+    context.TouchInput = {
+      get x() { return input.x; },
+      get y() { return input.y; },
+      isTriggered: () => false,
+      isReleased: () => false,
+    };
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-touch-hover.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    const button = scene.nodes.find((node: any) => node.id === 'button');
+    button.props.imageStates = { normal: '', hover: 'img/hover.png', pressed: '', disabled: '' };
+    button.events = {
+      onHoverEnter: { actions: [{ type: 'setSwitch', switchId: 1, switchVal: 'on' }] },
+      onHoverLeave: { actions: [{ type: 'setSwitch', switchId: 1, switchVal: 'off' }] },
+    };
+    const switches: Record<number, boolean> = { 1: false };
+    runtime.mount(scene, { root: new context.PIXI.Container(), context: { switches } });
+    let hit: any = runtime.nodeViews.button;
+    context.Graphics = { app: { renderer: { plugins: { interaction: { hitTest: () => hit } } } } };
+
+    runtime.update();
+    assert.equal(runtime.touchHoveredNodeId, 'button');
+    assert.equal(runtime.nodeViews.button.__mzuiPointerHover, true);
+    assert.equal(runtime.nodeViews.button.__mzuiButtonState, 'hover');
+    assert.equal(runtime.nodeViews.button.__mzuiButtonImage.visible, true);
+    assert.equal(switches[1], true);
+
+    runtime.update();
+    assert.equal(switches[1], true);
+
+    hit = null;
+    runtime.update();
+    assert.equal(runtime.touchHoveredNodeId, null);
+    assert.equal(runtime.nodeViews.button.__mzuiPointerHover, false);
+    assert.equal(runtime.nodeViews.button.__mzuiButtonState, 'normal');
+    assert.equal(runtime.nodeViews.button.__mzuiButtonImage.visible, false);
+    assert.equal(switches[1], false);
     runtime.cleanup();
   });
 
@@ -986,7 +1092,7 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     runtime.cleanup();
   });
 
-  test('normalizes four-edge editor padding before rendering multiline Pixi text', () => {
+  test('normalizes four-edge editor padding while keeping Pixi text on one compressed line', () => {
     const context = makeContext();
     class TextStyleProbe extends context.PIXI.Text {
       style: Record<string, unknown> = {};
@@ -1001,9 +1107,10 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     scene.nodes[0].props.padding = { top: 2, right: 8, bottom: 4, left: 6 };
     runtime.mount(scene, { root: new context.PIXI.Container() });
     const view = runtime.nodeViews.text;
-    assert.equal(view.text, 'Line one\nLine two');
+    assert.equal(view.text, 'Line one Line two');
     assert.equal(view.style.padding, 8);
-    assert.equal(view.scale.x, 1);
+    assert.equal(view.style.wordWrap, false);
+    assert.equal(view.scale.x < 1, true);
     assert.equal(view.scale.y, 1);
     runtime.cleanup();
   });
@@ -1910,7 +2017,7 @@ function assertEngineWindowTextSignature(engine: 'MV' | 'MZ'): void {
   const scene = allNodeScene();
   const button = scene.nodes.find((node: any) => node.type === 'button');
   const text = scene.nodes.find((node: any) => node.type === 'text');
-  button.props.content = 'OK';
+  button.props.content = 'OK\nGO';
   button.props.textColor = '#fff';
   text.props.content = 'line one\nline two';
   text.props.wrapWidth = 40;
@@ -1922,7 +2029,7 @@ function assertEngineWindowTextSignature(engine: 'MV' | 'MZ'): void {
   const expectedSize = engine === 'MZ' ? 26 : 28;
   const expectedOutlineWidth = engine === 'MZ' ? 3 : 4;
   // Button label: designer props applied onto the native window profile and
-  // drawn line-by-line inside the 100x80 window's 18px-padded content area.
+  // drawn once inside the 100x80 window's 18px-padded content area.
   assert.equal(bitmapFont.fontFace, expectedFace);
   assert.equal(bitmapFont.fontSize, expectedSize);
   assert.equal(bitmapFont.textColor, '#fff');
@@ -1932,14 +2039,16 @@ function assertEngineWindowTextSignature(engine: 'MV' | 'MZ'): void {
   const lineHeight = Math.ceil(expectedSize * 1.3);
   const contentHeight = 80 - 18 * 2;
   const centeredTop = Math.round(Math.max(0, (contentHeight - lineHeight) / 2));
-  assert.deepEqual(bitmapCalls[0], ['OK', 0, centeredTop, 100 - 18 * 2, lineHeight, 'center']);
+  assert.deepEqual(bitmapCalls[0], ['OK GO', 0, centeredTop, 100 - 18 * 2, lineHeight, 'center']);
   assert.equal(bitmapCalls.every((args) => args.length === 6 && typeof args[5] === 'string'), true);
   // Plain text node: same native family, size and outline defaults.
   assert.equal(runtime.nodeViews.text.style.fontFamily, expectedFace);
   assert.equal(runtime.nodeViews.text.style.stroke, 'rgba(0, 0, 0, 0.5)');
   assert.equal(runtime.nodeViews.text.style.strokeThickness, expectedOutlineWidth);
-  assert.equal(runtime.nodeViews.text.style.wordWrap, true);
-  assert.equal(runtime.nodeViews.text.style.wordWrapWidth, 40);
+  assert.equal(runtime.nodeViews.text.text, 'line one line two');
+  assert.equal(runtime.nodeViews.text.style.wordWrap, false);
+  assert.equal(runtime.nodeViews.text.style.wordWrapWidth, 0);
+  assert.equal(runtime.nodeViews.text.scale.x < 1, true);
   assert.equal(runtime.nodeViews.text.style.align, 'right');
   assert.equal(runtime.nodeViews.progressBar.__mzuiAnimatedRatio, 0.5);
   runtime.cleanup();

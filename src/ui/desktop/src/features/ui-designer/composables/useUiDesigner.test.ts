@@ -292,6 +292,19 @@ test('editor preview and in-game preview use separate runtime paths', async () =
   assert.equal(designer.isPreviewing.value, false)
 })
 
+test('closing the game preview window restores the preview button immediately', async () => {
+  const game = createGamePreviewHarness()
+  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { gamePreview: game.adapter } })
+
+  assert.equal(await designer.startPreview(), true)
+  assert.equal(designer.isPreviewing.value, true)
+  game.emit({ runId: 'ui-game-preview', status: 'exited' })
+
+  assert.equal(designer.isPreviewing.value, false)
+  assert.equal(designer.previewStatus.value, 'stopped')
+  assert.equal(designer.canStartPreview.value, true)
+})
+
 test('project switching waits for an in-flight game preview start before stopping it', async () => {
   let releaseStart!: (result: ReturnType<typeof success<UiDesignerGamePreviewSession>>) => void
   const pendingStart = new Promise<ReturnType<typeof success<UiDesignerGamePreviewSession>>>((resolve) => { releaseStart = resolve })
@@ -720,6 +733,15 @@ test('drag previews publish snap feedback lines and clear them on commit', () =>
 
   assert.equal(designer.commitDraftPositions([draggedId]), true)
   assert.equal(designer.snapFeedback.value, null)
+})
+
+test('Shift axis lock keeps the perpendicular drag coordinate unchanged', () => {
+  const designer = useUiDesigner()
+  const nodeId = designer.addNode('text', 'node_root', { x: 120, y: 80 })!
+  const node = designer.document.value.nodes.find((candidate) => candidate.id === nodeId)!
+  const origins = { [nodeId]: { x: node.props.x, y: node.props.y } }
+  const drafts = designer.previewSelectedPositionsWithSnap([nodeId], origins, { x: 73, y: 95 }, 'x')
+  assert.equal(drafts[nodeId].y, origins[nodeId].y)
 })
 
 test('reparenting a node into a container immediately clamps it inside the destination', () => {

@@ -16,6 +16,7 @@ const previewWindow = fs.readFileSync(new URL('../composables/uiDesignerPreviewW
 const adapters = fs.readFileSync(new URL('../adapters.ts', import.meta.url), 'utf8')
 const designerController = fs.readFileSync(new URL('../composables/useUiDesigner.ts', import.meta.url), 'utf8')
 const routedView = fs.readFileSync(new URL('../../../views/UiDesignerView.vue', import.meta.url), 'utf8')
+const canvasWorkspace = fs.readFileSync(new URL('../models/canvas-workspace.ts', import.meta.url), 'utf8')
 
 const compileComponent = (name: string) => {
   const source = fs.readFileSync(new URL(name, import.meta.url), 'utf8')
@@ -25,7 +26,7 @@ const compileComponent = (name: string) => {
 }
 
 test('authoring canvas compiles with Fabric as the single design renderer', () => {
-  for (const name of ['./UiDesignerCanvas.vue', './UiDesignerFabricCanvas.vue', './UiPropertyField.vue']) compileComponent(name)
+  for (const name of ['./UiDesignerCanvas.vue', './UiDesignerFabricCanvas.vue', './UiPropertyField.vue', './UiDesignerShell.vue', './UiDesignerExportSurface.vue', '../../../views/UiDesignerView.vue']) compileComponent(name)
   assert.equal(fs.existsSync(new URL('./UiCanvasNode.vue', import.meta.url)), false)
   assert.equal(fs.existsSync(new URL('./UiDesignerStaticNodePreview.vue', import.meta.url)), false)
 })
@@ -54,13 +55,13 @@ test('UI designer keeps the isolated runtime only for explicit preview', () => {
 
 test('editor preview uses a separate live window while game preview launches an isolated game run', () => {
   assert.doesNotMatch(toolbar, /fullscreenPreview/)
-  assert.match(toolbar, /data-ui-id="ui-designer-preview-enter"/)
-  assert.match(toolbar, /ui-designer-game-preview-enter/)
+  assert.match(toolbar, /ui-designer-preview-exit' : 'ui-designer-preview-enter/)
+  assert.match(toolbar, /ui-designer-game-preview-exit' : 'ui-designer-game-preview-enter/)
   assert.match(toolbar, /canStartEditorPreview/)
   assert.match(toolbar, /:disabled="!designer\.isPreviewing && !designer\.canStartPreview"/)
   assert.match(toolbar, /gamePreview/)
   assert.match(shell, /<UiDesignerSceneTabs :designer="designer"/)
-  assert.match(shell, /<UiDesignerInspector ref="inspectorRef" :designer="designer"/)
+  assert.match(shell, /<UiDesignerInspector v-if="!showWelcome" ref="inspectorRef" :designer="designer"/)
   assert.doesNotMatch(shell, /fullscreenPreview/)
   assert.match(canvas, /<div class="canvas-toolbar">/)
   assert.match(canvas, /<div v-if="document\.canvas\.rulers" class="canvas-ruler horizontal"/)
@@ -154,19 +155,24 @@ test('container focus retains the scope boundary and exposes a visible way back'
   assert.match(canvas, /designer\.selectNodes\(node\.children\.length \? \[node\.children\[0\]\] : \[node\.id\]\)/)
   assert.match(canvas, /const exitContainer = \(\) => \{[\s\S]*editStack\.value = editStack\.value\.slice\(0, -1\)[\s\S]*designer\.selectNodes\(\[editingRootId\.value\]\)/)
   assert.match(canvas, /data-ui-id="ui-designer-container-scope"[\s\S]*data-ui-id="ui-designer-container-scope-exit"[\s\S]*@click="exitContainer"/)
-  assert.match(canvas, /\.canvas-edit-breadcrumb \{[^}]*top: calc\(var\(--workspace-margin, 0px\) \+ 8px\);[^}]*left: calc\(var\(--workspace-margin, 0px\) \+ 8px\);/)
+  assert.match(canvas, /\.canvas-edit-breadcrumb \{[^}]*top: calc\(var\(--workspace-top, 0px\) \+ 8px\);[^}]*left: calc\(var\(--workspace-left, 0px\) \+ 8px\);/)
   assert.match(fabricCanvas, /props\.designer\.selectNodes\(ids\.length \? ids : \[props\.scopeNodeId\]\)/)
   assert.match(nodePanel, /const parentId = primary\?\.type === 'container' \? primary\.id : primary\?\.parentId \?\? 'node_root'/)
   assert.match(canvas, /designer\.addNode\(nodeType, editingRootId\.value, worldFromClient\(event\)\)/)
 })
 
-test('the scene floats on an editable workspace and off-canvas content stays visible', () => {
+test('the scene floats on an editable workspace and off-canvas content stays visible during a drag', () => {
   assert.match(canvas, /const WORKSPACE_MARGIN = 240/)
+  assert.match(canvas, /resolveCanvasWorkspace\(document\.value, WORKSPACE_MARGIN, draftPositions\.value\)/)
+  assert.match(canvasWorkspace, /includeRect\(nodeVisualRect\(node\)\)/)
+  assert.match(canvasWorkspace, /draftPositions\[node\.id\]/)
   assert.match(canvas, /\.canvas-scene-frame \{[^}]*pointer-events: none;/)
   assert.match(canvas, /:style="\[sceneRectStyle, \{ backgroundColor: document\.canvas\.backgroundColor \}\]"/)
   assert.match(canvas, /:style="\[sceneRectStyle, \{ '--grid-size'/)
-  assert.match(canvas, /:workspace-margin="WORKSPACE_MARGIN"/)
-  assert.match(fabricCanvas, /viewportTransform: \[1, 0, 0, 1, props\.workspaceMargin, props\.workspaceMargin\]/)
+  assert.match(canvas, /:workspace="workspace"/)
+  assert.match(fabricCanvas, /viewportTransform: \[1, 0, 0, 1, props\.workspace\.left, props\.workspace\.top\]/)
+  assert.match(canvasWorkspace, /surface grows with node coordinates/)
+  assert.match(canvasWorkspace, /Math\.max\(0, -minX\)/)
   assert.match(fabricFactory, /ancestor\.props\.clip && ancestor\.id !== 'node_root'/)
 })
 
@@ -180,6 +186,29 @@ test('canvas interactions reject native selection and image dragging without blo
   assert.match(fabricCanvas, /\.fabric-editor-canvas :deep\(textarea\) \{ user-select: text;/)
 })
 
+test('tree selection replaces stale Fabric controls even when selection synchronization overlaps', () => {
+  assert.match(fabricCanvas, /let selectionSyncQueued = false/)
+  assert.match(fabricCanvas, /if \(syncingSelection\) \{\s*selectionSyncQueued = true\s*return\s*\}/)
+  assert.match(fabricCanvas, /if \(active && \(selected\.length !== 1 \|\| active !== selected\[0\]\)\) canvas\.discardActiveObject\(\)/)
+  assert.match(fabricCanvas, /selected\.forEach\(\(object\) => object\.setCoords\(\)\)/)
+  assert.match(fabricCanvas, /if \(!selectionSyncQueued\) return\s*selectionSyncQueued = false\s*syncFabricSelection\(\)/)
+  const workspaceSyncStart = fabricCanvas.indexOf("watch(() => [props.workspace.width")
+  const workspaceSync = fabricCanvas.slice(workspaceSyncStart, fabricCanvas.indexOf('\n\nonBeforeUnmount(() =>', workspaceSyncStart))
+  assert.match(workspaceSync, /canvas\.setViewportTransform\(\[1, 0, 0, 1, left, top\]\)/)
+  assert.match(workspaceSync, /for \(const object of objects\.values\(\)\) object\.setCoords\(\)/)
+  assert.match(workspaceSync, /canvas\.getActiveObject\(\)\?\.setCoords\(\)/)
+})
+
+test('Fabric owns the generated canvas dimensions while the workspace expands', () => {
+  assert.match(fabricCanvas, /canvas\.setDimensions\(\{ width, height \}\)/)
+  assert.match(fabricCanvas, /<canvas ref="canvasElement" \/>/)
+  assert.doesNotMatch(fabricCanvas, /<canvas[^>]*:(?:width|height)="workspace\.(?:width|height)"/)
+  assert.doesNotMatch(
+    fabricCanvas,
+    /:deep\(\.(?:canvas-container|lower-canvas|upper-canvas)\)[^}]*\b(?:width|height):\s*100%\s*!important/,
+  )
+})
+
 test('canvas pans only with Space plus left drag or middle drag and resizes freely unless Shift is held', () => {
   assert.match(canvas, /const spaceDrag = event\.button === 0 && spacePressed\.value/)
   assert.match(canvas, /if \(event\.button !== 1 && !spaceDrag\) return/)
@@ -188,6 +217,10 @@ test('canvas pans only with Space plus left drag or middle drag and resizes free
   assert.match(fabricCanvas, /centeredKey: 'altKey'/)
   assert.match(fabricCanvas, /\(event\.e as MouseEvent\)\.shiftKey/)
   assert.match(fabricCanvas, /preserveAspect: shiftKey, fromCenter: altKey/)
+  assert.match(fabricCanvas, /pointerStart: event\.e && Number\.isFinite\(event\.e\.clientX\)/)
+  assert.match(fabricCanvas, /\(event\.clientX - state\.pointerStart\.x\) \/ zoom/)
+  assert.match(fabricCanvas, /Math\.abs\(rawDelta\.x\) >= Math\.abs\(rawDelta\.y\) \? 'x' : 'y'/)
+  assert.match(fabricCanvas, /previewSelectedPositionsWithSnap\(state\.nodeIds, state\.origins, delta, axisLock\)/)
   assert.match(fabricCanvas, /accumulateRotationDegrees\([\s\S]*state\.lastFabricRotation = wrappedAngle[\s\S]*state\.accumulatedRotation = accumulatedAngle/)
   assert.match(fabricCanvas, /canvas\.getScenePoint\(event\.e\)/)
   assert.match(fabricCanvas, /pointerResizeDelta\(node, state\.originRect, handle, pointer, altKey\)/)
@@ -228,6 +261,10 @@ test('nested nodes do not light every ancestor and parent bounds constrain trans
 
 test('bounded number sliders keep both end thumbs inside the inspector column', () => {
   assert.match(propertyField, /\.number-control :deep\(\.el-slider\)[^{]*\{[^}]*box-sizing: border-box;[^}]*padding-inline: 10px;/)
+})
+
+test('multiline property inputs use the same full inspector control column as single-line inputs', () => {
+  assert.match(propertyField, /\.property-field > \.el-input-number, \.property-field > \.el-input, \.property-field > \.el-textarea,[^{]*\{ grid-column: 2; grid-row: 1; width: 100%; min-width: 0; \}/)
 })
 
 test('rapid project generations serialize disposal before the newest host start', () => {
@@ -453,4 +490,14 @@ test('external previews keep the existing Element Plus tree owner mounted', () =
   assert.match(nodePanel, /type === 'after' \|\| type === 'next'/)
   assert.match(shell, /<UiDesignerNodePanel :designer="designer"/)
   assert.doesNotMatch(shell, /nodePanelRef|expandedNodeIds|fullscreenPreview/)
+})
+
+test('project publishing reviews staged files before applying them', () => {
+  assert.match(shell, /runtimeInstallPromptTitle/)
+  assert.match(shell, /await rawDesigner\.checkRuntime\(\)/)
+  assert.match(shell, /props\.applyProjectChanges\?\./)
+  assert.match(routedView, /mapsApi\.projectStaging\(project\)/)
+  assert.match(routedView, /collectStagedFiles\(status, fallbackFiles\)/)
+  assert.match(routedView, /ElMessageBox\.confirm\(/)
+  assert.match(routedView, /mapsApi\.applyProjectStaging\(/)
 })

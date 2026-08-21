@@ -7,6 +7,7 @@ import {
   distributeNodes,
   nodeRect,
   nodeVisualRect,
+  snapMoveRect,
   smartSnapTargetsForNode,
 } from './geometry'
 import { createDefaultNode, createUiDocument } from './document'
@@ -46,6 +47,39 @@ test('smart snap targets can exclude the rest of a selection', () => {
   const document = documentWith(a, b, c)
   assert.deepEqual(smartSnapTargetsForNode(document, 'a', ['b']).map((target) => target.id), ['c'])
   assert.deepEqual(smartSnapTargetsForNode(document, 'a').map((target) => target.id), ['b', 'c'])
+})
+
+test('move snapping aligns visual edges and centers instead of only node anchors', () => {
+  const result = snapMoveRect({ x: 204, y: 94, width: 80, height: 40 }, {
+    enabled: true,
+    gridEnabled: false,
+    gridSize: 32,
+    smartEnabled: true,
+    sensitivity: 7,
+    guides: [],
+    canvasWidth: 816,
+    canvasHeight: 624,
+    targets: [{ id: 'peer', rect: { x: 100, y: 100, width: 100, height: 80 } }],
+  })
+  assert.deepEqual({ x: result.x, y: result.y }, { x: 200, y: 100 })
+  assert.deepEqual(result.hits.map((hit) => [hit.axis, hit.value, hit.source]), [
+    ['x', 200, 'node'],
+    ['y', 100, 'node'],
+  ])
+})
+
+test('axis-locked move snapping never changes the other axis', () => {
+  const result = snapMoveRect({ x: 204, y: 94, width: 80, height: 40 }, {
+    enabled: true,
+    gridEnabled: false,
+    gridSize: 32,
+    smartEnabled: true,
+    sensitivity: 7,
+    guides: [],
+    targets: [{ id: 'peer', rect: { x: 100, y: 100, width: 100, height: 80 } }],
+  }, ['x'])
+  assert.deepEqual({ x: result.x, y: result.y }, { x: 200, y: 94 })
+  assert.deepEqual(result.hits.map((hit) => hit.axis), ['x'])
 })
 
 test('nodeVisualRect rotates the frame about its visual center', () => {

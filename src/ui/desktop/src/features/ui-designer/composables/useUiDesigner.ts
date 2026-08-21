@@ -50,11 +50,13 @@ import {
   normalizeGeometryInteger,
   normalizeGeometryPoint,
   nodeRect,
+  nodeVisualRect,
   panViewport,
   resizeRect,
   rotateSubtreeTransforms,
   smartSnapTargetsForNode,
   snapFeedbackFor,
+  snapMoveRect,
   snapPoint,
   updateNodePosition,
   zoomViewport,
@@ -1782,6 +1784,19 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
 
   const clearSnapFeedback = () => { snapFeedback.value = null }
 
+  const selectionVisualBounds = (ids: readonly string[]): UiRect | undefined => {
+    const rects = ids
+      .map((id) => findNode(document.value, id))
+      .filter((node): node is UiDesignerDocument['nodes'][number] => Boolean(node))
+      .map(nodeVisualRect)
+    if (!rects.length) return undefined
+    const left = Math.min(...rects.map((rect) => rect.x))
+    const top = Math.min(...rects.map((rect) => rect.y))
+    const right = Math.max(...rects.map((rect) => rect.x + rect.width))
+    const bottom = Math.max(...rects.map((rect) => rect.y + rect.height))
+    return { x: left, y: top, width: right - left, height: bottom - top }
+  }
+
   const updateNodePositionWithSnap = (nodeId: string, position: { x: number; y: number }) => {
     if (!resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return undefined
     const result = snapPoint(position, snapOptionsFor(nodeId))
@@ -1808,26 +1823,28 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     return true
   }
 
-  const previewSelectedPositionsWithSnap = (ids: readonly string[], origins: Record<string, UiPoint>, delta: UiPoint) => {
+  const previewSelectedPositionsWithSnap = (ids: readonly string[], origins: Record<string, UiPoint>, delta: UiPoint, axisLock?: 'x' | 'y') => {
     const validIds = ids.filter((id) => Boolean(findNode(document.value, id)))
     const rootIds = selectionRootNodeIds(document.value, validIds)
     if (!rootIds.length || !resolveNodeActionPolicy(document.value, rootIds, rootIds[0], false).canTransform) return {}
     const transformIds = collectNodeSubtreeIds(document.value, rootIds)
     const rootSet = new Set(rootIds)
     const anchorId = rootIds[0]
-    const anchorOrigin = origins[anchorId] ?? findNode(document.value, anchorId)?.props ?? { x: 0, y: 0 }
-    const requested = { x: anchorOrigin.x + delta.x, y: anchorOrigin.y + delta.y }
-    const snapped = snapPoint(requested, snapOptionsFor(anchorId, rootIds))
-    const snappedPosition = clampNodePositionToParent(document.value, anchorId, snapped)
-    const snapDelta = { x: snappedPosition.x - requested.x, y: snappedPosition.y - requested.y }
+    const originBounds = selectionVisualBounds(rootIds)
+    if (!originBounds) return {}
+    const constrainedDelta = axisLock === 'x' ? { x: delta.x, y: 0 } : axisLock === 'y' ? { x: 0, y: delta.y } : delta
+    const requestedBounds = { ...originBounds, x: originBounds.x + constrainedDelta.x, y: originBounds.y + constrainedDelta.y }
+    const snapped = snapMoveRect(requestedBounds, snapOptionsFor(anchorId, rootIds), axisLock ? [axisLock] : ['x', 'y'])
+    const snapDelta = { x: snapped.x - requestedBounds.x, y: snapped.y - requestedBounds.y }
     const nextDrafts = { ...draftPositions.value }
     for (const id of transformIds) {
       const origin = origins[id] ?? findNode(document.value, id)?.props ?? { x: 0, y: 0 }
-      const position = normalizeGeometryPoint({ x: origin.x + delta.x + snapDelta.x, y: origin.y + delta.y + snapDelta.y }, origin)
+      const position = normalizeGeometryPoint({ x: origin.x + constrainedDelta.x + snapDelta.x, y: origin.y + constrainedDelta.y + snapDelta.y }, origin)
       nextDrafts[id] = rootSet.has(id) ? clampNodePositionToParent(document.value, id, position) : position
     }
     draftPositions.value = nextDrafts
-    applySnapFeedback(anchorId, snappedPosition, snapped.hits)
+    const feedback = snapFeedbackFor(document.value, snapped, snapped.hits)
+    snapFeedback.value = feedback.lines.length || feedback.guideIds.length ? feedback : null
     return Object.fromEntries(transformIds.map((id) => [id, nextDrafts[id]]))
   }
 

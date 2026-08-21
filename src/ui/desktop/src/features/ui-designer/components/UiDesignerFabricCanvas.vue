@@ -4,7 +4,6 @@ import { isRef, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } fro
 import type { UiDesignerDocument, UiNode, UiPoint, UiProjectResourceCatalog, UiRect } from '@contract/ui-designer'
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import { accumulateRotationDegrees, nodeRect, normalizeRotationDegrees, pointerResizeDelta, type UiResizeHandle } from '../models/geometry'
-import { nextNodeIdInDirection, type UiNavigationDirection, type UiNavigationEntry } from '../models/node-navigation'
 import { collectNodeSubtreeIds, selectionRootNodeIds } from '../models/tree'
 import {
   animateFabricNode,
@@ -18,13 +17,15 @@ import {
 } from '../fabric/fabricNodeFactory'
 import { resolveUiContainerLabelLayout } from '../fabric/uiContainerLabel'
 import { useUiDesignerI18n } from '../i18n'
+import type { UiCanvasWorkspace } from '../models/canvas-workspace'
+import { normalizeUiSingleLineText } from '../fabric/uiSingleLineText'
 
 const props = defineProps<{
   designer: UiDesignerController
   document: UiDesignerDocument
   resourceCatalog?: UiProjectResourceCatalog | null
   scopeNodeId: string
-  workspaceMargin: number
+  workspace: UiCanvasWorkspace
   zoom: number
   active: boolean
 }>()
@@ -40,6 +41,7 @@ let canvas: Canvas | undefined
 let reconcileGeneration = 0
 let renderFrame = 0
 let syncingSelection = false
+let selectionSyncQueued = false
 const objects = new Map<string, UiFabricNodeObject>()
 const containerLabels = new Map<string, Textbox>()
 
@@ -56,6 +58,7 @@ interface TransformState {
   corner?: string
   targetLeft?: number
   targetTop?: number
+  pointerStart?: UiPoint
 }
 
 let transformState: TransformState | undefined
@@ -78,23 +81,30 @@ const applyControllerSelection = (target?: FabricObject) => {
 }
 
 const syncFabricSelection = () => {
-  if (!canvas || syncingSelection) return
+  if (!canvas) return
+  if (syncingSelection) {
+    selectionSyncQueued = true
+    return
+  }
   const ids = unwrap(props.designer.selectedIds)
   const selected = ids.map((id) => objects.get(id)).filter((object): object is UiFabricNodeObject => Boolean(object))
   syncingSelection = true
+  const active = canvas.getActiveObject()
+  if (active && (selected.length !== 1 || active !== selected[0])) canvas.discardActiveObject()
+  selected.forEach((object) => object.setCoords())
   if (!selected.length) canvas.discardActiveObject()
-  else if (selected.length === 1) {
-    canvas.setActiveObject(selected[0])
-    // Controller-driven focus (tree panel, keyboard) must raise the node too;
-    // pointer-driven selection is already raised by preserveObjectStacking.
-    canvas.bringObjectToFront(selected[0])
-  }
+  else if (selected.length === 1) canvas.setActiveObject(selected[0])
   else {
     const selection = new ActiveSelection(selected, { canvas, hasControls: false, lockScalingX: true, lockScalingY: true, lockRotation: true })
     canvas.setActiveObject(selection)
   }
   canvas.requestRenderAll()
-  void nextTick(() => { syncingSelection = false })
+  void nextTick(() => {
+    syncingSelection = false
+    if (!selectionSyncQueued) return
+    selectionSyncQueued = false
+    syncFabricSelection()
+  })
 }
 
 const attachTextEditing = (object: UiFabricNodeObject) => {
@@ -214,7 +224,7 @@ const reconcile = async () => {
   canvas.requestRenderAll()
 }
 
-const startTransform = (event: { transform: { target: FabricObject; action?: string; corner: string; original: { left: number; top: number } } }) => {
+const startTransform = (event: { e?: MouseEvent; transform: { target: FabricObject; action?: string; corner: string; original: { left: number; top: number } } }) => {
   const target = event.transform.target
   const ids = selectionRootNodeIds(props.document, selectedObjectIds(target))
   if (!ids.length) return
@@ -241,14 +251,32 @@ const startTransform = (event: { transform: { target: FabricObject; action?: str
     corner: event.transform.corner,
     targetLeft: event.transform.original.left,
     targetTop: event.transform.original.top,
+    pointerStart: event.e && Number.isFinite(event.e.clientX) && Number.isFinite(event.e.clientY)
+      ? { x: event.e.clientX, y: event.e.clientY }
+      : undefined,
   }
 }
 
-const moveObject = (target: FabricObject) => {
+const moveObject = (target: FabricObject, event?: MouseEvent) => {
   const state = transformState
   if (!state || state.action !== 'move') return
-  const delta = { x: target.left - (state.targetLeft ?? target.left), y: target.top - (state.targetTop ?? target.top) }
-  const drafts = props.designer.previewSelectedPositionsWithSnap(state.nodeIds, state.origins, delta)
+  const zoom = Math.max(0.01, Number.isFinite(props.zoom) ? props.zoom : 1)
+  const rawDelta = state.pointerStart && event && Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
+    ? { x: (event.clientX - state.pointerStart.x) / zoom, y: (event.clientY - state.pointerStart.y) / zoom }
+    : { x: target.left - (state.targetLeft ?? target.left), y: target.top - (state.targetTop ?? target.top) }
+  const shiftKey = Boolean(event?.shiftKey)
+  const axisLock = shiftKey ? (Math.abs(rawDelta.x) >= Math.abs(rawDelta.y) ? 'x' : 'y') : undefined
+  const delta = axisLock === 'x' ? { x: rawDelta.x, y: 0 } : axisLock === 'y' ? { x: 0, y: rawDelta.y } : rawDelta
+  const drafts = props.designer.previewSelectedPositionsWithSnap(state.nodeIds, state.origins, delta, axisLock)
+  const anchorId = state.nodeIds[0]
+  const anchorDraft = drafts[anchorId]
+  const anchorOrigin = state.origins[anchorId]
+  if (anchorDraft && anchorOrigin) {
+    target.set({
+      left: (state.targetLeft ?? target.left) + anchorDraft.x - anchorOrigin.x,
+      top: (state.targetTop ?? target.top) + anchorDraft.y - anchorOrigin.y,
+    }).setCoords()
+  }
   // ActiveSelection members interpret left/top relative to the selection group;
   // fabric already moves them with the group, so writing absolute drafts to them
   // would teleport them mid-drag. Non-member descendants stay flat/absolute.
@@ -265,6 +293,7 @@ const moveObject = (target: FabricObject) => {
     object.set({ left: position.x, top: position.y }).setCoords()
     syncContainerLabel(id)
   }
+  canvas?.requestRenderAll()
 }
 
 const cornerHandle = (corner: string): UiResizeHandle => ({ tl: 'nw', mt: 'n', tr: 'ne', mr: 'e', br: 'se', mb: 's', bl: 'sw', ml: 'w' } as const)[corner as 'tl'] ?? 'se'
@@ -353,24 +382,7 @@ const activateNode = (nodeId: string) => {
   return true
 }
 
-const navigateSelection = (direction: UiNavigationDirection) => {
-  if (!canvas) return
-  const entries: UiNavigationEntry[] = []
-  for (const [id, object] of objects) {
-    if (!object.visible) continue
-    const bounds = object.getBoundingRect()
-    entries.push({ id, rect: { x: bounds.left, y: bounds.top, width: bounds.width, height: bounds.height } })
-  }
-  if (!entries.length) return
-  const selected = unwrap(props.designer.selectedIds)
-  const anchor = selectionRootNodeIds(props.document, selected).find((id) => objects.get(id)?.visible)
-    ?? selected.find((id) => objects.get(id)?.visible)
-    ?? null
-  const next = nextNodeIdInDirection(entries, anchor, direction)
-  if (next) props.designer.selectNodes([next])
-}
-
-defineExpose({ activateNode, navigateSelection })
+defineExpose({ activateNode })
 
 const animationLoop = (timestamp: number) => {
   if (canvas && props.active) {
@@ -389,14 +401,12 @@ onMounted(() => {
   const element = canvasElement.value
   if (!element) return
   canvas = new Canvas(element, {
-    width: props.document.canvas.width + props.workspaceMargin * 2,
-    height: props.document.canvas.height + props.workspaceMargin * 2,
-    viewportTransform: [1, 0, 0, 1, props.workspaceMargin, props.workspaceMargin],
+    width: props.workspace.width,
+    height: props.workspace.height,
+    viewportTransform: [1, 0, 0, 1, props.workspace.left, props.workspace.top],
     selection: true,
     selectionKey: ['shiftKey', 'ctrlKey', 'metaKey'],
-    // A focused node rises above overlapping siblings while it stays selected,
-    // so the user can always grab the node they just focused in the tree.
-    preserveObjectStacking: false,
+    preserveObjectStacking: true,
     uniformScaling: false,
     uniScaleKey: 'shiftKey',
     centeredKey: 'altKey',
@@ -409,7 +419,7 @@ onMounted(() => {
   canvas.on('selection:updated', () => applyControllerSelection(canvas?.getActiveObject()))
   canvas.on('selection:cleared', () => applyControllerSelection(undefined))
   canvas.on('before:transform', startTransform)
-  canvas.on('object:moving', (event) => moveObject(event.target))
+  canvas.on('object:moving', (event) => moveObject(event.target, event.e as MouseEvent | undefined))
   canvas.on('object:scaling', (event) => {
     if (!canvas) return
     scaleObject(event.target, (event.e as MouseEvent).shiftKey, (event.e as MouseEvent).altKey, event.transform.corner, canvas.getScenePoint(event.e))
@@ -426,7 +436,17 @@ onMounted(() => {
   canvas.on('text:changed', (event) => {
     const object = event.target
     const node = objectNode(object)
-    if (object instanceof Textbox && node && (node.type === 'text' || node.type === 'button')) props.designer.previewNodeProperty(node.id, 'content', object.text)
+    if (object instanceof Textbox && node && (node.type === 'text' || node.type === 'button')) {
+      const content = normalizeUiSingleLineText(object.text)
+      if (content !== object.text) {
+        const selection = Math.min(content.length, object.selectionStart)
+        object.set({ text: content })
+        object.initDimensions()
+        object.selectionStart = selection
+        object.selectionEnd = selection
+      }
+      props.designer.previewNodeProperty(node.id, 'content', content)
+    }
   })
   void reconcile()
   renderFrame = window.requestAnimationFrame(animationLoop)
@@ -435,9 +455,14 @@ onMounted(() => {
 watch(() => [props.document, props.resourceCatalog, props.scopeNodeId] as const, () => { void reconcile() }, { deep: false })
 watch(() => props.zoom, syncContainerLabels)
 watch(() => unwrap(props.designer.selectedIds), syncFabricSelection, { deep: true })
-watch(() => [props.document.canvas.width, props.document.canvas.height] as const, ([width, height]) => {
-  canvas?.setDimensions({ width: width + props.workspaceMargin * 2, height: height + props.workspaceMargin * 2 })
-  canvas?.requestRenderAll()
+watch(() => [props.workspace.width, props.workspace.height, props.workspace.left, props.workspace.top] as const, ([width, height, left, top]) => {
+  if (!canvas) return
+  canvas.setDimensions({ width, height })
+  canvas.setViewportTransform([1, 0, 0, 1, left, top])
+  for (const object of objects.values()) object.setCoords()
+  canvas.getActiveObject()?.setCoords()
+  syncContainerLabels()
+  canvas.requestRenderAll()
 })
 
 onBeforeUnmount(() => {
@@ -454,12 +479,12 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="fabric-editor-canvas" data-ui-id="ui-designer-fabric-canvas" @contextmenu.prevent>
-    <canvas ref="canvasElement" :width="document.canvas.width + workspaceMargin * 2" :height="document.canvas.height + workspaceMargin * 2" />
+    <canvas ref="canvasElement" />
   </div>
 </template>
 
 <style scoped>
 .fabric-editor-canvas { position: absolute; z-index: 2; inset: 0; overflow: hidden; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
-.fabric-editor-canvas :deep(.canvas-container), .fabric-editor-canvas :deep(.lower-canvas), .fabric-editor-canvas :deep(.upper-canvas) { width: 100% !important; height: 100% !important; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
+.fabric-editor-canvas :deep(.canvas-container), .fabric-editor-canvas :deep(.lower-canvas), .fabric-editor-canvas :deep(.upper-canvas) { user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
 .fabric-editor-canvas :deep(textarea) { user-select: text; -webkit-user-select: text; }
 </style>

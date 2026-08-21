@@ -9,11 +9,11 @@ import { useUiDesignerRendererHost } from '../composables/useUiDesignerRendererH
 import { openUiDesignerPreviewWindow, type UiDesignerPreviewWindowHandle } from '../composables/uiDesignerPreviewWindow'
 import UiDesignerFabricCanvas from './UiDesignerFabricCanvas.vue'
 import { viewportClientToWorld, worldPointToViewport, type UiCanvasViewportFrame, type UiSnapFeedbackLine } from '../models/geometry'
-import { canvasScrollForWorldPoint, createCanvasScrollLayout, fitCanvasZoom, panCanvasScroll } from '../models/viewport-navigation'
-import { navigationDirectionFromKey } from '../models/node-navigation'
+import { canvasScrollForWorldPoint, clampCanvasScroll, createCanvasScrollLayout, fitCanvasZoom, panCanvasScroll } from '../models/viewport-navigation'
 import { fitContextMenuPosition } from '../models/context-menu-position'
 import type { UiNodeActionCommand, UiNodeActionPolicy } from '../models/actions'
 import { exportRuntimeDocument } from '../models/export'
+import { resolveCanvasWorkspace, type UiCanvasWorkspace } from '../models/canvas-workspace'
 
 const props = defineProps<{ designer: UiDesignerController }>()
 const emit = defineEmits<{ editNode: [nodeId: string] }>()
@@ -87,21 +87,37 @@ const rulerTicks = computed(() => ({
 
 const canvasViewport = computed<UiViewport>(() => ({ ...viewport.value, panX: 0, panY: 0, width: viewportSize.value.width, height: viewportSize.value.height }))
 const canvasPanRoom = (viewport: number) => Math.round(Math.min(420, Math.max(120, viewport * 0.35)))
-const scrollLayout = computed(() => createCanvasScrollLayout(
+// Union committed and in-flight positions so the surface can expand during a
+// drag without dropping its original bounds. Fabric derives move deltas from
+// client coordinates, so a left/top expansion cannot move the active gesture.
+const workspace = computed(() => resolveCanvasWorkspace(document.value, WORKSPACE_MARGIN, draftPositions.value))
+const layoutForWorkspace = (bounds: UiCanvasWorkspace) => createCanvasScrollLayout(
   viewportSize.value.width,
   viewportSize.value.height,
-  document.value.canvas.width,
-  document.value.canvas.height,
+  bounds.width,
+  bounds.height,
   canvasViewport.value.zoom,
-  STAGE_MARGIN + WORKSPACE_MARGIN * canvasViewport.value.zoom,
+  STAGE_MARGIN,
   canvasPanRoom(viewportSize.value.width),
   canvasPanRoom(viewportSize.value.height),
-))
+)
+const scrollLayout = computed(() => layoutForWorkspace(workspace.value))
+const sceneScrollLayout = computed(() => ({
+  ...scrollLayout.value,
+  stageOffsetX: scrollLayout.value.stageOffsetX + workspace.value.left * canvasViewport.value.zoom,
+  stageOffsetY: scrollLayout.value.stageOffsetY + workspace.value.top * canvasViewport.value.zoom,
+}))
 const centerCanvasScroll = () => {
   const element = viewportElement.value
   if (!element) return
-  element.scrollLeft = scrollLayout.value.centerScrollX
-  element.scrollTop = scrollLayout.value.centerScrollY
+  const scroll = canvasScrollForWorldPoint(
+    sceneScrollLayout.value,
+    { x: document.value.canvas.width / 2, y: document.value.canvas.height / 2 },
+    { x: element.clientWidth / 2, y: element.clientHeight / 2 },
+    canvasViewport.value.zoom,
+  )
+  element.scrollLeft = scroll.x
+  element.scrollTop = scroll.y
 }
 const viewportFrame = (): UiCanvasViewportFrame => {
   const element = viewportElement.value
@@ -112,8 +128,8 @@ const viewportFrame = (): UiCanvasViewportFrame => {
     scrollLeft: element?.scrollLeft ?? 0,
     scrollTop: element?.scrollTop ?? 0,
     stageMargin: STAGE_MARGIN,
-    stageOffsetX: scrollLayout.value.stageOffsetX,
-    stageOffsetY: scrollLayout.value.stageOffsetY,
+    stageOffsetX: sceneScrollLayout.value.stageOffsetX,
+    stageOffsetY: sceneScrollLayout.value.stageOffsetY,
   }
 }
 const snapLineStyle = (line: UiSnapFeedbackLine) => {
@@ -128,20 +144,57 @@ const snapLineStyle = (line: UiSnapFeedbackLine) => {
 }
 const scrollContentStyle = computed(() => ({ width: `${scrollLayout.value.contentWidth}px`, height: `${scrollLayout.value.contentHeight}px` }))
 const stageStyle = computed(() => ({
-  width: `${document.value.canvas.width + WORKSPACE_MARGIN * 2}px`,
-  height: `${document.value.canvas.height + WORKSPACE_MARGIN * 2}px`,
-  left: `${scrollLayout.value.stageOffsetX - WORKSPACE_MARGIN * canvasViewport.value.zoom}px`,
-  top: `${scrollLayout.value.stageOffsetY - WORKSPACE_MARGIN * canvasViewport.value.zoom}px`,
+  width: `${workspace.value.width}px`,
+  height: `${workspace.value.height}px`,
+  left: `${scrollLayout.value.stageOffsetX}px`,
+  top: `${scrollLayout.value.stageOffsetY}px`,
   transform: `scale(${canvasViewport.value.zoom})`,
-  '--workspace-margin': `${WORKSPACE_MARGIN}px`,
+  '--workspace-left': `${workspace.value.left}px`,
+  '--workspace-top': `${workspace.value.top}px`,
 }))
 /** Scene rectangle in unscaled stage coordinates, shared by the scene frame and grid. */
 const sceneRectStyle = computed(() => ({
-  left: `${WORKSPACE_MARGIN}px`,
-  top: `${WORKSPACE_MARGIN}px`,
+  left: `${workspace.value.left}px`,
+  top: `${workspace.value.top}px`,
   width: `${document.value.canvas.width}px`,
   height: `${document.value.canvas.height}px`,
 }))
+
+watch(
+  () => [workspace.value.left, workspace.value.top, workspace.value.right, workspace.value.bottom] as const,
+  (next, previous) => {
+    const element = viewportElement.value
+    if (!element || !previous) return
+    const previousWorkspace: UiCanvasWorkspace = {
+      left: previous[0], top: previous[1], right: previous[2], bottom: previous[3],
+      width: previous[0] + document.value.canvas.width + previous[2],
+      height: previous[1] + document.value.canvas.height + previous[3],
+    }
+    const nextWorkspace: UiCanvasWorkspace = {
+      left: next[0], top: next[1], right: next[2], bottom: next[3],
+      width: next[0] + document.value.canvas.width + next[2],
+      height: next[1] + document.value.canvas.height + next[3],
+    }
+    const previousLayout = layoutForWorkspace(previousWorkspace)
+    const nextLayout = layoutForWorkspace(nextWorkspace)
+    const previousOrigin = {
+      x: previousLayout.stageOffsetX + previousWorkspace.left * canvasViewport.value.zoom,
+      y: previousLayout.stageOffsetY + previousWorkspace.top * canvasViewport.value.zoom,
+    }
+    const nextOrigin = {
+      x: nextLayout.stageOffsetX + nextWorkspace.left * canvasViewport.value.zoom,
+      y: nextLayout.stageOffsetY + nextWorkspace.top * canvasViewport.value.zoom,
+    }
+    void nextTick(() => {
+      const scroll = clampCanvasScroll(nextLayout, {
+        x: element.scrollLeft + nextOrigin.x - previousOrigin.x,
+        y: element.scrollTop + nextOrigin.y - previousOrigin.y,
+      })
+      element.scrollLeft = scroll.x
+      element.scrollTop = scroll.y
+    })
+  },
+)
 const runtimeScene = (): UiRuntimeSceneExport => {
   const source = JSON.parse(JSON.stringify(document.value)) as UiDesignerDocument
   for (const node of source.nodes) {
@@ -270,7 +323,7 @@ const setCanvasZoom = (scale: number, clientPoint?: { x: number; y: number }) =>
   void nextTick(() => {
     updateViewportSize()
     const nextBounds = element.getBoundingClientRect()
-    const scroll = canvasScrollForWorldPoint(scrollLayout.value, worldPoint, { x: anchor.x - nextBounds.left, y: anchor.y - nextBounds.top }, canvasViewport.value.zoom)
+    const scroll = canvasScrollForWorldPoint(sceneScrollLayout.value, worldPoint, { x: anchor.x - nextBounds.left, y: anchor.y - nextBounds.top }, canvasViewport.value.zoom)
     element.scrollLeft = scroll.x
     element.scrollTop = scroll.y
   })
@@ -464,10 +517,6 @@ const keyDown = (event: KeyboardEvent) => {
     spacePressed.value = true
     return
   }
-  const direction = navigationDirectionFromKey(event.key)
-  if (!direction || event.defaultPrevented) return
-  event.preventDefault()
-  fabricCanvas.value?.navigateSelection(direction)
 }
 const keyUp = (event: KeyboardEvent) => {
   if (event.code === 'Space') {
@@ -609,7 +658,7 @@ onBeforeUnmount(() => {
           :document="document"
           :resource-catalog="resourceCatalog"
           :scope-node-id="editingRootId"
-          :workspace-margin="WORKSPACE_MARGIN"
+          :workspace="workspace"
           :zoom="canvasViewport.zoom"
           :active="true"
           @activate="activateNode"
@@ -630,7 +679,7 @@ onBeforeUnmount(() => {
 .canvas-ruler { position: absolute; z-index: 5; pointer-events: auto; cursor: crosshair; background: repeating-linear-gradient(to right, #ffffff55 0 1px, transparent 1px 32px); opacity: .35; }.canvas-ruler.horizontal { inset: 0 0 auto; height: 18px; }.canvas-ruler.vertical { inset: 0 auto 0 0; width: 18px; background: repeating-linear-gradient(to bottom, #ffffff55 0 1px, transparent 1px 32px); }.ruler-tick { position: absolute; color: #fff; font-size: 8px; line-height: 12px; pointer-events: none; transform: translateX(-1px); }.canvas-ruler.vertical .ruler-tick { transform: translateY(-1px) rotate(-90deg); transform-origin: left top; }
 .canvas-guide { position: absolute; z-index: 4; pointer-events: auto; cursor: ew-resize; background: var(--el-color-warning); opacity: .55; }.canvas-guide.vertical { top: 0; bottom: 0; width: 3px; margin-left: -1px; }.canvas-guide.horizontal { right: 0; left: 0; height: 3px; margin-top: -1px; cursor: ns-resize; }.canvas-guide.locked { cursor: not-allowed; opacity: .35; }.canvas-guide.snapped { opacity: 1; }.canvas-snap-line { position: absolute; z-index: 4; pointer-events: none; border-color: var(--el-color-danger); }.canvas-snap-line.vertical { width: 0; border-left: 1px dashed; }.canvas-snap-line.horizontal { height: 0; border-top: 1px dashed; }
 .guide-context-menu, .node-context-menu { position: fixed; z-index: 4000; display: flex; flex-direction: column; min-width: 150px; max-height: min(480px, calc(100vh - 16px)); overflow: auto; padding: 5px; border: 1px solid var(--app-border); border-radius: 5px; background: var(--app-bg); box-shadow: 0 8px 18px #0007; }.guide-context-menu .el-button, .node-context-menu .el-button { justify-content: flex-start; margin: 0; }
-.canvas-stage { position: absolute; overflow: hidden; transform-origin: 0 0; }.canvas-scene-frame { position: absolute; z-index: 0; box-shadow: 0 16px 36px #0007; pointer-events: none; }.canvas-scene-frame.checkerboard { background-image: conic-gradient(#ffffff09 25%, transparent 0 50%, #ffffff09 0 75%, transparent 0); background-size: 24px 24px; }.canvas-edit-breadcrumb { position: absolute; z-index: 8; top: calc(var(--workspace-margin, 0px) + 8px); left: calc(var(--workspace-margin, 0px) + 8px); display: flex; align-items: center; gap: 4px; padding: 3px 5px; border: 1px solid #ffffff1f; border-radius: 4px; color: var(--app-ink-soft); background: #12141be8; font-size: 10px; }.canvas-edit-breadcrumb .el-button { padding: 2px 5px; }
+.canvas-stage { position: absolute; overflow: hidden; transform-origin: 0 0; }.canvas-scene-frame { position: absolute; z-index: 0; box-shadow: 0 16px 36px #0007; pointer-events: none; }.canvas-scene-frame.checkerboard { background-image: conic-gradient(#ffffff09 25%, transparent 0 50%, #ffffff09 0 75%, transparent 0); background-size: 24px 24px; }.canvas-edit-breadcrumb { position: absolute; z-index: 8; top: calc(var(--workspace-top, 0px) + 8px); left: calc(var(--workspace-left, 0px) + 8px); display: flex; align-items: center; gap: 4px; padding: 3px 5px; border: 1px solid #ffffff1f; border-radius: 4px; color: var(--app-ink-soft); background: #12141be8; font-size: 10px; }.canvas-edit-breadcrumb .el-button { padding: 2px 5px; }
 .canvas-grid { position: absolute; z-index: 1; opacity: 0; background-image: linear-gradient(to right, var(--grid-color) 1px, transparent 1px), linear-gradient(to bottom, var(--grid-color) 1px, transparent 1px); background-size: var(--grid-size) var(--grid-size); pointer-events: none; }.canvas-grid.active { opacity: .18; }
 .canvas-runtime-state { position: absolute; z-index: 9; top: 48px; right: 8px; display: flex; max-width: min(560px, calc(100% - 16px)); align-items: center; gap: 8px; padding: 6px 9px; border: 1px solid var(--app-border); border-radius: 5px; color: var(--app-ink-soft); background: color-mix(in srgb, #12141b 92%, transparent); box-shadow: 0 5px 14px #0005; font-size: 11px; text-align: left; pointer-events: none; }.canvas-runtime-state > span { min-width: 0; flex: 1 1 auto; }.canvas-runtime-state .el-button { flex: 0 0 auto; pointer-events: auto; }
 .renderer-error-details { max-height: min(60vh, 560px); margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--app-ink); }

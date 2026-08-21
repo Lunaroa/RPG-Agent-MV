@@ -26,6 +26,10 @@ export interface UiSnapRectResult extends UiRect {
   distance?: number
 }
 
+export interface UiSnapMoveRectResult extends UiSnapRectResult {
+  hits: UiSnapHit[]
+}
+
 const cloneDocument = (document: UiDesignerDocument): UiDesignerDocument => JSON.parse(JSON.stringify(document)) as UiDesignerDocument
 const findDocumentNode = (document: UiDesignerDocument, id: string): UiNode | undefined => document.nodes.find((node) => node.id === id)
 
@@ -463,7 +467,7 @@ export function smartSnapTargetsForNode(document: UiDesignerDocument, nodeId: st
       && node.parentId === source.parentId
       && node.props.visible !== false
       && !node.locked)
-    .map((node) => ({ id: node.id, rect: nodeRect(node) }))
+    .map((node) => ({ id: node.id, rect: nodeVisualRect(node) }))
 }
 
 interface SnapCandidate {
@@ -584,7 +588,7 @@ export function snapFeedbackFor(document: UiDesignerDocument, draggedRect: UiRec
     if (hit.source === 'node') {
       const target = findDocumentNode(document, hit.nodeId ?? '')
       if (!target) continue
-      const rect = nodeRect(target)
+      const rect = nodeVisualRect(target)
       if (hit.axis === 'x') {
         start = Math.min(draggedRect.y, rect.y)
         end = Math.max(draggedRect.y + draggedRect.height, rect.y + rect.height)
@@ -618,6 +622,66 @@ export function snapPoint(point: UiPoint, options: SnapOptions): UiSnapPointResu
   const distances = [xSnap?.delta, ySnap?.delta].filter((value): value is number => value !== undefined)
   const normalized = normalizeGeometryPoint({ x: xSnap?.value ?? safeX, y: ySnap?.value ?? safeY }, { x: safeX, y: safeY })
   return { ...normalized, snapped: Boolean(xSnap || ySnap), guides, hits, distance: distances.length ? Math.min(...distances) : undefined }
+}
+
+interface MoveAxisSnap {
+  snap: AxisSnap
+  translation: number
+}
+
+const movingAxisValues = (rect: UiRect, axis: 'x' | 'y') => axis === 'x'
+  ? [rect.x, rect.x + rect.width / 2, rect.x + rect.width]
+  : [rect.y, rect.y + rect.height / 2, rect.y + rect.height]
+
+function snapMovingRectAxis(rect: UiRect, axis: 'x' | 'y', options: SnapOptions): MoveAxisSnap | undefined {
+  const sensitivity = Number.isFinite(options.sensitivity) && options.sensitivity >= 0 ? options.sensitivity : 0
+  let best: MoveAxisSnap | undefined
+  const consider = (current: number, candidate: SnapCandidate) => {
+    const translation = candidate.value - current
+    const distance = Math.abs(translation)
+    if (!Number.isFinite(distance) || distance > sensitivity || (best && distance >= best.snap.delta)) return
+    best = { snap: { axis, ...candidate, delta: distance }, translation }
+  }
+  for (const current of movingAxisValues(rect, axis)) {
+    for (const candidate of snapCandidates(options)[axis]) consider(current, candidate)
+  }
+  if (options.gridEnabled && Number.isFinite(options.gridSize) && options.gridSize > 0) {
+    const current = axis === 'x' ? rect.x : rect.y
+    consider(current, { value: Math.round(current / options.gridSize) * options.gridSize })
+  }
+  return best
+}
+
+/**
+ * Snap a moving visual rectangle by comparing its leading edge, center and
+ * trailing edge with the scene, guides and sibling rectangles.
+ */
+export function snapMoveRect(
+  rect: UiRect,
+  options: SnapOptions,
+  axes: readonly ('x' | 'y')[] = ['x', 'y'],
+): UiSnapMoveRectResult {
+  const safeRect = normalizeGeometryRect(rect, rect)
+  if (options.enabled === false) return { ...safeRect, snapped: false, guides: [], hits: [] }
+  const allowed = new Set(axes)
+  const xSnap = allowed.has('x') ? snapMovingRectAxis(safeRect, 'x', options) : undefined
+  const ySnap = allowed.has('y') ? snapMovingRectAxis(safeRect, 'y', options) : undefined
+  const snaps = [xSnap?.snap, ySnap?.snap].filter((snap): snap is AxisSnap => Boolean(snap))
+  const guides = snaps.map((snap) => snap.guide).filter((guide): guide is UiGuide => Boolean(guide))
+  const hits = snaps.map(snapHitFor).filter((hit): hit is UiSnapHit => Boolean(hit))
+  const distances = snaps.map((snap) => snap.delta)
+  const normalized = normalizeGeometryRect({
+    ...safeRect,
+    x: safeRect.x + (xSnap?.translation ?? 0),
+    y: safeRect.y + (ySnap?.translation ?? 0),
+  }, safeRect)
+  return {
+    ...normalized,
+    snapped: Boolean(xSnap || ySnap),
+    guides,
+    hits,
+    distance: distances.length ? Math.min(...distances) : undefined,
+  }
 }
 
 const activeXEdge = (rect: UiRect, handle: UiResizeHandle): number | undefined => handle.includes('w') ? rect.x : handle.includes('e') ? rect.x + rect.width : undefined

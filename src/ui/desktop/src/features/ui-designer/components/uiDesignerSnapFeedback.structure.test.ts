@@ -28,9 +28,10 @@ test('drag snapping draws transient alignment lines while resize stays continuou
 
   assert.match(geometry, /export interface UiSnapHit/)
   assert.match(geometry, /export function snapFeedbackFor/)
+  assert.match(geometry, /export function snapMoveRect/)
   assert.match(geometry, /pushFinite\(x, rect\.x, undefined, 'node', target\.id\)/)
 
   assert.match(controller, /const snapFeedback = ref<UiSnapFeedback \| null>\(null\)/)
   assert.match(controller, /snapFeedbackFor\(/)
-  assert.doesNotMatch(controller, /\bsnapRect\b/)
+  assert.match(controller, /snapMoveRect\(requestedBounds/)
 })

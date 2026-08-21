@@ -54,14 +54,20 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     runtime.cleanup();
   });
 
-  test('binds SceneManager push and refuses native scene replacement', () => {
+  test('binds SceneManager push, replaces built-in scenes, and protects plugin-owned scene names', () => {
     const context = makeContext();
     vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
     const runtime = context.MZUIRuntime.create();
     runtime.mount(sceneDocument(), { root: new context.PIXI.Container() });
     runtime.runAction({ type: 'gotoScene', sceneName: 'Scene_Custom' }, sceneDocument().nodes[0], { type: 'pointertap' });
     assert.equal(context.SceneManager.pushed, context.Scene_Custom);
-    assert.throws(() => context.MZUIRuntime.registerScene('Scene_Title', 'Scene_Base', sceneDocument()), /already owned/);
+    const originalTitle = context.Scene_Title;
+    const titleScene = sceneDocument();
+    titleScene.meta.sceneName = 'Scene_Title';
+    const replacementTitle = context.MZUIRuntime.registerScene('Scene_Title', 'Scene_Base', titleScene);
+    assert.equal(context.Scene_Title, replacementTitle);
+    assert.notEqual(context.Scene_Title, originalTitle);
+    assert.throws(() => context.MZUIRuntime.registerScene('Scene_Custom', 'Scene_Base', sceneDocument()), /already owned/);
   });
 
   test('scans deterministic scene files from MV www and MZ roots', () => {
@@ -71,7 +77,7 @@ describe('MZUIRuntime MV/MZ bridge', () => {
         const engineRoot = layout === 'mv-www' ? path.join(project, 'www') : project;
         fs.mkdirSync(path.join(engineRoot, 'js', 'plugins', 'mzui-data'), { recursive: true });
         fs.mkdirSync(path.join(engineRoot, 'data'), { recursive: true });
-        for (const sceneName of ['Scene_Beta', 'Scene_Alpha']) {
+        for (const sceneName of ['Scene_Beta', 'Scene_Alpha', 'Scene_Title']) {
           fs.writeFileSync(path.join(engineRoot, 'js', 'plugins', 'mzui-data', `${sceneName}.json`), JSON.stringify({
             version: '1.1.0', runtimeVersion: '>=1.1.0',
             meta: { sceneName, sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624 },
@@ -88,12 +94,15 @@ describe('MZUIRuntime MV/MZ bridge', () => {
         }), 'utf8');
         fs.writeFileSync(path.join(engineRoot, 'js', 'plugins', 'mzui-data', 'notes.json'), '{}', 'utf8');
         const context = makeContext();
+        const originalTitle = context.Scene_Title;
         context.PluginManager.parameters = () => ({ AutoRegister: 'true' });
         context.process = { cwd: () => project };
         context.require = nodeRequire;
         vm.runInNewContext(RUNTIME_SOURCE, context, { filename: `MZUIRuntime-${layout}.js` });
         assert.equal(typeof context.Scene_Alpha, 'function');
         assert.equal(typeof context.Scene_Beta, 'function');
+        assert.equal(context.MZUIRuntime.isRegistered('Scene_Title'), true);
+        assert.notEqual(context.Scene_Title, originalTitle);
         assert.equal(context.MZUIRuntime.errors.some((entry: { scene?: string }) => entry.scene === 'Scene_Bad'), true);
         assert.equal(context.MZUIRuntime.errors.some((entry: { scene?: string }) => entry.scene === 'Scene_InvalidScript'), true);
         assert.equal(context.MZUIRuntime.errors.some((entry: { file?: string }) => entry.file === 'notes.json'), true);

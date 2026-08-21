@@ -13,6 +13,25 @@
 
   var VERSION = '1.1.0';
   var SCENE_DIRECTORY_DEFAULT = 'js/plugins/mzui-data';
+  var BUILTIN_SCENE_NAMES = {
+    Scene_Title: true,
+    Scene_Map: true,
+    Scene_Menu: true,
+    Scene_Item: true,
+    Scene_Skill: true,
+    Scene_Equip: true,
+    Scene_Status: true,
+    Scene_Options: true,
+    Scene_Load: true,
+    Scene_Save: true,
+    Scene_Battle: true,
+    Scene_Shop: true,
+    Scene_Name: true,
+    Scene_Gameover: true,
+    Scene_End: true,
+    Scene_GameEnd: true,
+    Scene_Debug: true,
+  };
   var NODE_TYPES = {
     container: true,
     sprite: true,
@@ -2784,8 +2803,11 @@
 
   function registerScene(sceneName, sceneBase, scene) {
     if (registeredScenes[sceneName]) throw new Error('UI scene is already registered: ' + sceneName);
-    if (typeof global[sceneName] === 'function') throw new Error('UI scene name is already owned by another runtime: ' + sceneName);
-    var Base = global[sceneBase || 'Scene_Base'];
+    var existingScene = global[sceneName];
+    var replacesBuiltinScene = Boolean(BUILTIN_SCENE_NAMES[sceneName] && typeof existingScene === 'function');
+    if (typeof existingScene === 'function' && !replacesBuiltinScene) throw new Error('UI scene name is already owned by another runtime: ' + sceneName);
+    var baseName = sceneBase || 'Scene_Base';
+    var Base = replacesBuiltinScene && baseName === sceneName ? existingScene : global[baseName];
     if (typeof Base !== 'function') throw new Error('UI scene base is unavailable: ' + String(sceneBase));
     var UiDesignerScene = class extends Base {
       constructor() { super(...arguments); this._mzuiRuntime = null; this._mzuiRuntimeRoot = null; }

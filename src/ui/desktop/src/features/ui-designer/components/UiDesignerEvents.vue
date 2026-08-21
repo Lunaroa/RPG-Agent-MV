@@ -30,6 +30,13 @@ const resourceError = ref('')
 const actionTypes: UiEventAction['type'][] = ['none', 'newGame', 'continue', 'options', 'exit', 'gotoScene', 'toggleNode', 'playSe', 'url', 'script', 'setVariable', 'setSwitch', 'showMessage', 'tweenProp', 'wait']
 const eventLabels: Record<UiEventName, UiDesignerMessageKey> = { onClick: 'eventOnClick', onHoverEnter: 'eventOnHoverEnter', onHoverLeave: 'eventOnHoverLeave', onShow: 'eventOnShow', onHide: 'eventOnHide', onUpdate: 'eventOnUpdate', onFocus: 'eventOnFocus', onBlur: 'eventOnBlur' }
 const actionLabels: Record<UiEventAction['type'], UiDesignerMessageKey> = { none: 'actionNone', newGame: 'actionNewGame', continue: 'actionContinue', options: 'actionOptions', exit: 'actionExit', gotoScene: 'actionGotoScene', toggleNode: 'actionToggleNode', playSe: 'actionPlaySe', url: 'actionUrl', script: 'actionScript', setVariable: 'actionSetVariable', setSwitch: 'actionSetSwitch', showMessage: 'actionShowMessage', tweenProp: 'actionTweenProp', wait: 'actionWait' }
+const builtinScenePurpose: Record<string, UiDesignerMessageKey> = {
+  Scene_Title: 'scenePurposeTitle', Scene_Map: 'scenePurposeMap', Scene_Menu: 'scenePurposeMenu', Scene_Item: 'scenePurposeItem',
+  Scene_Skill: 'scenePurposeSkill', Scene_Equip: 'scenePurposeEquip', Scene_Status: 'scenePurposeStatus', Scene_Options: 'scenePurposeOptions',
+  Scene_Load: 'scenePurposeLoad', Scene_Save: 'scenePurposeSave', Scene_Battle: 'scenePurposeBattle', Scene_Shop: 'scenePurposeShop',
+  Scene_Name: 'scenePurposeName', Scene_Gameover: 'scenePurposeGameover', Scene_End: 'scenePurposeEnd', Scene_GameEnd: 'scenePurposeEnd',
+  Scene_Debug: 'scenePurposeDebug',
+}
 const openedScenes = computed(() => designer.scenes.map((scene) => ({ value: scene.document.meta.sceneName, label: `${scene.document.meta.sceneName}${scene.sourcePath ? ` · ${scene.sourcePath.split(/[\\/]/).pop()}` : ''}` })))
 const projectScenes = computed(() => {
   const openedValues = new Set(openedScenes.value.map((scene) => scene.value))
@@ -37,7 +44,7 @@ const projectScenes = computed(() => {
     .filter((file) => !openedValues.has(file.sceneName))
     .map((file) => ({ value: file.sceneName, label: `${file.sceneName} · ${file.path}` }))
 })
-const builtinScenes = computed(() => UI_DESIGNER_BUILTIN_SCENE_NAMES.map((name) => ({ value: name, label: name })))
+const builtinScenes = computed(() => UI_DESIGNER_BUILTIN_SCENE_NAMES.map((name) => ({ value: name, label: `${name} · ${t(builtinScenePurpose[name])}` })))
 const knownSceneTargets = computed(() => new Set([...openedScenes.value, ...projectScenes.value, ...builtinScenes.value].map((option) => option.value)))
 const conditionLabels: Record<'switch' | 'variable' | 'code', UiDesignerMessageKey> = { switch: 'conditionSwitchOn', variable: 'conditionVariable', code: 'conditionCode' }
 const easingLabels: Record<'Linear' | 'EaseIn' | 'EaseOut' | 'EaseInOut' | 'Bounce', UiDesignerMessageKey> = { Linear: 'easingLinear', EaseIn: 'easingEaseIn', EaseOut: 'easingEaseOut', EaseInOut: 'easingEaseInOut', Bounce: 'easingBounce' }

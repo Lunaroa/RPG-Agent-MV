@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessageBox } from 'element-plus'
-import type { UiDesignerAdapterBundle, UiDesignerLifecycleAdapter } from '@contract/ui-designer'
+import type { UiDesignerAdapterBundle, UiDesignerLifecycleAdapter, UiRuntimeStatus } from '@contract/ui-designer'
 import { useUiDesigner, type UiDesignerController } from '../composables/useUiDesigner'
 import { useUiDesignerLifecycle } from '../composables/useUiDesignerLifecycle'
 import { createUiDesignerShortcutRegistry, type UiDesignerShortcutDisplay } from '../composables/shortcutRegistry'
@@ -25,6 +25,7 @@ const props = withDefaults(defineProps<{
   projectPath?: string
   lifecycleAdapter?: UiDesignerLifecycleAdapter
   manageProjectContext?: boolean
+  applyProjectChanges?: (fallbackFiles: string[]) => Promise<boolean>
 }>(), { adapters: undefined, projectPath: undefined, lifecycleAdapter: undefined, manageProjectContext: true })
 const { t } = useUiDesignerI18n()
 let rawDesigner!: ReturnType<typeof useUiDesigner>
@@ -33,6 +34,9 @@ const tourStep = ref(0)
 const showWelcome = ref(true)
 const exportPath = ref('')
 const exportCompleted = ref(false)
+const runtimePromptVisible = ref(false)
+const runtimePromptBusy = ref(false)
+const runtimePromptDismissedProject = ref('')
 const newSceneDraft = reactive({ name: '', width: 816, height: 624, sceneBase: 'Scene_Base' })
 const newSceneTemplate = ref('blank')
 const leftPaneWidth = ref(260)
@@ -115,11 +119,45 @@ const completeTour = async () => {
   await rawDesigner.savePreferences({ tourCompleted: true })
 }
 const closeSurface = (visible: boolean) => { if (!visible) { if (surface.value === 'tour') void completeTour(); else surface.value = null } }
-const cycleNodeSelection = (step: 1 | -1) => {
-  const nodes = designer.document.nodes.filter((node) => node.id !== 'node_root')
-  if (!nodes.length) return
-  const index = nodes.findIndex((node) => node.id === designer.selectedIds[0])
-  designer.selectNodes([nodes[(index + step + nodes.length) % nodes.length].id])
+const runtimeNeedsStartupPrompt = computed(() => ['missing', 'file-unconfigured', 'configured-disabled', 'version-too-old'].includes(designer.runtimeStatus.state))
+const runtimePromptLabels: Partial<Record<UiRuntimeStatus['state'], UiDesignerMessageKey>> = {
+  missing: 'runtimeMissing',
+  'file-unconfigured': 'runtimeFileUnconfigured',
+  'configured-disabled': 'runtimeConfiguredDisabled',
+  'version-too-old': 'runtimeVersionTooOld',
+}
+const runtimePromptStatusLabel = () => t(runtimePromptLabels[designer.runtimeStatus.state] ?? 'runtimeUnknown')
+const dismissRuntimePrompt = () => {
+  runtimePromptDismissedProject.value = props.projectPath ?? ''
+  runtimePromptVisible.value = false
+}
+const installRuntimeFromPrompt = async () => {
+  if (runtimePromptBusy.value) return
+  let forceModifiedRuntime = false
+  if (designer.runtimeStatus.needsConfirmation) {
+    try {
+      await ElMessageBox.confirm(t('runtimeModifiedBody'), t('runtimeModifiedTitle'), {
+        type: 'warning',
+        confirmButtonText: t('replaceRuntime'),
+        cancelButtonText: t('lifecycleCancel'),
+        closeOnClickModal: false,
+      })
+      forceModifiedRuntime = true
+    } catch {
+      return
+    }
+  }
+  runtimePromptBusy.value = true
+  try {
+    const staged = await rawDesigner.installRuntime({ enable: true, forceModifiedRuntime })
+    if (!staged) return
+    runtimePromptVisible.value = false
+    exportCompleted.value = true
+    const applied = await props.applyProjectChanges?.(rawDesigner.runtimeStaging.value?.affectedFiles ?? [])
+    if (applied) await rawDesigner.checkRuntime()
+  } finally {
+    runtimePromptBusy.value = false
+  }
 }
 const inspectorRef = ref<UiDesignerInspectorExpose>()
 const canvasRef = ref<UiDesignerCanvasExpose>()
@@ -188,7 +226,20 @@ watch(() => designer.scenes.length, (count, previous) => {
   if (count === 0) showWelcome.value = true
   else if (count > (previous ?? 0)) showWelcome.value = false
 })
-watch(() => props.projectPath, (next, previous) => { if (props.manageProjectContext && next !== previous) void rawDesigner.setProjectContext(next, props.adapters) })
+watch(() => props.projectPath, (next, previous) => {
+  if (next !== previous) {
+    runtimePromptVisible.value = false
+    runtimePromptDismissedProject.value = ''
+  }
+  if (props.manageProjectContext && next !== previous) void rawDesigner.setProjectContext(next, props.adapters)
+})
+watch(
+  () => [props.projectPath, designer.runtimeStatus.state, surface.value] as const,
+  ([project, _state, activeSurface]) => {
+    if (!project || activeSurface || runtimePromptDismissedProject.value === project || !runtimeNeedsStartupPrompt.value) return
+    runtimePromptVisible.value = true
+  },
+)
 onMounted(async () => {
   const modifier = (key: string, handler: () => void | Promise<void>, shift = false, description?: string) => shortcutRegistry.register({ key, ctrlOrMeta: true, shift, description, handler })
   modifier('n', openNewScene, false, 'shortcutNewScene')
@@ -220,13 +271,11 @@ onMounted(async () => {
   modifier('e', () => { exportCompleted.value = false; surface.value = 'export' }, false, 'shortcutExport')
   modifier('p', toggleEditorPreview, false, 'shortcutEditorPreview')
   modifier(';', () => { designer.setCanvasSetting('guidesVisible', !designer.document.canvas.guidesVisible) }, false, 'shortcutToggleGuides')
-  // Plain arrows drive spatial selection navigation (UiDesignerCanvas keyDown);
-  // Shift+arrows remain the coarse nudge. Plain 1px nudge is intentionally retired.
+  // Shift+arrows remain an authoring nudge. Button focus navigation belongs
+  // exclusively to editor/game preview and is handled by the runtime.
   for (const [key, delta] of [['ArrowLeft', { x: -1, y: 0 }], ['ArrowRight', { x: 1, y: 0 }], ['ArrowUp', { x: 0, y: -1 }], ['ArrowDown', { x: 0, y: 1 }]] as const) {
     shortcutRegistry.register({ key, shift: true, description: 'shortcutNudge', handler: () => { designer.nudgeSelected({ x: delta.x * 10, y: delta.y * 10 }) } })
   }
-  shortcutRegistry.register({ key: 'Tab', description: 'shortcutNextNode', handler: () => cycleNodeSelection(1) })
-  shortcutRegistry.register({ key: 'Tab', shift: true, description: 'shortcutPreviousNode', handler: () => cycleNodeSelection(-1) })
   shortcutRegistry.register({ key: 'Delete', description: 'shortcutDelete', handler: () => { designer.removeSelected() } })
   shortcutRegistry.register({ key: 'F6', description: 'shortcutGamePreview', handler: toggleGamePreview })
   shortcutRegistry.register({ key: 'f', shift: true, alt: true, allowInEditable: true, description: 'shortcutFormat', handler: () => { window.dispatchEvent(new Event('agent-rpg:ui-designer-format')) } })
@@ -244,6 +293,7 @@ onMounted(async () => {
   if (initialScene && !initialScene.sourcePath && !rawDesigner.isSceneDirty(initialScene.id)) await rawDesigner.closeScene(initialScene.id)
   showWelcome.value = true
   if (!Boolean(designer.preferences.tourCompleted)) openTour()
+  if (rawDesigner.hasProject.value) await rawDesigner.checkRuntime()
 })
 onBeforeUnmount(() => {
   endPaneDrag()
@@ -262,11 +312,11 @@ onBeforeUnmount(() => {
     <section class="ui-designer-shell" :class="{ 'code-mode-active': designer.editingMode === 'code' || designer.editingMode === 'json' }" data-ui-id="ui-designer-shell">
     <UiDesignerToolbar :designer="designer" @home="showWelcome = true" @editing-mode="showEditingMode" @settings="surface = 'settings'" @help="surface = 'help'" @shortcuts="surface = 'shortcuts'" @tour="openTour" @export="exportCompleted = false; surface = 'export'" />
     <UiDesignerSceneTabs :designer="designer" @new-scene="openNewScene" />
-    <div class="designer-workspace" :style="workspaceStyle">
-      <aside class="left-pane">
+    <div class="designer-workspace" :class="{ 'welcome-active': showWelcome }" :style="workspaceStyle">
+      <aside v-if="!showWelcome" class="left-pane">
         <UiDesignerNodePanel :designer="designer" @activate-node="activateNode" />
       </aside>
-      <div class="workspace-splitter" role="separator" :aria-label="t('leftPane')" @pointerdown="beginPaneDrag('left', $event)" />
+      <div v-if="!showWelcome" class="workspace-splitter" role="separator" :aria-label="t('leftPane')" @pointerdown="beginPaneDrag('left', $event)" />
       <main class="center-pane">
         <UiDesignerWelcome v-if="showWelcome" :designer="designer" @new-scene="openNewScene" @return-to-scene="showWelcome = false" @scene-ready="showWelcome = false" />
         <template v-else>
@@ -275,13 +325,22 @@ onBeforeUnmount(() => {
           <UiDesignerJsonPanel v-if="designer.editingMode === 'json'" :designer="designer" />
         </template>
       </main>
-      <div class="workspace-splitter" role="separator" :aria-label="t('rightPane')" @pointerdown="beginPaneDrag('right', $event)" />
-      <UiDesignerInspector ref="inspectorRef" :designer="designer" />
+      <div v-if="!showWelcome" class="workspace-splitter" role="separator" :aria-label="t('rightPane')" @pointerdown="beginPaneDrag('right', $event)" />
+      <UiDesignerInspector v-if="!showWelcome" ref="inspectorRef" :designer="designer" />
     </div>
     <UiDesignerNewSceneSurface v-if="surface === 'newScene'" :model-value="true" :draft="newSceneDraft" :template="newSceneTemplate" :template-options="sceneTemplateOptions" :template-label="sceneTemplateLabel" @update:model-value="closeSurface" @update:template="newSceneTemplate = $event" @create="createNewScene" @cancel="surface = null" />
     <UiDesignerSettingsSurface v-if="surface === 'settings'" :model-value="true" :designer="designer" :left-pane-width="leftPaneWidth" :right-pane-width="rightPaneWidth" :clamp-pane="(side, value) => clampPane(side, value)" @update:model-value="closeSurface" />
-    <UiDesignerExportSurface v-if="surface === 'export'" :model-value="true" :designer="designer" :export-path="exportPath" :export-completed="exportCompleted" @update:model-value="closeSurface" @update:export-path="exportPath = $event" @completed="exportCompleted = $event" />
+    <UiDesignerExportSurface v-if="surface === 'export'" :model-value="true" :designer="designer" :export-path="exportPath" :export-completed="exportCompleted" :apply-project-changes="props.applyProjectChanges" @update:model-value="closeSurface" @update:export-path="exportPath = $event" @completed="exportCompleted = $event" />
     <UiDesignerHelpSurface v-if="surface === 'help' || surface === 'shortcuts' || surface === 'tour'" :model-value="true" :surface="surface" :tour-step="tourStep" :shortcut-bindings="shortcutBindings" @update:model-value="closeSurface" @update:tour-step="tourStep = $event" @complete="void completeTour()" />
+
+    <el-dialog v-model="runtimePromptVisible" :title="t('runtimeInstallPromptTitle')" width="min(470px, 92vw)" :close-on-click-modal="false" @closed="runtimePromptDismissedProject = props.projectPath ?? ''">
+      <p class="dialog-copy">{{ t('runtimeInstallPromptBody') }}</p>
+      <p class="dialog-copy">{{ t('runtime') }}: {{ runtimePromptStatusLabel() }}</p>
+      <template #footer>
+        <el-button :disabled="runtimePromptBusy" @click="dismissRuntimePrompt">{{ t('runtimeInstallLater') }}</el-button>
+        <el-button type="primary" :loading="runtimePromptBusy" :disabled="!designer.canManageRuntime" @click="void installRuntimeFromPrompt()">{{ t('installRuntime') }}</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog :model-value="Boolean(designer.fileConflict)" :title="t('conflictTitle')" width="min(470px, 92vw)" :close-on-click-modal="false" :show-close="false">
       <p class="dialog-copy">{{ designer.runtimeConflict ? t('overwriteConflictBody') : t('conflictBody') }}</p>
@@ -298,6 +357,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .ui-designer-shell { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--app-bg-page); color: var(--app-ink); }
 .designer-workspace { display: grid; grid-template-columns: var(--ui-designer-left-pane-width, 260px) 5px minmax(0, 1fr) 5px var(--ui-designer-right-pane-width, 320px); flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.designer-workspace.welcome-active { grid-template-columns: minmax(0, 1fr); }
 .workspace-splitter { position: relative; z-index: 3; cursor: col-resize; background: var(--app-border); }.workspace-splitter::after { position: absolute; inset: 0 -3px; content: ''; }
 .left-pane { display: flex; min-width: 0; min-height: 0; overflow: hidden; padding: 9px; border-right: 1px solid var(--app-border); background: var(--app-bg); }
 .center-pane { display: flex; min-width: 0; min-height: 0; }

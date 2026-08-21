@@ -242,17 +242,18 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
 </template>
 
 <style scoped>
-.property-field { display: flex; flex-direction: column; gap: 4px; }
-.property-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; color: var(--app-ink-soft); font-size: 11px; }.property-label { display: inline-flex; align-items: center; gap: 3px; min-width: 0; }.property-help { color: var(--app-ink-soft); font-size: 11px; }
+.property-field { display: grid; grid-template-columns: 82px minmax(0, 1fr) auto; align-items: start; gap: 4px 6px; }
+.property-head { display: contents; color: var(--app-ink-soft); font-size: 11px; }.property-label { display: inline-flex; grid-column: 1; align-items: center; min-width: 0; min-height: 24px; gap: 3px; }.property-help { flex: 0 0 auto; color: var(--app-ink-soft); font-size: 11px; }
 .property-head label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.property-head .el-button { padding: 3px 6px; font-size: 10px; }
-.property-field > .el-input-number, .property-field > .el-input, .property-field > .el-switch, .property-field > .el-color-picker { width: 100%; }
+.property-head .el-button-group { grid-column: 3; align-self: start; white-space: nowrap; }.property-head .el-button { padding: 3px 6px; font-size: 10px; }
+.property-field > .el-input-number, .property-field > .el-input, .property-field > .el-textarea, .property-field > .el-select, .property-field > .el-switch, .property-field > .el-color-picker, .property-field > .number-control, .property-field > .resource-control, .property-field > .code-field { grid-column: 2; grid-row: 1; width: 100%; min-width: 0; }
 .number-control { display: grid; grid-template-columns: minmax(0, 1fr) 88px; align-items: center; gap: 8px; }
 .number-control :deep(.el-slider) { box-sizing: border-box; min-width: 0; padding-inline: 10px; }
 .number-control :deep(.el-input-number) { width: 88px; }
 .code-field { position: relative; }
 .code-note { position: absolute; right: 6px; bottom: 4px; color: var(--app-ink-soft); font-size: 9px; pointer-events: none; }
-.resource-drop-error, .resource-picker-hint { margin: 0; color: var(--app-ink-soft); font-size: 10px; line-height: 1.3; }
+.resource-drop-error, .resource-picker-hint { margin: 0; color: var(--app-ink-soft); font-size: 10px; line-height: 1.3; }.property-field > .resource-drop-error, .property-field > .field-error { grid-column: 2 / -1; }
 .resource-control { display: flex; flex-direction: column; gap: 4px; }.resource-control > :first-child { width: 100%; min-width: 0; }
 .property-field.has-error :deep(.el-input), .property-field.has-error :deep(.el-input-number), .property-field.has-error :deep(.el-select), .property-field.has-error :deep(.el-color-picker) { outline: 1px solid var(--el-color-danger); border-radius: 4px; }.field-error { margin: 0; color: var(--el-color-danger); font-size: 10px; line-height: 1.3; }.field-error .status-detail { color: var(--app-ink-soft); font-size: 9px; }
+@media (max-width: 360px) { .property-field { grid-template-columns: 70px minmax(0, 1fr) auto; gap-inline: 4px; } }
 </style>

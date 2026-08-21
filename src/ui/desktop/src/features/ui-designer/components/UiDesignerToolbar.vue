@@ -62,7 +62,8 @@ const selectEditingMode = (mode: 'design' | 'code' | 'json') => {
       <el-button-group>
         <el-button data-testid="ui-designer-open" size="small" :disabled="!designer.canSave" @click="void designer.open()">{{ t('open') }}</el-button>
         <el-button data-testid="ui-designer-save" size="small" type="primary" :disabled="!designer.canSave || !designer.isDirty" @click="void designer.save()">{{ t('save') }}</el-button>
-        <el-button data-testid="ui-designer-export" size="small" :disabled="!designer.canExport" @click="emit('export')">{{ t('export') }}</el-button>
+        <el-button data-testid="ui-designer-save-as" size="small" :disabled="!designer.canSave" @click="void designer.save('saveAs')">{{ t('saveAs') }}</el-button>
+        <el-button data-testid="ui-designer-export" size="small" :disabled="!designer.canExport" @click="emit('export')">{{ t('publishToProject') }}</el-button>
       </el-button-group>
 
       <el-button-group>
@@ -76,10 +77,10 @@ const selectEditingMode = (mode: 'design' | 'code' | 'json') => {
         <el-button data-testid="ui-designer-json-mode" data-ui-id="ui-designer-json-mode" size="small" :type="designer.editingMode === 'json' ? 'primary' : 'default'" @click="selectEditingMode('json')">{{ t('json') }}</el-button>
       </el-button-group>
 
-      <el-button data-testid="ui-designer-preview-toggle" data-ui-id="ui-designer-preview-enter" class="editor-preview-toggle" size="small" :type="designer.isEditorPreviewing ? 'success' : 'default'" :aria-label="t(designer.isEditorPreviewing ? 'exitEditorPreview' : 'editorPreview')" :disabled="!designer.isEditorPreviewing && !designer.canStartEditorPreview" @click="toggleEditorPreview">
+      <el-button data-testid="ui-designer-preview-toggle" :data-ui-id="designer.isEditorPreviewing ? 'ui-designer-preview-exit' : 'ui-designer-preview-enter'" class="editor-preview-toggle" size="small" :type="designer.isEditorPreviewing ? 'success' : 'default'" :aria-label="t(designer.isEditorPreviewing ? 'exitEditorPreview' : 'editorPreview')" :disabled="!designer.isEditorPreviewing && !designer.canStartEditorPreview" @click="toggleEditorPreview">
         {{ t(designer.isEditorPreviewing ? 'exitEditorPreview' : 'editorPreview') }}
       </el-button>
-      <el-button data-testid="ui-designer-game-preview-toggle" data-ui-id="ui-designer-game-preview-enter" size="small" :type="designer.isPreviewing ? 'success' : 'default'" :aria-label="t(designer.isPreviewing ? 'exitGamePreview' : 'gamePreview')" :disabled="!designer.isPreviewing && !designer.canStartPreview" @click="toggleGamePreview">
+      <el-button data-testid="ui-designer-game-preview-toggle" :data-ui-id="designer.isPreviewing ? 'ui-designer-game-preview-exit' : 'ui-designer-game-preview-enter'" size="small" :type="designer.isPreviewing ? 'success' : 'default'" :aria-label="t(designer.isPreviewing ? 'exitGamePreview' : 'gamePreview')" :disabled="!designer.isPreviewing && !designer.canStartPreview" @click="toggleGamePreview">
         {{ t(designer.isPreviewing ? 'exitGamePreview' : 'gamePreview') }}
       </el-button>
 

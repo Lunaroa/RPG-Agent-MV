@@ -21,9 +21,9 @@ const updatePane = (side: 'left' | 'right', value: unknown) => {
 </script>
 
 <template>
-  <el-dialog :model-value="props.modelValue" :title="t('settings')" width="min(620px, 92vw)" destroy-on-close @update:model-value="close">
+  <el-dialog :model-value="props.modelValue" :title="t('settings')" width="min(760px, 94vw)" destroy-on-close @update:model-value="close">
     <div class="dialog-stack">
-      <el-form label-position="top">
+      <el-form class="settings-form" label-position="left" label-width="132px">
         <el-form-item :label="t('sceneBase')"><el-input :model-value="designer.document.meta.sceneBase" @update:model-value="designer.setSceneMeta('sceneBase', $event)" /></el-form-item>
         <el-form-item :label="t('author')"><el-input :model-value="designer.document.meta.author" @update:model-value="designer.setSceneMeta('author', $event)" /></el-form-item>
         <el-form-item :label="t('description')"><el-input type="textarea" :model-value="designer.document.meta.description" @update:model-value="designer.setSceneMeta('description', $event)" /></el-form-item>
@@ -56,5 +56,5 @@ const updatePane = (side: 'left' | 'right', value: unknown) => {
 </template>
 
 <style scoped>
-.dialog-stack { color: var(--app-ink); font-size: 13px; line-height: 1.6; }.inline-fields { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }.inline-fields > * { min-width: 120px; flex: 1; }
+.dialog-stack { color: var(--app-ink); font-size: 13px; line-height: 1.6; }.settings-form :deep(.el-form-item) { align-items: flex-start; margin-bottom: 10px; }.settings-form :deep(.el-form-item__label) { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }.settings-form :deep(.el-form-item__content) { min-width: 0; }.settings-form :deep(.el-input), .settings-form :deep(.el-select), .settings-form :deep(.el-input-number) { width: 100%; }.inline-fields { display: flex; flex-wrap: nowrap; gap: 8px; width: 100%; min-width: 0; }.inline-fields > * { min-width: 0; flex: 1; }
 </style>

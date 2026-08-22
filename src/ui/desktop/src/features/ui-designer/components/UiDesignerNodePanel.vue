@@ -260,7 +260,24 @@ const handleKeydown = (event: KeyboardEvent) => {
             <el-button size="small" text type="danger" :disabled="!nodePolicy(data.id).allowed.delete" :data-ui-id="`ui-designer-tree-delete-${data.id}`" @click.stop="designer.executeNodeAction('delete', data.id)">×</el-button>
           </span>
         </span>
-          <template #dropdown><el-dropdown-menu><el-dropdown-item command="copy" :disabled="!nodePolicy(data.id).allowed.copy" :data-ui-id="`ui-designer-tree-command-${data.id}-copy`">{{ t('copyAction') }}</el-dropdown-item><el-dropdown-item command="cut" :disabled="!nodePolicy(data.id).allowed.cut" :data-ui-id="`ui-designer-tree-command-${data.id}-cut`">{{ t('cutAction') }}</el-dropdown-item><el-dropdown-item command="paste" :disabled="!nodePolicy(data.id).allowed.paste" :data-ui-id="`ui-designer-tree-command-${data.id}-paste`">{{ t('pasteAction') }}</el-dropdown-item><el-dropdown-item command="addChild" :disabled="!nodePolicy(data.id).allowed.addChild" :data-ui-id="`ui-designer-tree-command-${data.id}-addChild`">{{ t('addChild') }}</el-dropdown-item><el-dropdown-item command="rename" :disabled="!nodePolicy(data.id).allowed.rename" :data-ui-id="`ui-designer-tree-command-${data.id}-rename`">{{ t('renameNode') }}</el-dropdown-item><el-dropdown-item command="duplicate" :disabled="!nodePolicy(data.id).allowed.duplicate" :data-ui-id="`ui-designer-tree-command-${data.id}-duplicate`">{{ t('duplicateNode') }}</el-dropdown-item><el-dropdown-item command="group" :disabled="!nodePolicy(data.id).allowed.group" :data-ui-id="`ui-designer-tree-command-${data.id}-group`">{{ t('group') }}</el-dropdown-item><el-dropdown-item command="sameType" :disabled="!nodePolicy(data.id).allowed.sameType" :data-ui-id="`ui-designer-tree-command-${data.id}-sameType`">{{ t('selectSameType') }}</el-dropdown-item><el-dropdown-item command="moveUp" :disabled="!nodePolicy(data.id).allowed.moveUp" :data-ui-id="`ui-designer-tree-command-${data.id}-moveUp`">{{ t('moveUp') }}</el-dropdown-item><el-dropdown-item command="moveDown" :disabled="!nodePolicy(data.id).allowed.moveDown" :data-ui-id="`ui-designer-tree-command-${data.id}-moveDown`">{{ t('moveDown') }}</el-dropdown-item><el-dropdown-item command="moveTop" :disabled="!nodePolicy(data.id).allowed.moveTop" :data-ui-id="`ui-designer-tree-command-${data.id}-moveTop`">{{ t('moveTop') }}</el-dropdown-item><el-dropdown-item command="moveBottom" :disabled="!nodePolicy(data.id).allowed.moveBottom" :data-ui-id="`ui-designer-tree-command-${data.id}-moveBottom`">{{ t('moveBottom') }}</el-dropdown-item><el-dropdown-item command="expandAll">{{ t('expandAll') }}</el-dropdown-item><el-dropdown-item command="collapseAll">{{ t('collapseAll') }}</el-dropdown-item><el-dropdown-item command="toggleVisibility" :disabled="!nodePolicy(data.id).allowed.toggleVisibility" :data-ui-id="`ui-designer-tree-command-${data.id}-toggleVisibility`">{{ document.nodes.find((node) => node.id === data.id)?.props.visible ? t('hideNode') : t('showNode') }}</el-dropdown-item><el-dropdown-item command="toggleLock" :disabled="!nodePolicy(data.id).allowed.toggleLock" :data-ui-id="`ui-designer-tree-command-${data.id}-toggleLock`">{{ document.nodes.find((node) => node.id === data.id)?.locked ? t('unlockNode') : t('lockNode') }}</el-dropdown-item><el-dropdown-item divided command="delete" :disabled="!nodePolicy(data.id).allowed.delete" :data-ui-id="`ui-designer-tree-command-${data.id}-delete`">{{ t('deleteNode') }}</el-dropdown-item></el-dropdown-menu></template>
+          <template #dropdown><el-dropdown-menu>
+            <el-dropdown-item command="copy" :disabled="!nodePolicy(data.id).allowed.copy" :data-ui-id="`ui-designer-tree-command-${data.id}-copy`">{{ t('copyAction') }}</el-dropdown-item>
+            <el-dropdown-item command="cut" :disabled="!nodePolicy(data.id).allowed.cut" :data-ui-id="`ui-designer-tree-command-${data.id}-cut`">{{ t('cutAction') }}</el-dropdown-item>
+            <el-dropdown-item command="paste" :disabled="!nodePolicy(data.id).allowed.paste" :data-ui-id="`ui-designer-tree-command-${data.id}-paste`">{{ t('pasteAction') }}</el-dropdown-item>
+            <el-dropdown-item command="addChild" :disabled="!nodePolicy(data.id).allowed.addChild" :data-ui-id="`ui-designer-tree-command-${data.id}-addChild`">{{ t('addChild') }}</el-dropdown-item>
+            <el-dropdown-item command="rename" :disabled="!nodePolicy(data.id).allowed.rename" :data-ui-id="`ui-designer-tree-command-${data.id}-rename`">{{ t('renameNode') }}</el-dropdown-item>
+            <el-dropdown-item command="duplicate" :disabled="!nodePolicy(data.id).allowed.duplicate" :data-ui-id="`ui-designer-tree-command-${data.id}-duplicate`">{{ t('duplicateNode') }}</el-dropdown-item>
+            <el-dropdown-item command="group" :disabled="!nodePolicy(data.id).allowed.group" :data-ui-id="`ui-designer-tree-command-${data.id}-group`">{{ t('group') }}</el-dropdown-item>
+            <el-dropdown-item command="sameType" :disabled="!nodePolicy(data.id).allowed.sameType" :data-ui-id="`ui-designer-tree-command-${data.id}-sameType`">{{ t('selectSameType') }}</el-dropdown-item>
+            <el-dropdown-item command="moveUp" :disabled="!nodePolicy(data.id).allowed.moveUp" :data-ui-id="`ui-designer-tree-command-${data.id}-moveUp`">{{ t('moveUp') }}</el-dropdown-item>
+            <el-dropdown-item command="moveDown" :disabled="!nodePolicy(data.id).allowed.moveDown" :data-ui-id="`ui-designer-tree-command-${data.id}-moveDown`">{{ t('moveDown') }}</el-dropdown-item>
+            <el-dropdown-item command="moveTop" :disabled="!nodePolicy(data.id).allowed.moveTop" :data-ui-id="`ui-designer-tree-command-${data.id}-moveTop`">{{ t('moveTop') }}</el-dropdown-item>
+            <el-dropdown-item command="moveBottom" :disabled="!nodePolicy(data.id).allowed.moveBottom" :data-ui-id="`ui-designer-tree-command-${data.id}-moveBottom`">{{ t('moveBottom') }}</el-dropdown-item>
+            <el-dropdown-item command="expandAll">{{ t('expandAll') }}</el-dropdown-item>
+            <el-dropdown-item command="collapseAll">{{ t('collapseAll') }}</el-dropdown-item>
+            <el-dropdown-item command="toggleVisibility" :disabled="!nodePolicy(data.id).allowed.toggleVisibility" :data-ui-id="`ui-designer-tree-command-${data.id}-toggleVisibility`">{{ document.nodes.find((node) => node.id === data.id)?.props.visible ? t('hideNode') : t('showNode') }}</el-dropdown-item>
+            <el-dropdown-item command="toggleLock" :disabled="!nodePolicy(data.id).allowed.toggleLock" :data-ui-id="`ui-designer-tree-command-${data.id}-toggleLock`">{{ document.nodes.find((node) => node.id === data.id)?.locked ? t('unlockNode') : t('lockNode') }}</el-dropdown-item>
+            <el-dropdown-item divided command="delete" :disabled="!nodePolicy(data.id).allowed.delete" :data-ui-id="`ui-designer-tree-command-${data.id}-delete`">{{ t('deleteNode') }}</el-dropdown-item></el-dropdown-menu></template>
         </el-dropdown>
       </template>
     </el-tree>
@@ -290,7 +307,22 @@ const handleKeydown = (event: KeyboardEvent) => {
 .node-tree :deep(.el-tree-node), .node-tree :deep(.el-tree-node__children), .node-tree :deep(.el-tree-node__content) { width: 100%; min-width: 0; max-width: 100%; }
 .node-tree :deep(.el-tree-node__content) { box-sizing: border-box; overflow: hidden; }
 .node-tree :deep(.el-dropdown) { display: block; flex: 1 1 auto; width: auto; min-width: 0; overflow: hidden; }
-.node-tree-entry { display: flex; box-sizing: border-box; align-items: center; gap: 7px; width: 100%; min-width: 0; max-width: 100%; min-height: 28px; overflow: hidden; font-size: 12px; }.node-tree-entry.locked { color: var(--app-ink-soft); }.node-row-actions { display: inline-flex; flex: 0 1 72px; max-width: 72px; justify-content: flex-end; margin-left: auto; overflow: hidden; visibility: hidden; opacity: 0; pointer-events: none; }.node-tree-entry:hover .node-row-actions, .node-tree-entry:focus-within .node-row-actions, .node-tree-entry.selected .node-row-actions { visibility: visible; opacity: 1; pointer-events: auto; }.node-row-actions .el-button { flex: 0 0 auto; padding: 1px 3px; }
+.node-tree-entry { display: flex; box-sizing: border-box; align-items: center; gap: 7px; width: 100%; min-width: 0; max-width: 100%; min-height: 28px; overflow: hidden; font-size: 12px; }.node-tree-entry.locked { color: var(--app-ink-soft); }
+.node-row-actions {
+  display: inline-flex;
+  flex: 0 1 72px;
+  max-width: 80px;
+  margin-right: 6px;
+  justify-content: flex-end; margin-left: auto; overflow: hidden; visibility: hidden; opacity: 0; pointer-events: none;
+}
+.node-tree-entry:hover .node-row-actions, .node-tree-entry:focus-within .node-row-actions, .node-tree-entry.selected .node-row-actions { visibility: visible; opacity: 1; pointer-events: auto; }
+.node-row-actions .el-button {
+  flex: 0 0 auto;
+  padding: 1px 0px;
+  width: 24px;
+  margin-left: 0px;
+  border-radius: 4px;
+}
 .status-detail { color: var(--app-ink-soft); font-size: 10px; }
 .node-kind { color: var(--app-ink-soft); font-size: 10px; }
 .node-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

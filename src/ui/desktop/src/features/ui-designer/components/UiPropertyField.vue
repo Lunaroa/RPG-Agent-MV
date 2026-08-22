@@ -12,6 +12,7 @@ import type { UiDesignerMessageKey } from '../i18n'
 const props = withDefaults(defineProps<{
   label: string
   fieldKey?: string
+  unit?: string
   help?: string
   value: unknown
   mode?: UiPropertyMode
@@ -156,7 +157,9 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
 <template>
   <div class="property-field" :class="{ 'has-error': props.issues?.length }" :aria-invalid="Boolean(props.issues?.length)">
     <div class="property-head">
-      <span class="property-label"><label>{{ props.label }}</label><el-tooltip v-if="props.help" :content="props.help" placement="top"><el-icon class="property-help"><QuestionFilled /></el-icon></el-tooltip></span>
+      <span class="property-label"><label>{{ props.label }}</label><el-tooltip v-if="props.help" :content="props.help" placement="top">
+        <el-icon class="property-help"><QuestionFilled /></el-icon></el-tooltip>
+      </span>
       <el-button-group size="small">
         <el-button size="small" :type="props.mode === 'value' ? 'primary' : 'default'" @click="emit('mode', 'value')">{{ t('value') }}</el-button>
         <el-button size="small" :type="props.mode === 'code' ? 'primary' : 'default'" @click="emit('mode', 'code')">{{ t('expression') }}</el-button>
@@ -176,7 +179,11 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
       controls-position="right"
       @update:model-value="updateDraft($event ?? 0)"
       @change="commitValue"
-    />
+    >
+      <template #suffix>
+        <span>{{ props.unit }}</span>
+      </template>
+    </el-input-number>
     <el-switch
       v-else-if="props.mode === 'value' && props.kind === 'boolean'"
       :model-value="Boolean(props.value)"
@@ -243,10 +250,21 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
 
 <style scoped>
 .property-field { display: grid; grid-template-columns: 82px minmax(0, 1fr) auto; align-items: start; gap: 4px 6px; }
-.property-head { display: contents; color: var(--app-ink-soft); font-size: 11px; }.property-label { display: inline-flex; grid-column: 1; align-items: center; min-width: 0; min-height: 24px; gap: 3px; }.property-help { flex: 0 0 auto; color: var(--app-ink-soft); font-size: 11px; }
+.property-head { display: contents; color: var(--app-ink-soft); font-size: 11px; }.property-label { display: inline-flex; grid-column: 1; align-items: center; min-width: 0; min-height: 24px; gap: 3px; }
+.property-help { flex: 0 0 auto; color: var(--app-ink-muted); font-size: 12px; }
 .property-head label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .property-head .el-button-group { grid-column: 3; align-self: start; white-space: nowrap; }.property-head .el-button { padding: 3px 6px; font-size: 10px; }
-.property-field > .el-input-number, .property-field > .el-input, .property-field > .el-textarea, .property-field > .el-select, .property-field > .el-switch, .property-field > .el-color-picker, .property-field > .number-control, .property-field > .resource-control, .property-field > .code-field { grid-column: 2; grid-row: 1; width: 100%; min-width: 0; }
+.property-field > .el-input-number,
+.property-field > .el-input,
+.property-field > .el-textarea,
+.property-field > .el-select,
+.property-field > .el-switch,
+.property-field > .el-color-picker,
+.property-field > .number-control,
+.property-field > .resource-control,
+.property-field > .code-field {
+  grid-column: 2; grid-row: 1; width: 100%; min-width: 0;
+}
 .number-control { display: grid; grid-template-columns: minmax(0, 1fr) 88px; align-items: center; gap: 8px; }
 .number-control :deep(.el-slider) { box-sizing: border-box; min-width: 0; padding-inline: 10px; }
 .number-control :deep(.el-input-number) { width: 88px; }

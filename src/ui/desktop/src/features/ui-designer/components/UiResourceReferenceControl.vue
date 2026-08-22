@@ -50,7 +50,7 @@ const emit = defineEmits<{ select: []; clear: [] }>()
 </template>
 
 <style scoped>
-.resource-actions { display: inline-flex; align-items: stretch; height: 100%; }
+.resource-actions { display: inline-flex; align-items: stretch; height: 100%; margin-left: -20px; margin-right: -20px; }
 .resource-actions .el-button { height: 100%; margin: 0; border: 0; border-radius: 0; }
 .resource-actions .el-button + .el-button { border-left: 1px solid var(--el-border-color); }
 .resource-clear { width: 28px; padding: 0; }

@@ -60,5 +60,6 @@ const choose = async (key: keyof UiButtonImageStates) => {
 </template>
 
 <style scoped>
-.states-editor { display: flex; flex-direction: column; gap: 5px; }.field-label { color: var(--app-ink-soft); font-size: 11px; }.states-editor label { display: grid; grid-template-columns: 58px 42px minmax(0, 1fr); align-items: center; gap: 5px; color: var(--app-ink-soft); font-size: 10px; }.state-thumbnail { display: grid; place-items: center; width: 38px; height: 32px; overflow: hidden; border: 1px solid var(--app-border); border-radius: 3px; background: var(--app-bg-sunken); color: var(--app-ink-soft); }.state-thumbnail.empty { border-style: dashed; }.state-thumbnail img { width: 100%; height: 100%; object-fit: contain; }.state-resource-control { min-width: 0; }.state-resource-control > * { width: 100%; min-width: 0; }
+.states-editor { display: flex; flex-direction: column; gap: 5px; }.field-label { color: var(--app-ink-soft); font-size: 11px; }.states-editor label { display: grid; grid-template-columns: 58px 60px minmax(0, 1fr); align-items: center; gap: 5px; color: var(--app-ink-soft); font-size: 10px; }
+.state-thumbnail { display: grid; place-items: center; width: 60px; height: 32px; overflow: hidden; border: 1px solid var(--app-border); border-radius: 3px; background: var(--app-bg-sunken); color: var(--app-ink-soft); }.state-thumbnail.empty { border-style: dashed; }.state-thumbnail img { width: 100%; height: 100%; object-fit: contain; }.state-resource-control { min-width: 0; }.state-resource-control > * { width: 100%; min-width: 0; }
 </style>

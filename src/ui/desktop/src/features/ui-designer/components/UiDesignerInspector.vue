@@ -20,6 +20,7 @@ interface FieldDescriptor {
   key: string
   kind: 'number' | 'text' | 'boolean' | 'color' | 'enum' | 'resource'
   help?: string
+  unit?: string
   multiline?: boolean
   resourceCategory?: UiDesignerManagedAssetKind
   purpose?: InspectorPurpose
@@ -142,7 +143,7 @@ const validationLabels: Partial<Record<UiValidationIssue['code'], UiDesignerMess
 const validationIssueLabel = (issue: UiValidationIssue) => t(validationLabels[issue.code] ?? 'validationIssue')
 const issuesForField = (field: FieldDescriptor): UiValidationIssue[] => selectedNode.value ? nodeValidationErrors.value.filter((issue) => issue.path?.endsWith(`.${field.key}`) || issue.path?.endsWith(field.key)) : []
 const baseFields: FieldDescriptor[] = [
-  { key: 'x', kind: 'number' }, { key: 'y', kind: 'number' }, { key: 'width', kind: 'number', min: 0 }, { key: 'height', kind: 'number', min: 0 },
+  { key: 'x', kind: 'number', unit: 'px' }, { key: 'y', kind: 'number', unit: 'px' }, { key: 'width', kind: 'number', min: 0, unit: 'px' }, { key: 'height', kind: 'number', min: 0, unit: 'px' },
   { key: 'scaleX', kind: 'number', min: 0.1, max: 5, step: 0.05 }, { key: 'scaleY', kind: 'number', min: 0.1, max: 5, step: 0.05 }, { key: 'rotate', kind: 'number' }, { key: 'opacity', kind: 'number', min: 0, max: 255 }, { key: 'visible', kind: 'boolean' }, { key: 'anchorX', kind: 'number', min: 0, max: 1, step: 0.05 }, { key: 'anchorY', kind: 'number', min: 0, max: 1, step: 0.05 }, { key: 'zIndex', kind: 'number' },
 ]
 
@@ -370,6 +371,7 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
             :mode="propMode(field.key)"
             :code="propCode(field.key)"
             :kind="field.kind"
+            :unit="field.unit"
             :min="field.min"
             :max="field.max"
             :step="field.step"

@@ -71,6 +71,7 @@ import { UiDesignerHistory } from '../models/history'
 import { analyzePerformance } from '../models/performance'
 import { nextSiblingCascadePosition } from '../models/placement'
 import { normalizeNineSliceBorderValue } from '../models/nine-slice'
+import { parseUiDocument } from '../models/parser'
 import { collectNodeSubtreeIds, copySelection, groupNodes, moveNodeStep, moveNodeToEdge, pasteClipboard, reparentNode, selectionRootNodeIds, ungroupNodes } from '../models/tree'
 import { isValidUiDesignerSceneName, validateDocument } from '../models/validation'
 import { UI_DESIGNER_BUILT_IN_TEMPLATES, createBuiltInUiDesignerTemplate, isBuiltInUiDesignerTemplate } from '../models/templates'
@@ -229,6 +230,12 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const projectGeneration = ref(0)
   const draftCoordinator: UiDesignerDraftCoordinator = createUiDesignerDraftCoordinator()
   let propertyEdit: { sceneId: string; nodeId: string; property: string; description: string; reloadResources: boolean } | undefined
+  let sceneThumbnailProvider: ((sceneId: string) => string | undefined) | undefined
+
+  const registerSceneThumbnailProvider = (provider: (sceneId: string) => string | undefined) => {
+    sceneThumbnailProvider = provider
+    return () => { if (sceneThumbnailProvider === provider) sceneThumbnailProvider = undefined }
+  }
 
   const historyLimit = () => normalizeHistoryLimit(preferences.value.historyLimit)
   const applyHistoryLimit = (limit = historyLimit()) => {
@@ -754,10 +761,11 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     const root = nextDocument.nodes.find((node) => node.id === 'node_root')
     if (root) { root.props.width = width; root.props.height = height }
     const scene = createSceneState(nextDocument, undefined, {}, historyLimit())
-    if (options.template) scene.document = scene.history.commit(nextDocument, 'Create scene from template')
+    scene.history.markUnsaved()
     scenes.value.push(scene)
     activateScene(scene.id)
     viewport.value = { zoom: 1, panX: 0, panY: 0, width: nextDocument.canvas.width, height: nextDocument.canvas.height }
+    scheduleRecovery(scene)
     return true
   }
 
@@ -840,7 +848,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const addNode = (type: UiDesignerNodeType, parentId?: string | null, position?: UiPoint) => {
     try {
       actionError.value = ''
-      const parent = parentId === undefined ? selectedNode.value?.type === 'container' ? selectedNode.value.id : 'node_root' : parentId
+      const parent = parentId === undefined ? selectedNode.value?.type === 'container' || selectedNode.value?.type === 'list' ? selectedNode.value.id : 'node_root' : parentId
       if (parent !== null && !resolveNodeActionPolicy(document.value, [parent], parent, false).allowed.addChild) throw new Error('Only a container outside locked ancestry can receive child nodes')
       let next = cloneUiDocument(document.value)
       const nodeId = nextNodeId(next, type)
@@ -851,7 +859,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
       if (node.parentId === null) next.zOrder.push(node.id)
       else {
         const destination = findNode(next, node.parentId)
-        if (!destination || destination.type !== 'container' || destination.locked) throw new Error('Only an unlocked container can receive child nodes')
+        if (!destination || destination.type !== 'container' && destination.type !== 'list' || destination.locked) throw new Error('Only an unlocked container or list can receive child nodes')
         destination.children.push(node.id)
       }
       next = applyNodeGeometryTransaction(next, node.id, { kind: 'properties', patch: initialPosition })
@@ -1064,7 +1072,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     replaceActiveDocument(next, 'Update condition frequency')
   }
 
-  const setNodeAnimation = (nodeId: string, phase: 'enterAnim' | 'exitAnim', animation: UiAnimationConfig) => {
+  const setNodeAnimation = (nodeId: string, phase: 'enterAnim' | 'exitAnim' | 'focusAnim', animation: UiAnimationConfig) => {
     const next = cloneUiDocument(document.value)
     const node = findNode(next, nodeId)
     if (!node) return
@@ -1179,10 +1187,10 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const paste = (parentId?: string | null) => {
     if (!clipboard.value) return
     try {
-      const destination = parentId === undefined ? selectedNode.value?.type === 'container' ? selectedNode.value.id : 'node_root' : parentId
+      const destination = parentId === undefined ? selectedNode.value?.type === 'container' || selectedNode.value?.type === 'list' ? selectedNode.value.id : 'node_root' : parentId
       if (destination !== null) {
         const target = findNode(document.value, destination)
-        if (!target || target.type !== 'container' || target.locked) throw new Error('Paste destination must be an unlocked container')
+        if (!target || target.type !== 'container' && target.type !== 'list' || target.locked) throw new Error('Paste destination must be an unlocked container or list')
       }
       const result = pasteClipboard(document.value, clipboard.value, destination ?? null)
       replaceActiveDocument(result.document, 'Paste nodes')
@@ -1278,6 +1286,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
       const generation = projectGeneration.value
       const request = {
         path: mode === 'saveAs' ? undefined : scene?.sourcePath,
+        thumbnailDataUrl: sceneThumbnailProvider?.(scene.id),
         expected: mode === 'saveAs' || !scene?.openedMetadata ? undefined : { digest: scene.openedMetadata.digest, mtimeMs: scene.openedMetadata.mtimeMs },
         force: options.force,
       }
@@ -1364,17 +1373,24 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
       fileStatus.value = result.status
       fileMessage.value = result.message
       if ((result.status === 'success' || result.status === 'ready') && result.value) {
-        const report = validateDocument(result.value)
+        const parsed = parseUiDocument(result.value)
+        if (!parsed.ok) {
+          fileStatus.value = 'error'
+          fileMessage.value = parsed.issues.map((issue) => issue.message).join(' ')
+          return false
+        }
+        const normalizedDocument = parsed.document
+        const report = validateDocument(normalizedDocument)
         if (!report.valid) {
           fileStatus.value = 'error'
           fileMessage.value = report.errors.map((issue) => issue.message).join(' ')
           return false
         }
-        const scene = createSceneState(result.value, `scene_tab_${++sceneSequence}`, { sourcePath: result.sourcePath ?? result.path, openedMetadata: result.metadata, recoveryId: result.recoveryId }, historyLimit())
+        const scene = createSceneState(normalizedDocument, `scene_tab_${++sceneSequence}`, { sourcePath: result.sourcePath ?? result.path, openedMetadata: result.metadata, recoveryId: result.recoveryId }, historyLimit())
         scene.history.markSaved()
         scenes.value.push(scene)
         activateScene(scene.id)
-        void loadReferencedResources(result.value)
+        void loadReferencedResources(normalizedDocument)
         void loadWelcomeRecords()
         return true
       }
@@ -1430,7 +1446,13 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     try {
       const result = await adapters.file.readRecovery(recoveryId)
       if (result.status !== 'success' || !result.value) return false
-      const report = validateDocument(result.value.document)
+      const parsed = parseUiDocument(result.value.document)
+      if (!parsed.ok) {
+        fileMessage.value = parsed.issues.map((item) => item.message).join(' ')
+        return false
+      }
+      const normalizedDocument = parsed.document
+      const report = validateDocument(normalizedDocument)
       if (!report.valid) {
         fileMessage.value = report.errors.map((item) => item.message).join(' ')
         return false
@@ -1441,10 +1463,10 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
         recoveryId: record.id,
         openedMetadata: { path: record.sourcePath, digest: record.digest, mtimeMs: record.mtimeMs, size: 0 },
       }, historyLimit())
-      scene.document = scene.history.commit(result.value.document, 'Restore recovery draft')
+      scene.document = scene.history.commit(normalizedDocument, 'Restore recovery draft')
       scenes.value.push(scene)
       activateScene(scene.id)
-      void loadReferencedResources(result.value.document)
+      void loadReferencedResources(normalizedDocument)
       return true
     } catch (error) {
       fileMessage.value = error instanceof Error ? error.message : String(error)
@@ -1481,8 +1503,21 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
       fileStatus.value = result?.status ?? 'error'
       fileMessage.value = result?.message ?? 'The source file could not be reloaded.'
       if (!result || result.status !== 'success' || !result.value) return false
-      scene.document = result.value
-      scene.history = new UiDesignerHistory(result.value, historyLimit())
+      const parsed = parseUiDocument(result.value)
+      if (!parsed.ok) {
+        fileStatus.value = 'error'
+        fileMessage.value = parsed.issues.map((item) => item.message).join(' ')
+        return false
+      }
+      const normalizedDocument = parsed.document
+      const report = validateDocument(normalizedDocument)
+      if (!report.valid) {
+        fileStatus.value = 'error'
+        fileMessage.value = report.errors.map((item) => item.message).join(' ')
+        return false
+      }
+      scene.document = normalizedDocument
+      scene.history = new UiDesignerHistory(normalizedDocument, historyLimit())
       scene.history.markSaved()
       scene.openedMetadata = result.metadata
       scene.recoveryId = result.recoveryId
@@ -2097,6 +2132,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     setGridPreference,
     setSnapPreference,
     setProjectContext,
+    registerSceneThumbnailProvider,
     registerPreviewDisposer,
     registerResourceMutationHandler,
     notifyResourceMutation,

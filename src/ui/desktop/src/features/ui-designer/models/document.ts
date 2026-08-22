@@ -16,6 +16,8 @@ import {
   type UiFrameAnimationNode,
   type UiFrameAnimationProps,
   type UiGlobalFilter,
+  type UiListNode,
+  type UiListProps,
   type UiNineSliceNode,
   type UiNineSliceProps,
   type UiNode,
@@ -110,6 +112,7 @@ function shell<TType extends UiDesignerNodeType, TProps extends UiBaseNodeProps>
     conditionFrequency: defaultConditionFrequency(),
     enterAnim: defaultAnimation(),
     exitAnim: defaultAnimation(),
+    focusAnim: defaultAnimation(),
     events: defaultEvents(),
   } as unknown as UiNode & { type: TType; props: TProps }
 }
@@ -123,6 +126,7 @@ function nextDefaultNodeIdentity(type: UiDesignerNodeType): string {
 }
 
 export function createDefaultNode(type: 'container', options?: CreateNodeOptions): UiContainerNode
+export function createDefaultNode(type: 'list', options?: CreateNodeOptions): UiListNode
 export function createDefaultNode(type: 'sprite', options?: CreateNodeOptions): UiSpriteNode
 export function createDefaultNode(type: 'nineSlice', options?: CreateNodeOptions): UiNineSliceNode
 export function createDefaultNode(type: 'frameAnimation', options?: CreateNodeOptions): UiFrameAnimationNode
@@ -146,6 +150,21 @@ export function createDefaultNode(type: UiDesignerNodeType, options: CreateNodeO
         backgroundRepeatMode: 'none',
         clip: false,
       } satisfies UiContainerProps, options) as UiContainerNode
+    case 'list':
+      return shell(type, {
+        ...common,
+        width: options.width ?? 480,
+        height: options.height ?? 320,
+        dataSource: '[]',
+        columns: 1,
+        rows: 0,
+        autoFlow: 'row',
+        columnGap: 8,
+        rowGap: 8,
+        justifyItems: 'stretch',
+        alignItems: 'stretch',
+        maxItems: 100,
+      } satisfies UiListProps, options) as UiListNode
     case 'sprite':
       return shell(type, {
         ...common,

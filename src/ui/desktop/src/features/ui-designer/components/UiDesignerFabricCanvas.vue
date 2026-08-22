@@ -135,7 +135,7 @@ const syncContainerLabel = (nodeId: string) => {
   if (!canvas) return
   const node = nodeById(nodeId)
   const object = objects.get(nodeId)
-  if (!node || node.type !== 'container' || !object) {
+  if (!node || node.type !== 'container' && node.type !== 'list' || !object) {
     const existing = containerLabels.get(nodeId)
     if (existing) {
       canvas.remove(existing)
@@ -311,7 +311,7 @@ const scaleObject = (target: FabricObject, shiftKey: boolean, altKey: boolean, c
   const draftRect = drafts[state.nodeId]
   if (!draftRect) return
   positionFabricNodeFromRect(target as UiFabricNodeObject, node, props.document, draftRect)
-  if (node.type === 'container') syncContainerLabel(node.id)
+  if (node.type === 'container' || node.type === 'list') syncContainerLabel(node.id)
 }
 
 const rotateObject = (target: FabricObject, shiftKey: boolean) => {
@@ -340,7 +340,7 @@ const rotateObject = (target: FabricObject, shiftKey: boolean) => {
     object.set({ angle: draftRotation })
     object.setPositionByOrigin(new Point(draftPosition.x, draftPosition.y), draftNode.props.anchorX, draftNode.props.anchorY)
     object.setCoords()
-    if (draftNode.type === 'container') syncContainerLabel(id)
+    if (draftNode.type === 'container' || draftNode.type === 'list') syncContainerLabel(id)
   }
 }
 
@@ -382,7 +382,41 @@ const activateNode = (nodeId: string) => {
   return true
 }
 
-defineExpose({ activateNode })
+const captureThumbnail = (): string | undefined => {
+  if (!canvas) return undefined
+  const width = Math.max(1, props.document.canvas.width)
+  const height = Math.max(1, props.document.canvas.height)
+  const scale = Math.min(320 / width, 180 / height, 1)
+  const hidden = [
+    ...[...containerLabels.values()].map((object) => ({ object, visible: object.visible })),
+    ...[...objects.values()]
+      .filter((object) => object.data.nodeType === 'list')
+      .map((object) => ({ object, visible: object.visible })),
+  ]
+  hidden.forEach(({ object }) => { object.visible = false })
+  let source: HTMLCanvasElement
+  try {
+    source = canvas.toCanvasElement(1, {
+      left: props.workspace.left,
+      top: props.workspace.top,
+      width,
+      height,
+    })
+  } finally {
+    hidden.forEach(({ object, visible }) => { object.visible = visible })
+  }
+  const output = document.createElement('canvas')
+  output.width = Math.max(1, Math.round(width * scale))
+  output.height = Math.max(1, Math.round(height * scale))
+  const context = output.getContext('2d')
+  if (!context) return undefined
+  context.fillStyle = props.document.canvas.backgroundColor || '#000000'
+  context.fillRect(0, 0, output.width, output.height)
+  context.drawImage(source, 0, 0, output.width, output.height)
+  return output.toDataURL('image/png')
+}
+
+defineExpose({ activateNode, captureThumbnail })
 
 const animationLoop = (timestamp: number) => {
   if (canvas && props.active) {

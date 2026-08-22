@@ -23,7 +23,8 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
   const revealPath = path.join(revealRoot, 'scene.mzui')
   fs.writeFileSync(revealPath, '{}', 'utf8')
   const revealed: string[] = []
-  const recent: Array<{ path: string; options?: { opened?: boolean; saved?: boolean; sceneName?: string } }> = []
+  const recent: Array<{ path: string; options?: { opened?: boolean; saved?: boolean; sceneName?: string; thumbnailDataUrl?: string } }> = []
+  const thumbnails: Array<{ project: string; sceneName: string; dataUrl: string }> = []
   let rendererStarts = 0
   const userDataStore = {
     isWorkingDocumentPath: (filePath: string) => filePath.startsWith('runtime/documents/'),
@@ -32,7 +33,7 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
       const filePath = !options.duplicate && options.path?.startsWith('runtime/documents/') ? options.path : `runtime/documents/${saved}.mzui`
       return { path: filePath, digest: `digest-${saved}`, mtimeMs: saved, size: 2 }
     },
-    recordRecentFile(path: string, options?: { opened?: boolean; saved?: boolean; sceneName?: string }) { recent.push({ path, options }); return { sourcePath: path, lastOpenedAt: 'now', exists: true } },
+    recordRecentFile(path: string, options?: { opened?: boolean; saved?: boolean; sceneName?: string; thumbnailDataUrl?: string }) { recent.push({ path, options }); return { sourcePath: path, lastOpenedAt: 'now', exists: true } },
     listRecentFiles: () => [],
     removeRecentFile: () => {},
     writeRecovery: () => ({ id: 'recovery', sourcePath: '', snapshotPath: 'snapshot', savedAt: 'now', digest: 'digest', mtimeMs: 1 }),
@@ -46,8 +47,10 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
     workflowRoot: 'workflow',
     resolveProject: (project) => project || 'project',
     file: {
-      readUiDesignerFile: (filePath) => ({ document: { meta: { sceneName: 'Scene_Sample' } }, metadata: { path: filePath, digest: 'digest', mtimeMs: 1, size: 2 } }),
-      saveUiDesignerFile: () => { throw new Error('ordinary designer saves must use the runtime working-document store') },
+      readUiDesignerFile: (filePath) => ({ document: { meta: { sceneName: 'Scene_Sample' } }, metadata: { path: path.resolve(filePath), digest: 'digest', mtimeMs: 1, size: 2 } }),
+      saveUiDesignerFile: (filePath) => { saved += 1; return { path: path.resolve(filePath), digest: `digest-${saved}`, mtimeMs: saved, size: 2 } },
+      projectUiDesignerScenePath: (project, sceneName) => path.join(project, '.luna_rpg', 'ui-designer', 'scenes', `${sceneName}.mzui`),
+      writeProjectUiDesignerThumbnail: (project, sceneName, dataUrl) => { thumbnails.push({ project, sceneName, dataUrl }); return path.join(project, '.luna_rpg', 'ui-designer', 'thumbnails', `${sceneName}.png`) },
       revealSource: (filePath: string) => { revealed.push(filePath) },
       UiDesignerUserDataStore: class { constructor() { return userDataStore as any } } as any,
     },
@@ -55,6 +58,7 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
       inspectUiDesignerProjectProfile: () => ({
         engine: 'MV', engineVersion: null, screenWidth: 816, screenHeight: 624, uiAreaWidth: 816, uiAreaHeight: 624,
       }),
+      listUiDesignerSceneFiles: () => [],
     },
     resources: {
       inspectUiDesignerResourcesAsync: async () => ({ resources: [] }),
@@ -86,11 +90,29 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
 
   const opened = await handlers.get('ui-designer:file:open')!({ sender: {} }, { path: 'scene.mzui' })
   assert.equal(opened.status, 'ready')
-  assert.equal(opened.sourcePath, 'runtime/documents/1.mzui')
-  assert.deepEqual(recent[0], { path: 'runtime/documents/1.mzui', options: { opened: true, sceneName: 'Scene_Sample' } })
-  const savedResult = await handlers.get('ui-designer:file:save')!({ sender: {} }, { path: opened.sourcePath }, { meta: {} })
+  assert.equal(opened.sourcePath, path.resolve('scene.mzui'))
+  assert.deepEqual(recent[0], { path: path.resolve('scene.mzui'), options: { opened: true, sceneName: 'Scene_Sample' } })
+  const savedResult = await handlers.get('ui-designer:file:save')!({ sender: {} }, { path: opened.sourcePath, project: revealRoot }, { meta: { sceneName: 'Scene_Sample' } })
   assert.equal(savedResult.status, 'success')
   assert.equal(savedResult.sourcePath, opened.sourcePath)
+  const thumbnailDataUrl = 'data:image/png;base64,iVBORw0KGgo='
+  const firstSavePath = path.join(revealRoot, '.luna_rpg', 'ui-designer', 'scenes', 'Scene_New.mzui')
+  fs.mkdirSync(path.dirname(firstSavePath), { recursive: true })
+  fs.writeFileSync(firstSavePath, '{}', 'utf8')
+  const firstSaveConflict = await handlers.get('ui-designer:file:save')!({ sender: {} }, { project: revealRoot, thumbnailDataUrl }, { meta: { sceneName: 'Scene_New' } })
+  assert.equal(firstSaveConflict.status, 'error')
+  assert.equal(firstSaveConflict.code, 'UI_DESIGNER_OVERWRITE_REQUIRED')
+  assert.deepEqual(firstSaveConflict.conflict, {
+    code: 'UI_DESIGNER_CONFLICT',
+    expected: undefined,
+    actual: { path: firstSavePath, digest: 'digest', mtimeMs: 1, size: 2 },
+    recoverable: true,
+  })
+  fs.rmSync(firstSavePath)
+  const firstSave = await handlers.get('ui-designer:file:save')!({ sender: {} }, { project: revealRoot, thumbnailDataUrl }, { meta: { sceneName: 'Scene_New' } })
+  assert.equal(firstSave.status, 'success')
+  assert.equal(firstSave.sourcePath, firstSavePath)
+  assert.deepEqual(thumbnails, [{ project: revealRoot, sceneName: 'Scene_New', dataUrl: thumbnailDataUrl }])
   assert.equal(saved, 2)
   assert.equal(saveDialogs, 0)
   assert.equal(recent[1].options?.saved, true)
@@ -107,6 +129,9 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
   const missingProfile = await handlers.get('ui-designer:project:profile')!(null, {})
   assert.equal(missingProfile.status, 'error')
   assert.equal(missingProfile.code, 'UI_DESIGNER_PROJECT_REQUIRED')
+  const projectScenes = await handlers.get('ui-designer:scenes:list')!(null, { project: revealRoot })
+  assert.equal(projectScenes.status, 'success')
+  assert.deepEqual(projectScenes.value, [])
   const resources = await handlers.get('ui-designer:resources:list')!(null, { project: 'project' })
   assert.equal(resources.status, 'success')
   const sceneData = await handlers.get('ui-designer:resources:read-scene-data')!(null, { project: 'project', path: 'js/plugins/mzui-data/Scene_Sample.json' })

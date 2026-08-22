@@ -197,6 +197,77 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     runtime.cleanup();
   });
 
+  test('materializes list templates from array data with item and index code values', () => {
+    const context = makeContext();
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-list.js' });
+    const runtime = context.MZUIRuntime.create();
+    const source = allNodeScene();
+    const list = JSON.parse(JSON.stringify(source.nodes.find((node: any) => node.type === 'container')));
+    list.id = 'inventory';
+    list.name = 'Inventory';
+    list.type = 'list';
+    list.children = ['inventory_label'];
+    list.props = {
+      x: 100, y: 80, width: 220, height: 60, scaleX: 1, scaleY: 1, rotate: 0,
+      opacity: 255, visible: true, anchorX: 0, anchorY: 0, zIndex: 0,
+      dataSource: '[]', columns: 2, rows: 1, autoFlow: 'row', columnGap: 20, rowGap: 0,
+      justifyItems: 'start', alignItems: 'start', maxItems: 10,
+    };
+    list.propModes = { dataSource: 'code' };
+    list.propCodes = { dataSource: '[{ text: "Potion" }, { text: "Ether" }]' };
+    const label = JSON.parse(JSON.stringify(source.nodes.find((node: any) => node.type === 'text')));
+    label.id = 'inventory_label';
+    label.name = 'InventoryLabel';
+    label.parentId = list.id;
+    label.props.x = 20;
+    label.props.y = 30;
+    label.props.width = 100;
+    label.props.height = 30;
+    label.propModes = { content: 'code' };
+    label.propCodes = { content: '$item.text + ":" + $index' };
+    source.nodes = [list, label];
+    source.zOrder = [list.id];
+
+    runtime.mount(source, { root: new context.PIXI.Container(), executionMode: 'editor-preview' });
+    runtime.update();
+
+    assert.equal(source.nodes.length, 2, 'materialization must not mutate the editor document');
+    assert.equal(runtime.scene.nodes.length, 3);
+    assert.equal(runtime.nodeViews.inventory.children.length, 2);
+    const first = runtime.scene.nodes.find((node: any) => node.id === 'inventory__item_0__inventory_label');
+    const second = runtime.scene.nodes.find((node: any) => node.id === 'inventory__item_1__inventory_label');
+    assert.equal(first.props.content, 'Potion:0');
+    assert.equal(second.props.content, 'Ether:1');
+    assert.deepEqual([first.props.x, first.props.y], [100, 80]);
+    assert.deepEqual([second.props.x, second.props.y], [220, 80]);
+    assert.equal(runtime.nodeViews[first.id].parent, runtime.nodeViews.inventory);
+    assert.equal(runtime.errors.length, 0);
+    runtime.cleanup();
+  });
+
+  test('holds a button focus animation at its final state and restores its baseline on blur', () => {
+    const context = makeContext();
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-focus-animation.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    const button = scene.nodes.find((node: any) => node.type === 'button');
+    button.focusAnim = { type: 'scaleOut', duration: 32, easing: 'Linear' };
+    scene.nodes = [button];
+    scene.zOrder = [button.id];
+    runtime.mount(scene, { root: new context.PIXI.Container(), executionMode: 'editor-preview', deltaMs: 16 });
+
+    assert.equal(runtime.focusNode(button.id), true);
+    runtime.update();
+    assert.equal(runtime.nodeViews.button.scale.x, 0.5);
+    runtime.update();
+    runtime.update();
+    assert.equal(runtime.nodeViews.button.scale.x, 0);
+    assert.equal(runtime.blurNode(button.id), true);
+    assert.equal(runtime.nodeViews.button.scale.x, 1);
+    assert.equal(runtime.nodeViews.button.scale.y, 1);
+    runtime.cleanup();
+  });
+
   test('navigates visible enabled buttons vertically in previews and keeps focus/press visuals unscaled', () => {
     const context = makeContext();
     const listeners = new Map<string, (event: any) => void>();
@@ -1890,7 +1961,7 @@ function allNodeScene(): any {
   const base = (id: string, type: string, props: Record<string, unknown> = {}) => ({
     id, type, name: id, parentId: null, children: [], props: {
       x: 0, y: 0, width: 100, height: 80, scaleX: 1, scaleY: 1, rotate: 0, opacity: 255, visible: true, anchorX: 0, anchorY: 0, zIndex: 0, ...props,
-    }, propModes: {}, propCodes: {}, condition: { type: 'none' }, conditionFrequency: 'per-frame', enterAnim: { type: 'none', duration: 0 }, exitAnim: { type: 'none', duration: 0 }, events: {},
+    }, propModes: {}, propCodes: {}, condition: { type: 'none' }, conditionFrequency: 'per-frame', enterAnim: { type: 'none', duration: 0 }, exitAnim: { type: 'none', duration: 0 }, focusAnim: { type: 'none', duration: 0 }, events: {},
   });
   return {
     version: '1.1.0', runtimeVersion: '>=1.1.0', meta: { sceneName: 'Scene_AllNodes', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624 },

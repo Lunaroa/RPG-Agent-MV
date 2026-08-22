@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 
-import type { UiDesignerDocument } from '../../../../contract/ui-designer.ts';
+import type { UiDesignerDocument, UiListNode } from '../../../../contract/ui-designer.ts';
 import { migrateLegacyUiSourceCode } from '../../../../contract/ui-designer-script.ts';
 import {
   UI_DESIGNER_RECENT_LIMIT,
@@ -13,8 +13,10 @@ import {
   UiDesignerPersistenceError,
   UiDesignerUserDataStore,
   listUiDesignerSceneFiles,
+  projectUiDesignerScenePath,
   readUiDesignerFile,
   saveUiDesignerFile,
+  writeProjectUiDesignerThumbnail,
 } from './ui-designer-service.ts';
 import { validateUiDesignerDocument } from './ui-designer-validation.ts';
 
@@ -174,6 +176,34 @@ describe('ui designer document service', () => {
     const invalidMetaReport = validateUiDesignerDocument(invalidMeta);
     assert.ok(invalidMetaReport.errors.some((issue) => issue.code === 'scene-name-invalid'));
     assert.ok(invalidMetaReport.errors.some((issue) => issue.path === 'meta.sceneBase' && issue.code === 'invalid-value'));
+
+    const listDocument = sampleDocument();
+    const list = structuredClone(listDocument.nodes[0]) as unknown as UiListNode;
+    list.id = 'node_list';
+    list.name = 'List';
+    list.type = 'list';
+    list.parentId = 'node_root';
+    list.props = {
+      ...list.props,
+      dataSource: '[{ text: "A" }]',
+      columns: 1,
+      rows: 0,
+      autoFlow: 'row',
+      columnGap: 8,
+      rowGap: 8,
+      justifyItems: 'stretch',
+      alignItems: 'stretch',
+      maxItems: 100,
+    };
+    listDocument.nodes[0].children = [list.id];
+    listDocument.nodes.push(list);
+    listDocument.zOrder = [list.id];
+    assert.equal(validateUiDesignerDocument(listDocument).errors.some((issue) => issue.nodeId === list.id), false);
+    list.props.maxItems = 1001;
+    assert.ok(validateUiDesignerDocument(listDocument).errors.some((issue) => issue.nodeId === list.id && issue.path?.endsWith('maxItems')));
+    list.props.maxItems = 100;
+    list.focusAnim = { type: 'scaleIn', duration: 100, easing: 'Linear' };
+    assert.ok(validateUiDesignerDocument(listDocument).errors.some((issue) => issue.nodeId === list.id && issue.path?.endsWith('focusAnim')));
   });
 
   test('rejects unsafe direct and nested project resource paths', () => {
@@ -216,10 +246,12 @@ describe('ui designer document service', () => {
 });
 
 describe('ui designer scene file listing', () => {
-  test('lists project .mzui files with valid scene names and skips the rest', () => {
+  test('lists canonical and legacy project scenes with project thumbnails', () => {
     const project = path.join(tempRoot, 'project');
     fs.mkdirSync(path.join(project, 'ui', 'nested'), { recursive: true });
-    saveUiDesignerFile(path.join(project, 'ui', 'title.mzui'), sampleDocument());
+    const canonicalPath = projectUiDesignerScenePath(project, 'Scene_Sample');
+    saveUiDesignerFile(canonicalPath, sampleDocument());
+    writeProjectUiDesignerThumbnail(project, 'Scene_Sample', TEST_PNG_DATA_URL);
     saveUiDesignerFile(path.join(project, 'ui', 'nested', 'menu.mzui'), { ...sampleDocument(), meta: { ...sampleDocument().meta, sceneName: 'Scene_Menu_Custom' } });
     fs.writeFileSync(path.join(project, 'ui', 'broken.mzui'), 'not json', 'utf8');
     const invalidName = sampleDocument();
@@ -230,10 +262,15 @@ describe('ui designer scene file listing', () => {
     fs.writeFileSync(path.join(project, 'notes.txt'), 'ignored', 'utf8');
 
     const records = listUiDesignerSceneFiles(project);
-    assert.deepEqual(records, [
-      { path: 'ui/nested/menu.mzui', sceneName: 'Scene_Menu_Custom' },
-      { path: 'ui/title.mzui', sceneName: 'Scene_Sample' },
-    ]);
+    assert.deepEqual(records.map((record) => record.sceneName), ['Scene_Sample', 'Scene_Menu_Custom']);
+    const canonical = records.find((record) => record.sceneName === 'Scene_Sample');
+    assert.equal(canonical?.path, '.luna_rpg/ui-designer/scenes/Scene_Sample.mzui');
+    assert.equal(canonical?.sourcePath, canonicalPath);
+    assert.equal(canonical?.thumbnailUrl, TEST_PNG_DATA_URL);
+    assert.equal(Number.isNaN(Date.parse(canonical?.modifiedAt ?? '')), false);
+    const legacy = records.find((record) => record.sceneName === 'Scene_Menu_Custom');
+    assert.equal(legacy?.path, 'ui/nested/menu.mzui');
+    assert.equal(legacy?.thumbnailUrl, undefined);
     assert.deepEqual(listUiDesignerSceneFiles(path.join(project, 'missing')), []);
   });
 });
@@ -255,13 +292,16 @@ describe('ui designer user data store', () => {
     store.restoreSnapshot(ids.at(-1)!, target);
     assert.equal(readUiDesignerFile(target).document.meta.sceneName, 'Scene_Sample');
 
-    const opened = store.recordRecentFile(projectFile, { opened: true, sceneName: 'Scene_Sample' });
+    const opened = store.recordRecentFile(projectFile, { opened: true, sceneName: 'Scene_Sample', thumbnailDataUrl: TEST_PNG_DATA_URL });
     const saved = store.recordRecentFile(projectFile, { opened: false, saved: true });
     assert.equal(saved.sceneName, 'Scene_Sample');
     assert.equal(saved.lastOpenedAt, opened.lastOpenedAt);
     assert.notEqual(saved.lastSavedAt, undefined);
     const savedWithoutOpenedFlag = store.recordRecentFile(projectFile, { saved: true });
     assert.equal(savedWithoutOpenedFlag.lastOpenedAt, opened.lastOpenedAt);
+    assert.equal(store.listRecentFiles()[0]?.thumbnailUrl, TEST_PNG_DATA_URL);
+    store.removeRecentFile(projectFile);
+    assert.deepEqual(store.listRecentFiles(), []);
 
     store.writePreferences({ selectedTemplate: 'sample' });
     assert.deepEqual(store.readPreferences(), { selectedTemplate: 'sample' });
@@ -413,9 +453,12 @@ function sampleDocument(): UiDesignerDocument {
       condition: { type: 'none' },
       enterAnim: { type: 'none', duration: 0, easing: 'Linear' },
       exitAnim: { type: 'none', duration: 0, easing: 'Linear' },
+      focusAnim: { type: 'none', duration: 0, easing: 'Linear' },
       events: {},
     }],
     zOrder: ['node_root'],
     sceneScript: { version: '1.1.0', source: '' },
   };
 }
+
+const TEST_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';

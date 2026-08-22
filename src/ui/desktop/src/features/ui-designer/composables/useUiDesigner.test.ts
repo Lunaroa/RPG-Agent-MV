@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test, vi } from 'vitest'
 import type { UiDesignerAdapterBundle, UiDesignerGamePreviewSession, UiDesignerPersistenceAdapter } from '@contract/ui-designer'
-import { createUiDocument } from '../models/document'
+import { createDefaultNode, createUiDocument } from '../models/document'
 import { exportRuntimeDocument } from '../models/export'
 import { nodeRect } from '../models/geometry'
 
@@ -224,6 +224,35 @@ test('closing the only opened tab leaves no scene behind', async () => {
   assert.equal(designer.scenes.value.length, 0)
   assert.equal(designer.activeScene.value, undefined)
   assert.equal(clearedRecovery, 'recovery-opened')
+})
+
+test('opening an older design normalizes newly required animation fields before editing', async () => {
+  const opened = createUiDocument('Scene_LegacyAnimation')
+  const button = createDefaultNode('button', { id: 'node_legacy_button', name: 'LegacyButton', parentId: 'node_root' })
+  delete (button as unknown as Record<string, unknown>).focusAnim
+  opened.nodes[0].children.push(button.id)
+  opened.nodes.push(button)
+
+  const file: UiDesignerPersistenceAdapter = {
+    async open() { return { ...success(opened), sourcePath: 'ui/legacy-animation.mzui', metadata: { path: 'ui/legacy-animation.mzui', digest: 'digest', mtimeMs: 10, size: 1 } } },
+    async save() { return { status: 'unavailable', message: 'unused' } },
+    async saveAs() { return { status: 'unavailable', message: 'unused' } },
+    async revealSource() { return { status: 'unavailable', message: 'unused' } },
+    async listRecentFiles() { return success([]) },
+    async removeRecentFile() { return success() },
+    async listRecovery() { return success([]) },
+    async readRecovery() { return { status: 'unavailable', message: 'unused' } },
+    async clearRecovery() { return success() },
+    async readPreferences() { return success({}) },
+    async writePreferences() { return success() },
+    async writeRecovery() { return success({ id: 'recovery' }) },
+    async exportRuntime() { return success('runtime.json') },
+  }
+
+  const designer = useUiDesigner({ adapters: { file } })
+  assert.equal(await designer.open(), true)
+  const normalized = designer.document.value.nodes.find((node) => node.id === button.id)
+  assert.equal(normalized?.focusAnim.type, 'none')
 })
 
 test('editor preview enters a separate runtime without taking over the authoring mode', () => {
@@ -544,6 +573,32 @@ test('no project profile disables default scene creation but explicit low-level 
   assert.equal(designer.scenes.value.length, initialSceneCount)
   assert.equal(designer.newScene('Scene_Explicit_Size', { width: 640, height: 360 }), true)
   assert.deepEqual([designer.document.value.canvas.width, designer.document.value.canvas.height], [640, 360])
+})
+
+test('a newly created scene stays dirty until its first successful save', async () => {
+  let saveCalls = 0
+  const file = {
+    async save(document: ReturnType<typeof createUiDocument>) {
+      saveCalls += 1
+      return {
+        status: 'success' as const,
+        message: 'saved',
+        value: document,
+        sourcePath: 'projects/sample/.luna_rpg/ui-designer/scenes/Scene_First_Save.mzui',
+        metadata: { path: 'projects/sample/.luna_rpg/ui-designer/scenes/Scene_First_Save.mzui', digest: 'saved-digest', mtimeMs: 1, size: 1 },
+      }
+    },
+  } as unknown as UiDesignerPersistenceAdapter
+  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { file } })
+
+  assert.equal(designer.newScene('Scene_First_Save', { width: 640, height: 360 }), true)
+  assert.equal(designer.activeScene.value.sourcePath, undefined)
+  assert.equal(designer.activeScene.value.history.isDirty, true)
+  assert.equal(designer.isDirty.value, true)
+  assert.equal(await designer.save(), true)
+  assert.equal(saveCalls, 1)
+  assert.equal(designer.activeScene.value.history.isDirty, false)
+  assert.equal(designer.isDirty.value, false)
 })
 
 test('new scene rejects names outside the runtime contract without adding or activating a scene', () => {

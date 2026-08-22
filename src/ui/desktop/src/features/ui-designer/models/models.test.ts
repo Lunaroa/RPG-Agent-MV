@@ -126,18 +126,21 @@ describe('ui designer document model', () => {
     assert.equal(runtime.runtimeVersion, '>=1.1.0')
     assert.equal(runtime.sceneScript.source, parsed.document.sceneScript.source)
   })
-  test('creates a current document with the complete ten-node factory', () => {
+  test('creates a current document with the complete node factory', () => {
     const document = createUiDocument('Scene_Test')
-    const types = ['container', 'sprite', 'nineSlice', 'frameAnimation', 'button', 'text', 'progressBar', 'overlay', 'video', 'particle'] as const
+    const types = ['container', 'list', 'sprite', 'nineSlice', 'frameAnimation', 'button', 'text', 'progressBar', 'overlay', 'video', 'particle'] as const
     const nodes = types.map((type, index) => createDefaultNode(type, { id: `node_${index}`, name: `${type}_${index}` }))
     assert.equal(document.meta.sceneName, 'Scene_Test')
     assert.equal(document.nodes[0].type, 'container')
     assert.equal(document.canvas.width, 816)
-    assert.equal(nodes.length, 10)
+    assert.equal(nodes.length, 11)
     assert.equal(nodes.every((node) => node.parentId === null && node.props.visible), true)
+    assert.equal(nodes.every((node) => node.focusAnim.type === 'none'), true)
     const container = nodes.find((node) => node.type === 'container')
     assert.equal(container?.type === 'container' ? container.props.clip : undefined, false)
     assert.equal(document.nodes[0]?.type === 'container' ? document.nodes[0].props.clip : undefined, true)
+    const list = nodes.find((node) => node.type === 'list')
+    assert.deepEqual(list?.type === 'list' ? { dataSource: list.props.dataSource, columns: list.props.columns, maxItems: list.props.maxItems } : undefined, { dataSource: '[]', columns: 1, maxItems: 100 })
     const progress = nodes.find((node) => node.type === 'progressBar')
     assert.equal(progress?.type === 'progressBar' ? progress.props.currentValue : undefined, 50)
     const button = nodes.find((node) => node.type === 'button')

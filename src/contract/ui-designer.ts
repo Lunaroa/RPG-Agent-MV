@@ -13,6 +13,7 @@ export const UI_DESIGNER_SCENE_SCRIPT_VERSION = '1.1.0' as const
 
 export const UI_DESIGNER_NODE_TYPES = [
   'container',
+  'list',
   'sprite',
   'nineSlice',
   'frameAnimation',
@@ -63,6 +64,22 @@ export interface UiContainerProps extends UiBaseNodeProps {
   backgroundFillMode: UiFillMode
   backgroundRepeatMode: UiRepeatMode
   clip: boolean
+}
+
+export type UiListAutoFlow = 'row' | 'column'
+export type UiListItemAlignment = 'start' | 'center' | 'end' | 'stretch'
+
+/** A non-visual Grid-style repeater whose direct children form one item template. */
+export interface UiListProps extends UiBaseNodeProps {
+  dataSource: string
+  columns: number
+  rows: number
+  autoFlow: UiListAutoFlow
+  columnGap: number
+  rowGap: number
+  justifyItems: UiListItemAlignment
+  alignItems: UiListItemAlignment
+  maxItems: number
 }
 
 export interface UiSpriteProps extends UiBaseNodeProps {
@@ -401,10 +418,13 @@ export interface UiNodeBase<TType extends UiDesignerNodeType, TProps extends UiB
   conditionFrequency: UiConditionFrequency
   enterAnim: UiAnimationConfig
   exitAnim: UiAnimationConfig
+  /** Button-only focus animation; other node types keep the canonical none value. */
+  focusAnim: UiAnimationConfig
   events: UiEventMap
 }
 
 export type UiContainerNode = UiNodeBase<'container', UiContainerProps>
+export type UiListNode = UiNodeBase<'list', UiListProps>
 export type UiSpriteNode = UiNodeBase<'sprite', UiSpriteProps>
 export type UiNineSliceNode = UiNodeBase<'nineSlice', UiNineSliceProps>
 export type UiFrameAnimationNode = UiNodeBase<'frameAnimation', UiFrameAnimationProps>
@@ -417,6 +437,7 @@ export type UiParticleNode = UiNodeBase<'particle', UiParticleProps>
 
 export type UiNode =
   | UiContainerNode
+  | UiListNode
   | UiSpriteNode
   | UiNineSliceNode
   | UiFrameAnimationNode
@@ -801,6 +822,9 @@ export interface UiDesignerFileConflict {
 
 export interface UiDesignerFileRequest {
   path?: string
+  project?: string
+  /** PNG captured from the editor canvas and stored outside the source JSON. */
+  thumbnailDataUrl?: string
   expected?: Pick<UiDesignerFileMetadata, 'digest' | 'mtimeMs'>
   force?: boolean
   overwrite?: boolean
@@ -903,12 +927,17 @@ export interface UiDesignerRecentFileRecord {
   lastOpenedAt: string
   lastSavedAt?: string
   exists: boolean
+  thumbnailUrl?: string
 }
 
 export interface UiDesignerSceneFileRecord {
   /** Project-relative .mzui path (posix separators). */
   path: string
+  /** Absolute source path used only when opening the editable document. */
+  sourcePath: string
   sceneName: string
+  thumbnailUrl?: string
+  modifiedAt: string
 }
 
 export interface UiDesignerRecoveryRecord {

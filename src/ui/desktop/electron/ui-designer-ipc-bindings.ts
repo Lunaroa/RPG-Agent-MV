@@ -37,6 +37,8 @@ export interface UiDesignerIpcDependencies {
   file: {
     readUiDesignerFile(filePath: string): { document: UiDesignerDocument; metadata: UiDesignerFileMetadata }
     saveUiDesignerFile(filePath: string, document: UiDesignerDocument, options?: UiDesignerFileRequest): UiDesignerFileMetadata
+    projectUiDesignerScenePath(project: string, sceneName: string): string
+    writeProjectUiDesignerThumbnail(project: string, sceneName: string, dataUrl: string): string
     revealSource(filePath: string): void
     UiDesignerUserDataStore: new (root: string) => UiDesignerUserDataStoreLike
   }
@@ -69,7 +71,7 @@ interface UiDesignerUserDataStoreLike {
   isWorkingDocumentPath(path: string): boolean
   saveWorkingDocument(document: UiDesignerDocument, options?: { path?: string; duplicate?: boolean; expected?: Pick<UiDesignerFileMetadata, 'digest' | 'mtimeMs'>; force?: boolean }): UiDesignerFileMetadata
   listRecentFiles(): UiDesignerRecentFileRecord[]
-  recordRecentFile(path: string, options?: { opened?: boolean; saved?: boolean; sceneName?: string }): UiDesignerRecentFileRecord
+  recordRecentFile(path: string, options?: { opened?: boolean; saved?: boolean; sceneName?: string; thumbnailDataUrl?: string }): UiDesignerRecentFileRecord
   removeRecentFile(path: string): void
   writeRecovery(document: UiDesignerDocument, sourcePath?: string, sourceMetadata?: Pick<UiDesignerFileMetadata, 'digest' | 'mtimeMs'>, key?: string): UiDesignerRecoveryRecord
   listRecovery(): UiDesignerRecoveryRecord[]
@@ -82,7 +84,7 @@ interface UiDesignerUserDataStoreLike {
 type DialogLike = Pick<Dialog, 'showOpenDialog' | 'showSaveDialog'>
 type IpcLike = Pick<IpcMain, 'handle'>
 
-function operationError(operation: string, error: unknown): Record<string, unknown> {
+export function uiDesignerOperationError(operation: string, error: unknown): Record<string, unknown> {
   const code = typeof error === 'object' && error && 'code' in error ? String((error as { code?: unknown }).code || 'UI_DESIGNER_ERROR') : 'UI_DESIGNER_ERROR'
   const recoverable = code === 'UI_DESIGNER_CONFLICT'
     || code === 'UI_DESIGNER_OVERWRITE_REQUIRED'
@@ -97,7 +99,7 @@ function operationError(operation: string, error: unknown): Record<string, unkno
     error: { code, operation, recoverable, choices: recoverable ? ['retry', 'reload', 'save-as'] : ['retry'] },
     message: 'UI designer operation failed. Review the details and choose a recovery action.',
     ...(typeof error === 'object' && error && ('actual' in error || 'expected' in error)
-      ? { conflict: { expected: (error as { expected?: unknown }).expected, actual: (error as { actual?: unknown }).actual } }
+      ? { conflict: { code: 'UI_DESIGNER_CONFLICT', expected: (error as { expected?: unknown }).expected, actual: (error as { actual?: unknown }).actual, recoverable } }
       : {}),
     ...(typeof error === 'object' && error && 'affectedFiles' in error
       ? { affectedFiles: (error as { affectedFiles?: unknown }).affectedFiles, digest: (error as { digest?: unknown }).digest, mtimeMs: (error as { mtimeMs?: unknown }).mtimeMs }
@@ -132,26 +134,47 @@ export function registerUiDesignerIpcHandlers(
     try {
       const result = dependencies.file.readUiDesignerFile(filePath)
       const store = dependencies.userDataStore()
-      const metadata = store.isWorkingDocumentPath(filePath)
-        ? result.metadata
-        : store.saveWorkingDocument(result.document)
-      store.recordRecentFile(metadata.path, { opened: true, sceneName: result.document.meta.sceneName })
-      return { status: 'ready', operation: 'open', value: result.document, metadata, sourcePath: metadata.path, message: 'Ready.' }
-    } catch (error) { return operationError('open', error) }
+      store.recordRecentFile(result.metadata.path, { opened: true, sceneName: result.document.meta.sceneName })
+      return { status: 'ready', operation: 'open', value: result.document, metadata: result.metadata, sourcePath: result.metadata.path, message: 'Ready.' }
+    } catch (error) { return uiDesignerOperationError('open', error) }
   })
 
-  const save = async (_event: { sender: unknown }, request: UiDesignerFileRequest, document: UiDesignerDocument, mode: 'save' | 'saveAs') => {
+  const save = async (event: { sender: unknown }, request: UiDesignerFileRequest, document: UiDesignerDocument, mode: 'save' | 'saveAs') => {
     try {
+      const project = typeof request?.project === 'string' && request.project.trim()
+        ? dependencies.resolveProject(request.project)
+        : ''
+      const canonicalProjectPath = project
+        ? dependencies.file.projectUiDesignerScenePath(project, document.meta.sceneName)
+        : ''
+      let targetPath = typeof request?.path === 'string' && request.path.trim() ? path.resolve(request.path) : ''
+      if (mode === 'saveAs') {
+        const parent = dependencies.dialogParent?.(event.sender)
+        targetPath = await selectedPath(dialog, parent, 'save', 'mzui', canonicalProjectPath || `${document.meta.sceneName}.mzui`) || ''
+        if (!targetPath) return { status: 'idle', operation: mode, message: 'Canceled.' }
+      } else if (!targetPath) {
+        if (!canonicalProjectPath) throw Object.assign(new Error('A selected RPG Maker project is required for the first save.'), { code: 'UI_DESIGNER_PROJECT_REQUIRED' })
+        if (fs.existsSync(canonicalProjectPath) && request?.force !== true) {
+          const existing = dependencies.file.readUiDesignerFile(canonicalProjectPath)
+          throw Object.assign(new Error('A scene with this name already exists in the current project. Review it or choose Save As before replacing it.'), {
+            code: 'UI_DESIGNER_OVERWRITE_REQUIRED',
+            actual: existing.metadata,
+          })
+        }
+        targetPath = canonicalProjectPath
+      }
       const store = dependencies.userDataStore()
-      const metadata = store.saveWorkingDocument(document, {
-        path: request?.path,
-        duplicate: mode === 'saveAs',
+      const metadata = dependencies.file.saveUiDesignerFile(targetPath, document, {
         expected: request?.expected,
         force: request?.force,
       })
-      store.recordRecentFile(metadata.path, { saved: true, opened: mode === 'saveAs', sceneName: document.meta.sceneName })
+      const thumbnailDataUrl = typeof request?.thumbnailDataUrl === 'string' ? request.thumbnailDataUrl : undefined
+      if (thumbnailDataUrl && project && isPathInside(project, metadata.path)) {
+        dependencies.file.writeProjectUiDesignerThumbnail(project, document.meta.sceneName, thumbnailDataUrl)
+      }
+      store.recordRecentFile(metadata.path, { saved: true, opened: mode === 'saveAs', sceneName: document.meta.sceneName, thumbnailDataUrl })
       return { status: 'success', operation: mode, metadata, sourcePath: metadata.path, message: 'Saved.' }
-    } catch (error) { return operationError(mode, error) }
+    } catch (error) { return uiDesignerOperationError(mode, error) }
   }
   ipcMain.handle('ui-designer:file:save', (event, request: UiDesignerFileRequest, document: UiDesignerDocument) => save(event, request || {}, document, 'save'))
   ipcMain.handle('ui-designer:file:save-as', (event, request: UiDesignerFileRequest, document: UiDesignerDocument) => save(event, request || {}, document, 'saveAs'))
@@ -166,7 +189,7 @@ export function registerUiDesignerIpcHandlers(
       if (!exists || (!extensionAllowed && !recent)) throw Object.assign(new Error('The UI designer source file is not an existing .mzui file or a known recent source.'), { code: 'UI_DESIGNER_SOURCE_NOT_FOUND' })
       dependencies.file.revealSource(resolved)
       return { status: 'success', operation: 'reveal-source', value: null, message: 'Source revealed.' }
-    } catch (error) { return operationError('reveal-source', error) }
+    } catch (error) { return uiDesignerOperationError('reveal-source', error) }
   })
 
   ipcMain.handle('ui-designer:project:profile', (_event, request: UiDesignerProjectProfileRequest = {}) => {
@@ -180,29 +203,29 @@ export function registerUiDesignerIpcHandlers(
         value: dependencies.project.inspectUiDesignerProjectProfile(dependencies.resolveProject(request.project)),
         message: 'Ready.',
       }
-    } catch (error) { return operationError('project:profile', error) }
+    } catch (error) { return uiDesignerOperationError('project:profile', error) }
   })
 
   ipcMain.handle('ui-designer:scenes:list', (_event, request: UiDesignerProjectRequest = {}) => {
     try {
       return { status: 'success', operation: 'scenes:list', value: dependencies.project.listUiDesignerSceneFiles(dependencies.resolveProject(request.project)), message: 'Ready.' }
-    } catch (error) { return operationError('scenes:list', error) }
+    } catch (error) { return uiDesignerOperationError('scenes:list', error) }
   })
 
   ipcMain.handle('ui-designer:resources:list', async (_event, request: UiDesignerResourceRequest = {}) => {
     try { return { status: 'success', value: await dependencies.resources.inspectUiDesignerResourcesAsync(dependencies.resolveProject(request.project), request), message: 'Ready.' } }
-    catch (error) { return operationError('resources:list', error) }
+    catch (error) { return uiDesignerOperationError('resources:list', error) }
   })
   ipcMain.handle('ui-designer:resources:references', async (_event, request: UiDesignerResourceRequest = {}) => {
     try {
       const referencedPaths = Array.isArray(request.referencedPaths) ? request.referencedPaths : []
       return { status: 'success', value: await dependencies.resources.inspectUiDesignerResourceReferences(dependencies.resolveProject(request.project), referencedPaths), message: 'Ready.' }
-    } catch (error) { return operationError('resources:references', error) }
+    } catch (error) { return uiDesignerOperationError('resources:references', error) }
   })
   ipcMain.handle('ui-designer:resources:read-scene-data', (_event, request: UiDesignerSceneDataReadRequest) => {
     try {
       return { status: 'success', operation: 'resources:read-scene-data', value: dependencies.resources.readUiDesignerSceneData(dependencies.resolveProject(request?.project), request?.path), message: 'Ready.' }
-    } catch (error) { return operationError('resources:read-scene-data', error) }
+    } catch (error) { return uiDesignerOperationError('resources:read-scene-data', error) }
   })
   ipcMain.handle('ui-designer:file:select-frame-folder', async (event, request: UiDesignerFrameFolderRequest = {}) => {
     const selected = await selectedDirectory(dialog, dependencies.dialogParent?.(event.sender))
@@ -211,22 +234,22 @@ export function registerUiDesignerIpcHandlers(
       if (!dependencies.resources.selectUiDesignerFrameFolder) throw Object.assign(new Error('Frame folder selection is unavailable.'), { code: 'UI_DESIGNER_FRAME_FOLDER_UNAVAILABLE' })
       const entries = dependencies.resources.selectUiDesignerFrameFolder(dependencies.resolveProject(request.project), selected)
       return { status: 'success', operation: 'file:select-frame-folder', value: entries, message: 'Ready.' }
-    } catch (error) { return operationError('file:select-frame-folder', error) }
+    } catch (error) { return uiDesignerOperationError('file:select-frame-folder', error) }
   })
   ipcMain.handle('ui-designer:runtime:check', (_event, request: UiDesignerProjectRequest = {}) => {
     try { return { status: 'success', value: dependencies.runtime.inspectUiDesignerRuntime(dependencies.workflowRoot, dependencies.resolveProject(request.project)), message: 'Ready.' } }
-    catch (error) { return operationError('runtime:check', error) }
+    catch (error) { return uiDesignerOperationError('runtime:check', error) }
   })
   ipcMain.handle('ui-designer:runtime:install', (_event, request?: UiDesignerRuntimeInstallRequest) => {
     if (!request || request.enable !== true) {
-      return operationError('runtime:install', { code: 'UI_DESIGNER_RUNTIME_ENABLE_REQUIRED' })
+      return uiDesignerOperationError('runtime:install', { code: 'UI_DESIGNER_RUNTIME_ENABLE_REQUIRED' })
     }
     try { return { status: 'success', value: dependencies.runtime.stageUiDesignerRuntimeInstall(dependencies.workflowRoot, dependencies.resolveProject(request.project), request), message: 'Runtime staged.' } }
-    catch (error) { return operationError('runtime:install', error) }
+    catch (error) { return uiDesignerOperationError('runtime:install', error) }
   })
   ipcMain.handle('ui-designer:scene:stage', (_event, request: UiDesignerSceneStageRequest) => {
     try { return { status: 'success', value: dependencies.runtime.stageUiDesignerSceneExport(dependencies.workflowRoot, dependencies.resolveProject(request.project), request.scene, { sceneRelativePath: request.targetPath, overwrite: request.overwrite }), message: 'Scene staged.' } }
-    catch (error) { return operationError('scene:stage', error) }
+    catch (error) { return uiDesignerOperationError('scene:stage', error) }
   })
   ipcMain.handle('ui-designer:runtime:export', async (event, request: UiDesignerRuntimeExportRequest) => {
     const defaultName = `Scene_${request.scene.meta.sceneName.replace(/^Scene_/, '')}.json`
@@ -235,7 +258,7 @@ export function registerUiDesignerIpcHandlers(
     try {
       const metadata = dependencies.runtime.writeUiDesignerRuntimeExport(filePath, request.scene, { overwrite: request.overwrite })
       return { status: 'success', operation: 'runtime:export', value: metadata.path, path: metadata.path, digest: metadata.digest, mtimeMs: metadata.mtimeMs, message: 'Runtime export saved.' }
-    } catch (error) { return operationError('runtime:export', error) }
+    } catch (error) { return uiDesignerOperationError('runtime:export', error) }
   })
   ipcMain.handle('ui-designer:renderer:start', async (_event, request?: UiDesignerProjectRequest & { generation?: number }) => {
     try {
@@ -246,14 +269,14 @@ export function registerUiDesignerIpcHandlers(
       if (!Number.isSafeInteger(request.generation) || Number(request.generation) < 0) throw new Error('UI designer renderer generation must be a non-negative safe integer.')
       const value = await dependencies.rendererHost.start(dependencies.resolveProject(request.project), Number(request.generation))
       return { status: 'success', operation: 'renderer:start', value, message: 'Isolated UI designer canvas renderer prepared.' }
-    } catch (error) { return operationError('renderer:start', error) }
+    } catch (error) { return uiDesignerOperationError('renderer:start', error) }
   })
   ipcMain.handle('ui-designer:renderer:confirm', (_event, sessionId?: string) => {
     try {
       if (!dependencies.rendererHost) throw new Error('UI designer canvas renderer is unavailable.')
       if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('UI designer renderer session id is required.')
       return { status: 'success', operation: 'renderer:confirm', value: dependencies.rendererHost.confirm(sessionId), message: 'Isolated renderer process confirmed.' }
-    } catch (error) { return operationError('renderer:confirm', error) }
+    } catch (error) { return uiDesignerOperationError('renderer:confirm', error) }
   })
   ipcMain.handle('ui-designer:renderer:stop', (_event, request?: { sessionId?: string; reason?: UiDesignerRendererHostStopReason }) => {
     try {
@@ -262,7 +285,7 @@ export function registerUiDesignerIpcHandlers(
       if (reason !== undefined && !['project-change', 'unload', 'shutdown', 'protocol-error'].includes(reason)) throw new Error('UI designer renderer stop reason is invalid.')
       dependencies.rendererHost.stop(request?.sessionId)
       return { status: 'success', operation: 'renderer:stop', value: null, message: 'UI designer canvas renderer stopped.' }
-    } catch (error) { return operationError('renderer:stop', error) }
+    } catch (error) { return uiDesignerOperationError('renderer:stop', error) }
   })
   ipcMain.handle('ui-designer:renderer:sync-resources', (_event, request?: UiDesignerRendererResourceSyncRequest) => {
     try {
@@ -273,7 +296,7 @@ export function registerUiDesignerIpcHandlers(
         project: dependencies.resolveProject(request.project),
       })
       return { status: 'success', operation: 'renderer:sync-resources', value, message: 'Renderer resources synchronized.' }
-    } catch (error) { return operationError('renderer:sync-resources', error) }
+    } catch (error) { return uiDesignerOperationError('renderer:sync-resources', error) }
   })
 
   ipcMain.handle('ui-designer:recovery:list', () => safeStoreCall(dependencies, 'list-recovery', (store) => store.listRecovery()))
@@ -286,6 +309,11 @@ export function registerUiDesignerIpcHandlers(
   ipcMain.handle('ui-designer:preferences:write', (_event, value: Record<string, unknown>) => safeStoreCall(dependencies, 'write-preferences', (store) => { store.writePreferences(value); return value }))
 }
 
+function isPathInside(root: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate))
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
+}
+
 function safeStoreCall(
   dependencies: UiDesignerIpcDependencies,
   operation: string,
@@ -294,7 +322,7 @@ function safeStoreCall(
   try {
     const store = dependencies.userDataStore()
     return { status: 'success', value: callback(store), message: 'Ready.' }
-  } catch (error) { return operationError(operation, error) }
+  } catch (error) { return uiDesignerOperationError(operation, error) }
 }
 
 export function cleanupUiDesignerIpcHandlers(ipcMain: Pick<IpcMain, 'removeHandler'>): void {

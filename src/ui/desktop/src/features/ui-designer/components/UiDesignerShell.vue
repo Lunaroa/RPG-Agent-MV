@@ -76,6 +76,7 @@ rawDesigner = useUiDesigner({ adapters: props.adapters, projectPath: props.proje
 // Child templates receive a reactive facade so nested refs/computed values are
 // unwrapped consistently; the raw controller remains available for lifecycle.
 const designer = reactive(rawDesigner) as unknown as UiDesignerController
+const firstSaveConflict = computed(() => Boolean(designer.fileConflict && !designer.runtimeConflict && !designer.activeScene?.sourcePath))
 const lifecycle = useUiDesignerLifecycle({
   adapter: props.lifecycleAdapter,
   isDirty: () => rawDesigner.isDirty.value || rawDesigner.isEditorPreviewing.value || rawDesigner.isPreviewing.value || rawDesigner.previewCleanupPending.value || rawDesigner.previewDisposalInFlight.value,
@@ -342,12 +343,13 @@ onBeforeUnmount(() => {
       </template>
     </el-dialog>
 
-    <el-dialog :model-value="Boolean(designer.fileConflict)" :title="t('conflictTitle')" width="min(470px, 92vw)" :close-on-click-modal="false" :show-close="false">
-      <p class="dialog-copy">{{ designer.runtimeConflict ? t('overwriteConflictBody') : t('conflictBody') }}</p>
+    <el-dialog :model-value="Boolean(designer.fileConflict)" :title="t(firstSaveConflict ? 'sceneNameConflictTitle' : 'conflictTitle')" width="min(470px, 92vw)" :close-on-click-modal="false" :show-close="false">
+      <p class="dialog-copy">{{ designer.runtimeConflict ? t('overwriteConflictBody') : firstSaveConflict ? t('sceneNameConflictBody') : t('conflictBody') }}</p>
        <dl v-if="designer.runtimeConflict && designer.fileConflict?.actual" class="conflict-metadata"><dt>{{ t('modifiedTime') }}</dt><dd>{{ designer.fileConflict.actual.mtimeMs }}</dd><dt>{{ t('digest') }}</dt><dd>{{ designer.fileConflict.actual.digest }}</dd><template v-if="designer.runtimeConflictFiles?.length"><dt>{{ t('affectedFiles') }}</dt><dd>{{ designer.runtimeConflictFiles.join(', ') }}</dd></template></dl>
       <template #footer>
         <el-button data-testid="ui-designer-conflict-cancel" @click="designer.clearFileConflict()">{{ t('lifecycleCancel') }}</el-button>
-        <el-button v-if="!designer.runtimeConflict" @click="void designer.resolveFileConflict('reload')">{{ t('reload') }}</el-button>
+        <el-button v-if="!designer.runtimeConflict && !firstSaveConflict" data-testid="ui-designer-conflict-reload" @click="void designer.resolveFileConflict('reload')">{{ t('reload') }}</el-button>
+        <el-button v-if="!designer.runtimeConflict" data-testid="ui-designer-conflict-save-as" @click="void designer.resolveFileConflict('saveAs')">{{ t('saveAs') }}</el-button>
         <el-button data-testid="ui-designer-conflict-force" type="danger" @click="void designer.resolveFileConflict('force')">{{ t('forceSave') }}</el-button>
       </template>
     </el-dialog>

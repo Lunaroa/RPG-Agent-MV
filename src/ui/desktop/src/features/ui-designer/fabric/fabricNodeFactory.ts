@@ -520,6 +520,7 @@ export async function createFabricNodeObject(node: UiNode, catalog: UiProjectRes
   let object: FabricObject
   let extra: Partial<UiFabricObjectData> = {}
   if (node.type === 'container') object = await createContainer(node, catalog)
+  else if (node.type === 'list') object = boundary(node.props.width, node.props.height, { fill: '#ffffff04', stroke: '#d99473', dash: [8, 5], radius: 3 })
   else if (node.type === 'sprite') object = await createImageNode(node, node.props.path, node.props.fillMode, catalog, uiDesignerText(language, 'canvasPlaceholderImage'))
   else if (node.type === 'nineSlice') object = await createNineSliceNode(node, catalog, uiDesignerText(language, 'canvasPlaceholderNineSlice'))
   else if (node.type === 'frameAnimation') object = await createImageNode(node, node.props.frames[node.props.initialFrame]?.path ?? node.props.frames[0]?.path ?? '', node.props.fillMode, catalog, uiDesignerText(language, 'canvasPlaceholderFrameAnimation'))

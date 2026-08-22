@@ -84,7 +84,7 @@ export function resolveNodeActionPolicy(document: UiDesignerDocument, currentSel
   const canReparent = selected.length === 1 && deletableSelection
   const canUngroup = deletableSelection && selected.every((node) => node.type === 'container')
   const groupable = selected.length >= 2 && sameParent && safeSelection && !containsProtectedSubtree && !(selected[0].parentId !== null && nodeFor(document, selected[0].parentId)?.locked)
-  const targetContainer = target?.type === 'container' && !target.locked && !hasLockedAncestor(document, target)
+  const targetContainer = (target?.type === 'container' || target?.type === 'list') && !target.locked && !hasLockedAncestor(document, target)
 
   return {
     targetId,

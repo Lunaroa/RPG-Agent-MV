@@ -17,14 +17,22 @@ const compile = (name: string, source = read(name)) => {
 test('drag snapping draws transient alignment lines while resize stays continuous', () => {
   const canvas = compile('UiDesignerCanvas.vue')
   const controller = read('../composables/useUiDesigner.ts')
+  const factory = read('../fabric/fabricNodeFactory.ts')
   const geometry = read('../models/geometry.ts')
 
   assert.match(canvas, /class="canvas-snap-line"/)
   assert.match(canvas, /snapFeedback\?\.lines \?\? \[\]/)
   assert.match(canvas, /snapFeedback\?\.guideIds\.includes\(guide\.id\)/)
-  assert.match(canvas, /canvas-snap-line\.vertical[^}]*dashed/)
-  assert.match(canvas, /canvas-snap-line\.horizontal[^}]*dashed/)
+  assert.match(canvas, /canvas-snap-line[^}]*border-color: #fff;[^}]*drop-shadow\(0 0 1px #fff\)/)
+  assert.match(canvas, /canvas-snap-line\.vertical[^}]*margin-left: -1px;[^}]*border-left: 2px dashed/)
+  assert.match(canvas, /canvas-snap-line\.horizontal[^}]*margin-top: -1px;[^}]*border-top: 2px dashed/)
   assert.match(canvas, /canvas-guide\.snapped \{ opacity: 1/)
+
+  assert.match(factory, /borderColor: '#d06b42'/)
+  assert.match(factory, /cornerColor: '#d06b42'/)
+  assert.match(factory, /cornerStrokeColor: '#171a24'/)
+  assert.match(factory, /cornerSize: 9/)
+  assert.doesNotMatch(factory, /borderScaleFactor:/)
 
   assert.match(geometry, /export interface UiSnapHit/)
   assert.match(geometry, /export function snapFeedbackFor/)

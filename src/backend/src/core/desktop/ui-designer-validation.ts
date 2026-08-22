@@ -77,6 +77,7 @@ const BASE_PROP_KEYS = [
 const BASE_NUMERIC_PROP_KEYS = BASE_PROP_KEYS.filter((key) => key !== 'visible');
 const TYPE_PROP_KEYS: Record<string, readonly string[]> = {
   container: ['backgroundPath', 'backgroundFillMode', 'backgroundRepeatMode', 'clip'],
+  list: ['dataSource', 'columns', 'rows', 'autoFlow', 'columnGap', 'rowGap', 'justifyItems', 'alignItems', 'maxItems'],
   sprite: ['path', 'fillMode', 'repeatMode', 'tint', 'blendMode', 'scrollX', 'scrollY'],
   nineSlice: ['path', 'borderTop', 'borderRight', 'borderBottom', 'borderLeft', 'showGuides'],
   frameAnimation: ['defaultFrameDuration', 'loop', 'speed', 'initialFrame', 'frames', 'fillMode'],
@@ -208,7 +209,7 @@ export function validateUiDesignerDocument(value: unknown): UiValidationReport {
           if (childIds.has(child)) addError('duplicate-child-id', `Node ${id || '(unknown)'} lists child ${child} more than once.`, `${nodePath}.children`, id || undefined);
           childIds.add(child);
         }
-        if (node.type !== 'container' && node.children.length > 0) {
+        if (node.type !== 'container' && node.type !== 'list' && node.children.length > 0) {
           addError('non-container-children', `Node type ${String(node.type)} cannot contain children.`, `${nodePath}.children`, id || undefined);
         }
       }
@@ -220,6 +221,10 @@ export function validateUiDesignerDocument(value: unknown): UiValidationReport {
       validateCondition(node.condition, addError, `${nodePath}.condition`, id || undefined);
       validateAnimation(node.enterAnim, addError, `${nodePath}.enterAnim`, id || undefined);
       validateAnimation(node.exitAnim, addError, `${nodePath}.exitAnim`, id || undefined);
+      if (node.focusAnim !== undefined) {
+        validateAnimation(node.focusAnim, addError, `${nodePath}.focusAnim`, id || undefined);
+        if (node.type !== 'button' && isRecord(node.focusAnim) && node.focusAnim.type !== 'none') addError('invalid-value', 'Only button nodes support focus animation.', `${nodePath}.focusAnim`, id || undefined);
+      }
       validateEvents(node.events, addError, addWarning, `${nodePath}.events`, id || undefined);
     });
 
@@ -455,6 +460,19 @@ function validateNodeTypeProps(type: UiDesignerNodeType, value: unknown, addErro
       requireEnum(value, 'backgroundFillMode', ['stretch', 'cover', 'contain', 'tile'], addError, path, nodeId);
       requireEnum(value, 'backgroundRepeatMode', ['none', 'horizontal', 'vertical', 'both'], addError, path, nodeId);
       requireBoolean(value, 'clip', addError, path, nodeId);
+      break;
+    case 'list':
+      requireString(value, 'dataSource', addError, path, nodeId);
+      if (typeof value.dataSource === 'string' && !compileExpressionCode(value.dataSource)) addError('invalid-code', 'list.dataSource must be a valid array expression.', `${path}.props.dataSource`, nodeId);
+      requireInteger(value, 'columns', addError, path, nodeId, 1);
+      requireInteger(value, 'rows', addError, path, nodeId, 0);
+      requireEnum(value, 'autoFlow', ['row', 'column'], addError, path, nodeId);
+      requireNumber(value, 'columnGap', addError, path, nodeId, 0);
+      requireNumber(value, 'rowGap', addError, path, nodeId, 0);
+      requireEnum(value, 'justifyItems', ['start', 'center', 'end', 'stretch'], addError, path, nodeId);
+      requireEnum(value, 'alignItems', ['start', 'center', 'end', 'stretch'], addError, path, nodeId);
+      requireInteger(value, 'maxItems', addError, path, nodeId, 0);
+      if (Number.isInteger(value.maxItems) && Number(value.maxItems) > 1000) addError('invalid-value', 'list.maxItems cannot exceed 1000.', `${path}.props.maxItems`, nodeId);
       break;
     case 'sprite':
       requireString(value, 'path', addError, path, nodeId);

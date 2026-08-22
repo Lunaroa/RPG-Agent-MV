@@ -33,7 +33,7 @@ export function validateTreeInvariants(document: UiDesignerDocument): UiValidati
       }
       childIds.add(childId)
     }
-    if (node.type !== 'container' && node.children.length > 0) {
+    if (node.type !== 'container' && node.type !== 'list' && node.children.length > 0) {
       issues.push({ severity: 'error', code: 'non-container-children', message: `Node ${node.name} cannot contain children`, nodeId: node.id, nodeName: node.name })
     }
     if (node.parentId !== null) {
@@ -222,7 +222,7 @@ export function reparentNode(
   let parentId: string | null
   if (position === 'inner') {
     const parent = targetId ? findNode(next, targetId) : undefined
-    if (!parent || parent.type !== 'container' || parent.locked || hasLockedAncestor(next, parent)) throw new Error('Only a container outside locked ancestry can receive child nodes')
+    if (!parent || parent.type !== 'container' && parent.type !== 'list' || parent.locked || hasLockedAncestor(next, parent)) throw new Error('Only a container or list outside locked ancestry can receive child nodes')
     parentId = parent.id
   } else {
     const target = targetId ? findNode(next, targetId) : undefined
@@ -372,7 +372,7 @@ export function pasteClipboard(document: UiDesignerDocument, clipboard: UiClipbo
   const next = cloneUiDocument(document)
   if (parentId !== null) {
     const parent = findNode(next, parentId)
-    if (!parent || parent.type !== 'container' || parent.locked || hasLockedAncestor(next, parent)) throw new Error('Paste destination must be outside locked ancestry')
+    if (!parent || parent.type !== 'container' && parent.type !== 'list' || parent.locked || hasLockedAncestor(next, parent)) throw new Error('Paste destination must be a container or list outside locked ancestry')
   }
   const idMap = new Map<string, string>()
   const usedIds = new Set(next.nodes.map((node) => node.id))

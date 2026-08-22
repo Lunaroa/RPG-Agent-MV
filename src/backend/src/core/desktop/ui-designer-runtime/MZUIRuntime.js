@@ -34,6 +34,7 @@
   };
   var NODE_TYPES = {
     container: true,
+    list: true,
     sprite: true,
     nineSlice: true,
     frameAnimation: true,
@@ -47,7 +48,7 @@
   // All trusted Runtime callbacks use one stable ABI.  The named helpers are
   // injected once per invocation; the Function objects themselves are still
   // compiled once when the scene is mounted.
-  var CODE_ARGUMENTS = ['runtime', 'context', 'node', 'props', 'event', 'self', 'scene', '$sw', '$var', '$setSw', '$setVar'];
+  var CODE_ARGUMENTS = ['runtime', 'context', 'node', 'props', 'event', 'self', 'scene', '$sw', '$var', '$setSw', '$setVar', '$item', '$index'];
 
   function object(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
   function finite(value, fallback) { return typeof value === 'number' && isFinite(value) ? value : fallback; }
@@ -237,7 +238,7 @@
           values[id] = value;
           return value;
         };
-        return [runtime, context, node || null, props || (node && node.props) || {}, event || null, selfView, sceneApi, readSwitch, readVariable, writeSwitch, writeVariable];
+        return [runtime, context, node || null, props || (node && node.props) || {}, event || null, selfView, sceneApi, readSwitch, readVariable, writeSwitch, writeVariable, node && node.__mzuiListItem, node && node.__mzuiListIndex];
       },
       mount: function mount(scene, options) {
         this.cleanup();
@@ -251,12 +252,16 @@
         var providedContext = typeof api.contextProvider === 'function' ? api.contextProvider(sceneApi) : null;
         this.context = mergeRuntimeContext(providedContext, options && options.context ? options.context : {});
         if (options && options.sceneApi && !this.context.sceneApi) this.context.sceneApi = options.sceneApi;
+        this.errors = [];
+        if (this.allowsUserExecution()) {
+          scene = materializeRuntimeLists(this, scene);
+          this.scene = scene;
+        }
         this.deltaMs = finite(options && options.deltaMs, frameDeltaMs());
         this.hostRoot = options && options.root ? options.root : null;
         this.displayRoot = createContainer();
         if (!this.displayRoot && !this.hostRoot) this.displayRoot = createContainer();
         if (this.hostRoot && this.displayRoot && typeof this.hostRoot.addChild === 'function') this.hostRoot.addChild(this.displayRoot);
-        this.errors = [];
         applySceneEffects(this, scene);
         this.conditionVisibility = {};
         this.effectiveVisibility = {};
@@ -423,6 +428,7 @@
             self.updateButtonDisabled(node);
             applyNodeAnimation(node, self.frame, true);
             applyNodeProps(node, self.nodeViews[node.id], self.scene, true);
+            applyButtonFocusAnimation(node, self.nodeViews[node.id], self);
             updateSpriteScroll(node, self.nodeViews[node.id]);
             updateFrameAnimation(node, self.nodeViews[node.id], self.frame, self);
             updateParticleNode(node, self.nodeViews[node.id], self.frame, self);
@@ -486,6 +492,7 @@
         var props = node.props || {};
         Object.keys(node.propModes || {}).forEach(function (key) {
           if (node.propModes[key] !== 'code') return;
+          if (node.type === 'list' && key === 'dataSource') return;
           var value = self.invoke(self.compiled.properties[node.id + ':' + key], self.makeInvocationArgs(node, null, props), 'property:' + key, 'property:' + node.id + ':' + key, { node: node.id });
           if (value !== undefined) props[key] = value;
         });
@@ -639,6 +646,7 @@
         view.__mzuiFocused = true;
         if (view.__mzuiButtonState !== 'pressed') view.__mzuiButtonState = 'hover';
         renderButtonState(view, node.props || {});
+        startButtonFocusAnimation(node, view);
         this.dispatchActionsForNode(node, 'onFocus', { type: 'focus', target: view });
         return true;
       },
@@ -650,6 +658,8 @@
         if (this.focusedNodeId === id) this.focusedNodeId = null;
         if (view.__mzuiButtonState !== 'pressed') view.__mzuiButtonState = view.__mzuiPointerHover ? 'hover' : 'normal';
         renderButtonState(view, node.props || {});
+        view.__mzuiFocusAnimation = null;
+        applyNodeProps(node, view, this.scene, this.conditionVisibility[node.id] !== false);
         this.dispatchActionsForNode(node, 'onBlur', { type: 'blur', target: view });
         return true;
       },
@@ -908,6 +918,152 @@
     return typeof value === 'string' && /\\(?:v|c|i)\[\d+\]|\\n|<\/?(?:b|i)>|<\/?color(?:=[^>]+)?>/i.test(value);
   }
 
+  function cloneRuntimeValue(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function listTemplateNodeIds(scene, listNode) {
+    var byId = {};
+    (Array.isArray(scene.nodes) ? scene.nodes : []).forEach(function (node) { if (node && node.id) byId[node.id] = node; });
+    var result = [];
+    var seen = {};
+    var pending = Array.isArray(listNode.children) ? listNode.children.slice() : [];
+    while (pending.length) {
+      var id = pending.shift();
+      if (!id || seen[id] || !byId[id]) continue;
+      seen[id] = true;
+      result.push(id);
+      (Array.isArray(byId[id].children) ? byId[id].children : []).forEach(function (childId) { pending.push(childId); });
+    }
+    return result;
+  }
+
+  function listTemplateBounds(nodes) {
+    if (!nodes.length) return { x: 0, y: 0, width: 1, height: 1 };
+    var left = Infinity;
+    var top = Infinity;
+    var right = -Infinity;
+    var bottom = -Infinity;
+    nodes.forEach(function (node) {
+      var props = node.props || {};
+      var width = Math.max(0, finite(props.width, 0));
+      var height = Math.max(0, finite(props.height, 0));
+      var nodeLeft = finite(props.x, 0) - width * finite(props.anchorX, 0);
+      var nodeTop = finite(props.y, 0) - height * finite(props.anchorY, 0);
+      left = Math.min(left, nodeLeft);
+      top = Math.min(top, nodeTop);
+      right = Math.max(right, nodeLeft + width);
+      bottom = Math.max(bottom, nodeTop + height);
+    });
+    return { x: left, y: top, width: Math.max(1, right - left), height: Math.max(1, bottom - top) };
+  }
+
+  function listGridCell(props, itemIndex, itemCount) {
+    var configuredColumns = Math.max(1, Math.round(finite(props.columns, 1)));
+    var configuredRows = Math.max(0, Math.round(finite(props.rows, 0)));
+    var columns = configuredColumns;
+    var rows;
+    var column;
+    var row;
+    if (props.autoFlow === 'column') {
+      rows = configuredRows > 0 ? configuredRows : Math.max(1, Math.ceil(itemCount / configuredColumns));
+      columns = Math.max(configuredColumns, Math.ceil(itemCount / rows));
+      row = itemIndex % rows;
+      column = Math.floor(itemIndex / rows);
+    } else {
+      rows = Math.max(configuredRows, Math.ceil(itemCount / columns), 1);
+      column = itemIndex % columns;
+      row = Math.floor(itemIndex / columns);
+    }
+    var columnGap = Math.max(0, finite(props.columnGap, 0));
+    var rowGap = Math.max(0, finite(props.rowGap, 0));
+    var cellWidth = Math.max(0, (Math.max(0, finite(props.width, 0)) - columnGap * Math.max(0, columns - 1)) / columns);
+    var cellHeight = Math.max(0, (Math.max(0, finite(props.height, 0)) - rowGap * Math.max(0, rows - 1)) / rows);
+    var listLeft = finite(props.x, 0) - finite(props.width, 0) * finite(props.anchorX, 0);
+    var listTop = finite(props.y, 0) - finite(props.height, 0) * finite(props.anchorY, 0);
+    return { x: listLeft + column * (cellWidth + columnGap), y: listTop + row * (cellHeight + rowGap), width: cellWidth, height: cellHeight };
+  }
+
+  function placeListClone(clone, templateBounds, cell, listProps) {
+    var props = clone.props || (clone.props = {});
+    var width = Math.max(0, finite(props.width, 0));
+    var height = Math.max(0, finite(props.height, 0));
+    var left = finite(props.x, 0) - width * finite(props.anchorX, 0);
+    var top = finite(props.y, 0) - height * finite(props.anchorY, 0);
+    var targetLeft;
+    var targetTop;
+    if (listProps.justifyItems === 'stretch') {
+      var scaleX = cell.width / templateBounds.width;
+      targetLeft = cell.x + (left - templateBounds.x) * scaleX;
+      width *= scaleX;
+    } else {
+      var offsetX = listProps.justifyItems === 'end' ? cell.width - templateBounds.width : listProps.justifyItems === 'center' ? (cell.width - templateBounds.width) / 2 : 0;
+      targetLeft = cell.x + offsetX + left - templateBounds.x;
+    }
+    if (listProps.alignItems === 'stretch') {
+      var scaleY = cell.height / templateBounds.height;
+      targetTop = cell.y + (top - templateBounds.y) * scaleY;
+      height *= scaleY;
+    } else {
+      var offsetY = listProps.alignItems === 'end' ? cell.height - templateBounds.height : listProps.alignItems === 'center' ? (cell.height - templateBounds.height) / 2 : 0;
+      targetTop = cell.y + offsetY + top - templateBounds.y;
+    }
+    props.width = width;
+    props.height = height;
+    props.x = targetLeft + width * finite(props.anchorX, 0);
+    props.y = targetTop + height * finite(props.anchorY, 0);
+  }
+
+  function materializeOneRuntimeList(runtime, scene, listNode) {
+    var source = listNode.props && listNode.props.dataSource;
+    if (listNode.propModes && listNode.propModes.dataSource === 'code' && listNode.propCodes && typeof listNode.propCodes.dataSource === 'string') source = listNode.propCodes.dataSource;
+    var compiled = compileExpression(typeof source === 'string' ? source : '[]', CODE_ARGUMENTS);
+    var items = runtime.invoke(compiled, runtime.makeInvocationArgs(listNode, null, listNode.props || {}), 'list:dataSource', 'list:' + listNode.id + ':dataSource', { node: listNode.id, type: 'list' });
+    if (!Array.isArray(items)) {
+      runtime.reportError(new TypeError('List data source must return an array.'), 'list:dataSource', { node: listNode.id, type: 'list' });
+      items = [];
+    }
+    var maxItems = Math.max(0, Math.min(1000, Math.round(finite(listNode.props && listNode.props.maxItems, 100))));
+    items = items.slice(0, maxItems);
+    var templateIds = listTemplateNodeIds(scene, listNode);
+    var templateIdSet = {};
+    templateIds.forEach(function (id) { templateIdSet[id] = true; });
+    var templates = (Array.isArray(scene.nodes) ? scene.nodes : []).filter(function (node) { return node && templateIdSet[node.id]; });
+    var bounds = listTemplateBounds(templates);
+    scene.nodes = (Array.isArray(scene.nodes) ? scene.nodes : []).filter(function (node) { return !node || !templateIdSet[node.id]; });
+    listNode.children = [];
+    items.forEach(function (item, itemIndex) {
+      var idMap = {};
+      templates.forEach(function (template) { idMap[template.id] = listNode.id + '__item_' + itemIndex + '__' + template.id; });
+      var cell = listGridCell(listNode.props || {}, itemIndex, items.length);
+      templates.forEach(function (template) {
+        var clone = cloneRuntimeValue(template);
+        clone.id = idMap[template.id];
+        clone.name = String(listNode.name || listNode.id) + '_' + (itemIndex + 1) + '_' + String(template.name || template.id);
+        clone.parentId = template.parentId === listNode.id ? listNode.id : idMap[template.parentId];
+        clone.children = (Array.isArray(template.children) ? template.children : []).map(function (id) { return idMap[id]; }).filter(Boolean);
+        clone.__mzuiListItem = item;
+        clone.__mzuiListIndex = itemIndex;
+        placeListClone(clone, bounds, cell, listNode.props || {});
+        if (clone.parentId === listNode.id) listNode.children.push(clone.id);
+        scene.nodes.push(clone);
+      });
+    });
+    listNode.__mzuiListExpanded = true;
+  }
+
+  function materializeRuntimeLists(runtime, sourceScene) {
+    var scene = cloneRuntimeValue(sourceScene);
+    var expanded = 0;
+    while (expanded < 10000) {
+      var listNode = (Array.isArray(scene.nodes) ? scene.nodes : []).find(function (node) { return node && node.type === 'list' && node.__mzuiListExpanded !== true; });
+      if (!listNode) return scene;
+      materializeOneRuntimeList(runtime, scene, listNode);
+      expanded += 1;
+    }
+    throw new Error('List expansion exceeded the Runtime safety limit.');
+  }
+
   function singleLineText(value) {
     return String(value == null ? '' : value).replace(/\r\n?|\n/g, ' ').replace(/\\n/gi, ' ');
   }
@@ -1102,7 +1258,7 @@
     var props = node.props || {};
     var PIXI = global.PIXI || {};
     var view;
-    if (node.type === 'container' && typeof PIXI.Container === 'function') view = new PIXI.Container();
+    if ((node.type === 'container' || node.type === 'list') && typeof PIXI.Container === 'function') view = new PIXI.Container();
     else if (node.type === 'sprite' && typeof global.Sprite === 'function') {
       var spriteBitmap = loadBitmap(props.path || '');
       var spriteTexture = textureFromBitmap(spriteBitmap) || spriteBitmap;
@@ -2380,6 +2536,35 @@
     return node.__mzuiAnimationActive;
   }
 
+  function startButtonFocusAnimation(node, view) {
+    var animation = node && node.type === 'button' && node.focusAnim;
+    if (!view || !animation || animation.type === 'none') {
+      if (view) view.__mzuiFocusAnimation = null;
+      return false;
+    }
+    view.__mzuiFocusAnimation = { elapsed: 0, config: animation };
+    return true;
+  }
+
+  function applyButtonFocusAnimation(node, view, runtime) {
+    var state = view && view.__mzuiFocusAnimation;
+    if (!state || !state.config || state.config.type === 'none') return false;
+    state.elapsed += Math.max(0, finite(runtime && runtime.deltaMs, frameDeltaMs()));
+    var duration = Math.max(0, finite(state.config.duration, 0));
+    var progress = duration <= 0 ? 1 : Math.min(1, state.elapsed / duration);
+    progress = applyEasing(progress, state.config.easing);
+    var props = node.props || {};
+    if (state.config.type === 'fadeIn') view.alpha *= progress;
+    if (state.config.type === 'fadeOut') view.alpha *= 1 - progress;
+    if (state.config.type === 'scaleIn') { view.scale.x *= progress; view.scale.y *= progress; }
+    if (state.config.type === 'scaleOut') { view.scale.x *= 1 - progress; view.scale.y *= 1 - progress; }
+    if (state.config.type === 'slideFromLeft') view.x -= finite(props.width, 0) * (1 - progress);
+    if (state.config.type === 'slideFromRight') view.x += finite(props.width, 0) * (1 - progress);
+    if (state.config.type === 'slideFromTop') view.y -= finite(props.height, 0) * (1 - progress);
+    if (state.config.type === 'slideFromBottom') view.y += finite(props.height, 0) * (1 - progress);
+    return progress < 1;
+  }
+
   // Interactive containers (button windows, event containers) have no
   // containsPoint of their own, so PIXI's hit test can never reach them
   // unless an explicit hitArea covers the node rectangle. Sprites and
@@ -2716,7 +2901,7 @@
       try { pixiBounds = finiteBoundsRectangle(view.getBounds(false)); } catch (_) { pixiBounds = null; }
     }
     var transformed = transformLogicalNodeAabb(view, node);
-    if (node && node.type === 'container' && transformed) return transformed;
+    if (node && (node.type === 'container' || node.type === 'list') && transformed) return transformed;
     if (transformed) {
       var expectedWidth = Math.abs(finite(node && node.props && node.props.width, 0) * finite(node && node.props && node.props.scaleX, 1));
       var expectedHeight = Math.abs(finite(node && node.props && node.props.height, 0) * finite(node && node.props && node.props.scaleY, 1));

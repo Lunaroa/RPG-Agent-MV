@@ -78,6 +78,7 @@ export function importRuntimeSceneDocument(runtime: UiRuntimeSceneExport): UiDes
     conditionFrequency: node.conditionFrequency ?? 'per-frame' as const,
     enterAnim: node.enterAnim ?? { type: 'none' as const, duration: 300, easing: 'EaseOut' as const },
     exitAnim: node.exitAnim ?? { type: 'none' as const, duration: 300, easing: 'EaseOut' as const },
+    focusAnim: node.focusAnim ?? { type: 'none' as const, duration: 300, easing: 'EaseOut' as const },
     events: node.events ?? {},
   }))
   const document: UiDesignerDocument = {

@@ -102,6 +102,11 @@ export class UiDesignerHistory {
     this.savedDocument = this.points[this.cursor].document
   }
 
+  /** Treat the current document as a source that has never been persisted. */
+  markUnsaved(): void {
+    this.savedCursor = -1
+  }
+
   /** Revert the working document to the last explicitly saved baseline. */
   discard(): UiDesignerDocument {
     this.points = [{ document: this.savedDocument, serialized: JSON.stringify(this.savedDocument) }]

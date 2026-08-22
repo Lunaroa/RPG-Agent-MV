@@ -167,9 +167,9 @@ function validateAction(value: unknown, path: string, issues: UiValidationIssue[
 }
 
 function validatePropsShape(type: UiDesignerNodeType, props: Record<string, unknown>, path: string, issues: UiValidationIssue[]): void {
-  const numeric = new Set(['x', 'y', 'width', 'height', 'scaleX', 'scaleY', 'rotate', 'opacity', 'anchorX', 'anchorY', 'zIndex', 'scrollX', 'scrollY', 'borderTop', 'borderRight', 'borderBottom', 'borderLeft', 'defaultFrameDuration', 'speed', 'initialFrame', 'fontSize', 'wrapWidth', 'letterSpacing', 'strokeWidth', 'shadowOffsetX', 'shadowOffsetY', 'shadowBlur', 'borderWidth', 'borderRadius', 'pressedScale', 'focusWidth', 'trackRadius', 'fillRadius', 'currentValue', 'maxValue', 'playbackRate', 'maxParticles', 'emissionInterval', 'velocityX', 'velocityY', 'velocityRandomX', 'velocityRandomY', 'gravityX', 'gravityY', 'rotationSpeed', 'lifetime', 'lifetimeRandom', 'startScale', 'endScale', 'startOpacity', 'endOpacity', 'glow'])
+  const numeric = new Set(['x', 'y', 'width', 'height', 'scaleX', 'scaleY', 'rotate', 'opacity', 'anchorX', 'anchorY', 'zIndex', 'scrollX', 'scrollY', 'borderTop', 'borderRight', 'borderBottom', 'borderLeft', 'defaultFrameDuration', 'speed', 'initialFrame', 'fontSize', 'wrapWidth', 'letterSpacing', 'strokeWidth', 'shadowOffsetX', 'shadowOffsetY', 'shadowBlur', 'borderWidth', 'borderRadius', 'pressedScale', 'focusWidth', 'trackRadius', 'fillRadius', 'currentValue', 'maxValue', 'playbackRate', 'maxParticles', 'emissionInterval', 'velocityX', 'velocityY', 'velocityRandomX', 'velocityRandomY', 'gravityX', 'gravityY', 'rotationSpeed', 'lifetime', 'lifetimeRandom', 'startScale', 'endScale', 'startOpacity', 'endOpacity', 'glow', 'columns', 'rows', 'columnGap', 'rowGap', 'maxItems'])
   const booleans = new Set(['visible', 'clip', 'loop', 'richText', 'italic', 'showGuides', 'animateValue', 'autoplay', 'muted', 'clickThrough'])
-  const strings = new Set(['backgroundPath', 'path', 'tint', 'fillMode', 'repeatMode', 'blendMode', 'content', 'fontFile', 'fontWeight', 'textColor', 'strokeColor', 'shadowColor', 'align', 'verticalAlign', 'backgroundColor', 'borderColor', 'hoverTint', 'disabledCondition', 'focusColor', 'hoverSe', 'clickSe', 'trackImage', 'trackColor', 'fillImage', 'fillColor', 'fillDirection', 'posterPath', 'emissionArea', 'imagePath', 'shape', 'startColor', 'endColor'])
+  const strings = new Set(['backgroundPath', 'path', 'tint', 'fillMode', 'repeatMode', 'blendMode', 'content', 'fontFile', 'fontWeight', 'textColor', 'strokeColor', 'shadowColor', 'align', 'verticalAlign', 'backgroundColor', 'borderColor', 'hoverTint', 'disabledCondition', 'focusColor', 'hoverSe', 'clickSe', 'trackImage', 'trackColor', 'fillImage', 'fillColor', 'fillDirection', 'posterPath', 'emissionArea', 'imagePath', 'shape', 'startColor', 'endColor', 'dataSource', 'autoFlow', 'justifyItems', 'alignItems'])
   copyExtensions(props, [...numeric, ...booleans, ...strings, 'frames', 'padding', 'imageStates'], path, issues)
   for (const [key, value] of Object.entries(props)) {
     if (numeric.has(key) && !isFiniteNumber(value)) issues.push(issue(`${type}.${key} must be a finite number`, 'invalid-value', `${path}.${key}`))
@@ -189,6 +189,9 @@ function validatePropsShape(type: UiDesignerNodeType, props: Record<string, unkn
     fillDirection: ['leftToRight', 'rightToLeft', 'bottomToTop', 'topToBottom'],
     emissionArea: ['point', 'rectangle', 'circle'],
     shape: ['circle', 'square', 'star'],
+    autoFlow: ['row', 'column'],
+    justifyItems: ['start', 'center', 'end', 'stretch'],
+    alignItems: ['start', 'center', 'end', 'stretch'],
   }
   for (const [key, values] of Object.entries(enumValues)) {
     if (has(props, key) && typeof props[key] === 'string' && !values.includes(props[key] as string)) {
@@ -209,6 +212,12 @@ function validatePropsShape(type: UiDesignerNodeType, props: Record<string, unkn
   }
   if (type === 'progressBar' && has(props, 'currentValue') && has(props, 'maxValue') && isFiniteNumber(props.currentValue) && isFiniteNumber(props.maxValue) && props.currentValue > props.maxValue) {
     issues.push(issue('progressBar.currentValue cannot exceed maxValue', 'invalid-value', `${path}.currentValue`))
+  }
+  if (type === 'list') {
+    for (const key of ['columns', 'rows', 'maxItems']) {
+      if (has(props, key) && (!Number.isInteger(props[key]) || Number(props[key]) < (key === 'columns' ? 1 : 0))) issues.push(issue(`list.${key} must be an integer in range`, 'invalid-value', `${path}.${key}`))
+    }
+    for (const key of ['columnGap', 'rowGap']) if (has(props, key) && isFiniteNumber(props[key]) && Number(props[key]) < 0) issues.push(issue(`list.${key} must be non-negative`, 'invalid-value', `${path}.${key}`))
   }
   if (type === 'text' || type === 'button') {
     if (!isObject(props.padding)) issues.push(issue(`${type}.padding must contain top/right/bottom/left`, 'invalid-document-shape', `${path}.padding`))
@@ -309,7 +318,7 @@ function normalizeNode(value: unknown, index: number, issues: UiValidationIssue[
   const required = ['id', 'name', 'parentId', 'children', 'props']
   for (const key of required) if (!has(value, key)) issues.push(issue(`Node ${index} is missing ${key}`, 'invalid-document-shape', `${path}.${key}`))
   if (typeof value.id !== 'string' || !value.id.trim() || typeof value.name !== 'string' || (value.parentId !== null && typeof value.parentId !== 'string')) issues.push(issue(`Node ${index} has invalid identity fields`, 'invalid-document-shape', path))
-  copyExtensions(value, ['id', 'type', 'name', 'parentId', 'children', 'props', 'propModes', 'propCodes', 'locked', 'condition', 'conditionFrequency', 'enterAnim', 'exitAnim', 'events'], path, issues)
+  copyExtensions(value, ['id', 'type', 'name', 'parentId', 'children', 'props', 'propModes', 'propCodes', 'locked', 'condition', 'conditionFrequency', 'enterAnim', 'exitAnim', 'focusAnim', 'events'], path, issues)
   if (!Array.isArray(value.children) || value.children.some((child) => typeof child !== 'string')) issues.push(issue(`Node ${index} children must be an array of strings`, 'invalid-document-shape', `${path}.children`))
   if (!requireObject(value.props, 'Node props', `${path}.props`, issues)) return null
   const props = value.props
@@ -329,8 +338,8 @@ function normalizeNode(value: unknown, index: number, issues: UiValidationIssue[
   if (!['per-frame', 'every-10-frames', 'per-second'].includes(String(conditionFrequency))) {
     issues.push(issue(`Node ${value.id} conditionFrequency must be per-frame, every-10-frames, or per-second`, 'invalid-value', `${path}.conditionFrequency`))
   }
-  for (const phase of ['enterAnim', 'exitAnim']) {
-    const animation = has(value, phase) ? value[phase] : phase === 'enterAnim' ? defaults.enterAnim : defaults.exitAnim
+  for (const phase of ['enterAnim', 'exitAnim', 'focusAnim'] as const) {
+    const animation = has(value, phase) ? value[phase] : defaults[phase]
     if (!isObject(animation) || typeof animation.type !== 'string' || !isFiniteNumber(animation.duration) || typeof animation.easing !== 'string') issues.push(issue(`Node ${value.id} ${phase} has an invalid shape`, 'invalid-document-shape', `${path}.${phase}`))
   }
   const events = has(value, 'events') ? (isObject(value.events) ? value.events : undefined) : {}
@@ -338,7 +347,7 @@ function normalizeNode(value: unknown, index: number, issues: UiValidationIssue[
   for (const [eventName, handler] of Object.entries(events ?? {})) {
     if (!isObject(handler) || !Array.isArray(handler.actions) || handler.actions.some((action, actionIndex) => !validateAction(action, `${path}.events.${eventName}.actions.${actionIndex}`, issues))) issues.push(issue(`Event ${eventName} has an invalid handler`, 'invalid-document-shape', `${path}.events.${eventName}`))
   }
-  return { ...defaults, ...value, children: value.children as string[], props: { ...defaults.props, ...props }, propModes: propModes ?? {}, propCodes: propCodes ?? {}, locked: locked as boolean, condition, conditionFrequency: conditionFrequency as UiConditionFrequency, enterAnim: has(value, 'enterAnim') ? value.enterAnim : defaults.enterAnim, exitAnim: has(value, 'exitAnim') ? value.exitAnim : defaults.exitAnim, events: events ?? {} } as UiNode
+  return { ...defaults, ...value, children: value.children as string[], props: { ...defaults.props, ...props }, propModes: propModes ?? {}, propCodes: propCodes ?? {}, locked: locked as boolean, condition, conditionFrequency: conditionFrequency as UiConditionFrequency, enterAnim: has(value, 'enterAnim') ? value.enterAnim : defaults.enterAnim, exitAnim: has(value, 'exitAnim') ? value.exitAnim : defaults.exitAnim, focusAnim: has(value, 'focusAnim') ? value.focusAnim : defaults.focusAnim, events: events ?? {} } as UiNode
 }
 
 export function parseUiDocument(input: unknown): UiDocumentParseResult {

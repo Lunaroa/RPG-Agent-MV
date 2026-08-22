@@ -475,7 +475,7 @@ const deleteGuide = () => { const guide = selectedGuide.value; closeGuideMenu();
 const clearGuides = () => { closeGuideMenu(); designer.clearGuides() }
 
 const enterContainer = (node: UiNode) => {
-  if (node.type !== 'container' || node.locked) return
+  if (node.type !== 'container' && node.type !== 'list' || node.locked) return
   editStack.value = [...editStack.value.filter((id) => id !== node.id), node.id]
   designer.selectNodes(node.children.length ? [node.children[0]] : [node.id])
 }
@@ -486,7 +486,7 @@ const exitContainer = () => {
 }
 const activateNode = (node: UiNode) => {
   designer.selectNodes([node.id])
-  if (node.type === 'container') enterContainer(node)
+  if (node.type === 'container' || node.type === 'list') enterContainer(node)
   else emit('editNode', node.id)
 }
 const parentContainerPath = (node: UiNode) => {
@@ -529,7 +529,7 @@ const keyUp = (event: KeyboardEvent) => {
 const dropResource = (event: DragEvent) => {
   event.preventDefault()
   const nodeType = event.dataTransfer?.getData('text/ui-node-type')?.trim() as UiDesignerDocument['nodes'][number]['type'] | ''
-  if (nodeType && ['container', 'sprite', 'nineSlice', 'frameAnimation', 'button', 'text', 'progressBar', 'video', 'particle'].includes(nodeType)) {
+  if (nodeType && ['container', 'list', 'sprite', 'nineSlice', 'frameAnimation', 'button', 'text', 'progressBar', 'video', 'particle'].includes(nodeType)) {
     designer.addNode(nodeType, editingRootId.value, worldFromClient(event))
     return
   }
@@ -551,6 +551,7 @@ const dropResource = (event: DragEvent) => {
 const clearSpacePressed = () => { spacePressed.value = false; if (panning.value?.mode === 'space') endPan() }
 
 let viewportResizeObserver: ResizeObserver | undefined
+let unregisterThumbnailProvider: (() => void) | undefined
 onMounted(() => {
   window.addEventListener('keydown', keyDown)
   window.addEventListener('keyup', keyUp)
@@ -561,6 +562,7 @@ onMounted(() => {
   centerCanvasScroll()
   viewportResizeObserver = new ResizeObserver(updateViewportSize)
   if (viewportElement.value) viewportResizeObserver.observe(viewportElement.value)
+  unregisterThumbnailProvider = designer.registerSceneThumbnailProvider((sceneId) => sceneId === designer.activeSceneId ? fabricCanvas.value?.captureThumbnail() : undefined)
 })
 onBeforeUnmount(() => {
   endPan()
@@ -572,6 +574,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointerdown', dismissContextMenus, true)
   viewportResizeObserver?.disconnect()
   viewportResizeObserver = undefined
+  unregisterThumbnailProvider?.()
+  unregisterThumbnailProvider = undefined
   closePreviewWindow()
 })
 </script>
@@ -677,7 +681,7 @@ onBeforeUnmount(() => {
 .canvas-viewport { position: relative; flex: 1; min-height: 0; overflow: auto; background: #20232c; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; scrollbar-width: none; }.canvas-viewport::-webkit-scrollbar { display: none; }.canvas-viewport * { -webkit-user-drag: none; }.canvas-viewport.pan-ready { cursor: grab; }.canvas-viewport.panning { cursor: grabbing; }
 .canvas-scroll-content { position: relative; flex: none; }
 .canvas-ruler { position: absolute; z-index: 5; pointer-events: auto; cursor: crosshair; background: repeating-linear-gradient(to right, #ffffff55 0 1px, transparent 1px 32px); opacity: .35; }.canvas-ruler.horizontal { inset: 0 0 auto; height: 18px; }.canvas-ruler.vertical { inset: 0 auto 0 0; width: 18px; background: repeating-linear-gradient(to bottom, #ffffff55 0 1px, transparent 1px 32px); }.ruler-tick { position: absolute; color: #fff; font-size: 8px; line-height: 12px; pointer-events: none; transform: translateX(-1px); }.canvas-ruler.vertical .ruler-tick { transform: translateY(-1px) rotate(-90deg); transform-origin: left top; }
-.canvas-guide { position: absolute; z-index: 4; pointer-events: auto; cursor: ew-resize; background: var(--el-color-warning); opacity: .55; }.canvas-guide.vertical { top: 0; bottom: 0; width: 3px; margin-left: -1px; }.canvas-guide.horizontal { right: 0; left: 0; height: 3px; margin-top: -1px; cursor: ns-resize; }.canvas-guide.locked { cursor: not-allowed; opacity: .35; }.canvas-guide.snapped { opacity: 1; }.canvas-snap-line { position: absolute; z-index: 4; pointer-events: none; border-color: var(--el-color-danger); }.canvas-snap-line.vertical { width: 0; border-left: 1px dashed; }.canvas-snap-line.horizontal { height: 0; border-top: 1px dashed; }
+.canvas-guide { position: absolute; z-index: 4; pointer-events: auto; cursor: ew-resize; background: var(--el-color-warning); opacity: .55; }.canvas-guide.vertical { top: 0; bottom: 0; width: 3px; margin-left: -1px; }.canvas-guide.horizontal { right: 0; left: 0; height: 3px; margin-top: -1px; cursor: ns-resize; }.canvas-guide.locked { cursor: not-allowed; opacity: .35; }.canvas-guide.snapped { opacity: 1; }.canvas-snap-line { position: absolute; z-index: 4; pointer-events: none; border-color: #fff; filter: drop-shadow(0 0 1px #fff); }.canvas-snap-line.vertical { width: 0; margin-left: -1px; border-left: 2px dashed; }.canvas-snap-line.horizontal { height: 0; margin-top: -1px; border-top: 2px dashed; }
 .guide-context-menu, .node-context-menu { position: fixed; z-index: 4000; display: flex; flex-direction: column; min-width: 150px; max-height: min(480px, calc(100vh - 16px)); overflow: auto; padding: 5px; border: 1px solid var(--app-border); border-radius: 5px; background: var(--app-bg); box-shadow: 0 8px 18px #0007; }.guide-context-menu .el-button, .node-context-menu .el-button { justify-content: flex-start; margin: 0; }
 .canvas-stage { position: absolute; overflow: hidden; transform-origin: 0 0; }.canvas-scene-frame { position: absolute; z-index: 0; box-shadow: 0 16px 36px #0007; pointer-events: none; }.canvas-scene-frame.checkerboard { background-image: conic-gradient(#ffffff09 25%, transparent 0 50%, #ffffff09 0 75%, transparent 0); background-size: 24px 24px; }.canvas-edit-breadcrumb { position: absolute; z-index: 8; top: calc(var(--workspace-top, 0px) + 8px); left: calc(var(--workspace-left, 0px) + 8px); display: flex; align-items: center; gap: 4px; padding: 3px 5px; border: 1px solid #ffffff1f; border-radius: 4px; color: var(--app-ink-soft); background: #12141be8; font-size: 10px; }.canvas-edit-breadcrumb .el-button { padding: 2px 5px; }
 .canvas-grid { position: absolute; z-index: 1; opacity: 0; background-image: linear-gradient(to right, var(--grid-color) 1px, transparent 1px), linear-gradient(to bottom, var(--grid-color) 1px, transparent 1px); background-size: var(--grid-size) var(--grid-size); pointer-events: none; }.canvas-grid.active { opacity: .18; }

@@ -39,7 +39,7 @@ const paletteFeedback = ref('')
 const paletteNodeTypes = UI_DESIGNER_NODE_TYPES.filter((type) => type !== 'overlay')
 
 const labels: Record<UiDesignerNodeType, UiDesignerMessageKey> = {
-  container: 'nodeContainer', sprite: 'nodeSprite', nineSlice: 'nodeNineSlice', frameAnimation: 'nodeFrameAnimation', button: 'nodeButton', text: 'nodeText', progressBar: 'nodeProgressBar', overlay: 'nodeOverlay', video: 'nodeVideo', particle: 'nodeParticle',
+  container: 'nodeContainer', list: 'nodeList', sprite: 'nodeSprite', nineSlice: 'nodeNineSlice', frameAnimation: 'nodeFrameAnimation', button: 'nodeButton', text: 'nodeText', progressBar: 'nodeProgressBar', overlay: 'nodeOverlay', video: 'nodeVideo', particle: 'nodeParticle',
 }
 
 const labelFor = (type: UiDesignerNodeType) => t(labels[type])
@@ -150,7 +150,7 @@ const handleNodeClick = (entry: NodeTreeEntry, _node: unknown, _component: unkno
 
 const addNode = (type: UiDesignerNodeType) => {
   const primary = document.value.nodes.find((node) => node.id === selectedIds.value[0])
-  const parentId = primary?.type === 'container' ? primary.id : primary?.parentId ?? 'node_root'
+  const parentId = primary?.type === 'container' || primary?.type === 'list' ? primary.id : primary?.parentId ?? 'node_root'
   paletteFeedback.value = designer.addNode(type, parentId) ? `✓ ${labelFor(type)}` : ''
 }
 
@@ -194,7 +194,7 @@ const allowDrop = (draggingNode: { data?: NodeTreeEntry }, dropNode: { data?: No
   if (!dragging || !drop || dragging.id === 'node_root') return false
   if (!resolveNodeActionPolicy(document.value, [dragging.id], dragging.id, false).canReparent) return false
   const position = normalizeDropPosition(type)
-  if (!position || position === 'inner' && drop.type !== 'container') return false
+  if (!position || position === 'inner' && drop.type !== 'container' && drop.type !== 'list') return false
   if (drop.id === dragging.id || isDescendant(document.value, dragging.id, drop.id)) return false
   if (position === 'inner' && !resolveNodeActionPolicy(document.value, [drop.id], drop.id, false).allowed.addChild) return false
   if (position !== 'inner' && (drop.id === 'node_root' || drop.locked)) return false

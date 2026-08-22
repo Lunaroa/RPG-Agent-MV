@@ -85,7 +85,7 @@ function validateNode(node: UiNode, document: UiDesignerDocument): UiValidationI
   if (node.props.opacity > 255) issues.push({ severity: 'error', code: 'invalid-value', message: 'opacity must be <= 255', nodeId: node.id, nodeName: node.name, path: 'props.opacity' })
   if (node.props.anchorX > 1 || node.props.anchorY > 1) issues.push({ severity: 'error', code: 'invalid-value', message: 'anchor values must be <= 1', nodeId: node.id, nodeName: node.name, path: 'props.anchor' })
   if (!node.name.trim()) issues.push({ severity: 'warning', code: 'unnamed-node', message: 'Node has no name', nodeId: node.id, nodeName: node.name })
-  if (/^(container|sprite|nineSlice|frameAnimation|button|text|progressBar|overlay|video|particle)_\d+$/i.test(node.name)) {
+  if (/^(container|list|sprite|nineSlice|frameAnimation|button|text|progressBar|overlay|video|particle)_\d+$/i.test(node.name)) {
     issues.push({ severity: 'warning', code: 'unnamed-node', message: `Node ${node.name} still uses a generated name`, nodeId: node.id, nodeName: node.name })
   }
   for (const [property, mode] of Object.entries(node.propModes)) {

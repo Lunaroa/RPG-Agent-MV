@@ -99,7 +99,7 @@ defineExpose({ format, refreshLayout })
 
 <template>
   <div class="code-mirror-editor">
-    <div ref="host" class="editor-host" :style="{ minHeight: `${props.rows * 1.5}em`, fontFamily: props.fontFamily || 'ui-monospace, SFMono-Regular, Consolas, monospace', fontSize: `${props.fontSize > 0 ? props.fontSize : 12}px` }" />
+    <div ref="host" class="editor-host" :style="{ height: `calc(${Math.max(1, props.rows) * 1.5}em + 8px)`, fontFamily: props.fontFamily || 'ui-monospace, SFMono-Regular, Consolas, monospace', fontSize: `${props.fontSize > 0 ? props.fontSize : 12}px` }" />
     <el-alert v-if="error" type="error" :closable="false" :title="t('operationError')">
       <details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ error }}</span></details>
     </el-alert>
@@ -108,7 +108,7 @@ defineExpose({ format, refreshLayout })
 
 <style scoped>
 .code-mirror-editor { display: flex; flex-direction: column; gap: 7px; min-height: 0; }
-.editor-host { min-height: 120px; border: 1px solid var(--app-border); border-radius: 4px; overflow: hidden; background: #101218; }
-.editor-host :deep(.CodeMirror) { font-family: inherit; font-size: inherit; }
+.editor-host { border: 1px solid var(--app-border); border-radius: 4px; overflow: hidden; background: #101218; }
+.editor-host :deep(.CodeMirror) { height: 100%; font-family: inherit; font-size: inherit; }
 .status-detail { color: var(--app-ink-soft); font-size: 10px; }
 </style>

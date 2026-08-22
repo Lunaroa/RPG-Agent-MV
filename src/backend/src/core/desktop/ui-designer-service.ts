@@ -12,6 +12,7 @@ import {
   assertValidUiDesignerDocument,
   UiDesignerValidationError,
 } from './ui-designer-validation.ts';
+import { lunaRpgDirPath } from './project-config-service.ts';
 
 export const UI_DESIGNER_FILE_EXTENSION = '.mzui';
 export const UI_DESIGNER_RECENT_LIMIT = 10;
@@ -20,6 +21,50 @@ const UI_SCENE_FILE_SCAN_MAX_DEPTH = 6;
 const UI_SCENE_FILE_SCAN_MAX_FILES = 200;
 const UI_SCENE_FILE_SCAN_EXCLUDED_DIRS = new Set(['node_modules', '.git']);
 const UI_SCENE_NAME_PATTERN = /^Scene_[A-Za-z0-9_$]+$/;
+const UI_DESIGNER_PROJECT_DIRECTORY = 'ui-designer';
+const UI_DESIGNER_SCENE_DIRECTORY = 'scenes';
+const UI_DESIGNER_THUMBNAIL_DIRECTORY = 'thumbnails';
+const UI_DESIGNER_THUMBNAIL_MAX_BYTES = 2 * 1024 * 1024;
+
+export function projectUiDesignerSceneDirectory(projectRoot: string): string {
+  return path.join(lunaRpgDirPath(projectRoot), UI_DESIGNER_PROJECT_DIRECTORY, UI_DESIGNER_SCENE_DIRECTORY);
+}
+
+export function projectUiDesignerThumbnailDirectory(projectRoot: string): string {
+  return path.join(lunaRpgDirPath(projectRoot), UI_DESIGNER_PROJECT_DIRECTORY, UI_DESIGNER_THUMBNAIL_DIRECTORY);
+}
+
+export function projectUiDesignerScenePath(projectRoot: string, sceneName: string): string {
+  if (!UI_SCENE_NAME_PATTERN.test(sceneName)) throw new Error(`UI designer scene name is invalid: ${sceneName}`);
+  return path.join(projectUiDesignerSceneDirectory(projectRoot), `${sceneName}${UI_DESIGNER_FILE_EXTENSION}`);
+}
+
+function decodePngDataUrl(dataUrl: string): Buffer {
+  const match = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl.trim());
+  if (!match) throw new Error('UI designer thumbnail must be a PNG data URL.');
+  const body = Buffer.from(match[1], 'base64');
+  if (!body.length || body.length > UI_DESIGNER_THUMBNAIL_MAX_BYTES || body.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') {
+    throw new Error('UI designer thumbnail PNG is invalid or too large.');
+  }
+  return body;
+}
+
+function pngDataUrl(filePath: string): string | undefined {
+  try {
+    const body = fs.readFileSync(filePath);
+    if (!body.length || body.length > UI_DESIGNER_THUMBNAIL_MAX_BYTES) return undefined;
+    return `data:image/png;base64,${body.toString('base64')}`;
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeProjectUiDesignerThumbnail(projectRoot: string, sceneName: string, dataUrl: string): string {
+  if (!UI_SCENE_NAME_PATTERN.test(sceneName)) throw new Error(`UI designer scene name is invalid: ${sceneName}`);
+  const target = path.join(projectUiDesignerThumbnailDirectory(projectRoot), `${sceneName}.png`);
+  writeFileAtomically(target, decodePngDataUrl(dataUrl));
+  return target;
+}
 
 function readSceneFileSceneName(filePath: string): string | null {
   try {
@@ -56,7 +101,18 @@ export function listUiDesignerSceneFiles(projectRoot: string): UiDesignerSceneFi
       }
       if (!entry.isFile() || !entry.name.toLowerCase().endsWith(UI_DESIGNER_FILE_EXTENSION)) continue;
       const sceneName = readSceneFileSceneName(fullPath);
-      if (sceneName) records.push({ path: path.relative(root, fullPath).split(path.sep).join('/'), sceneName });
+      if (sceneName) {
+        const thumbnailPath = path.join(projectUiDesignerThumbnailDirectory(root), `${sceneName}.png`);
+        const thumbnailUrl = pngDataUrl(thumbnailPath);
+        const modifiedAt = fs.statSync(fullPath).mtime.toISOString();
+        records.push({
+          path: path.relative(root, fullPath).split(path.sep).join('/'),
+          sourcePath: fullPath,
+          sceneName,
+          modifiedAt,
+          ...(thumbnailUrl ? { thumbnailUrl } : {}),
+        });
+      }
     }
   };
   walk(root, 0);
@@ -103,6 +159,7 @@ export interface UiDesignerRecentFileRecord {
   lastOpenedAt: string;
   lastSavedAt?: string;
   exists: boolean;
+  thumbnailUrl?: string;
 }
 
 export interface UiDesignerRecoveryRecord extends UiDesignerSnapshotRecord {
@@ -187,6 +244,7 @@ export class UiDesignerUserDataStore {
   private readonly recentPath: string;
   private readonly recoveryPath: string;
   private readonly recentFilesPath: string;
+  private readonly recentThumbnailsRoot: string;
   private readonly preferencesPath: string;
 
   constructor(userDataRoot: string) {
@@ -197,6 +255,7 @@ export class UiDesignerUserDataStore {
     this.snapshotsRoot = path.join(recoveryRoot, 'snapshots');
     this.recoveryPath = path.join(recoveryRoot, 'recovery.json');
     this.recentFilesPath = path.join(persistentRoot, 'recent-files.json');
+    this.recentThumbnailsRoot = path.join(persistentRoot, 'thumbnails');
     // Keep the old filename as a read/write compatibility alias for callers
     // that used listRecentSnapshots before recovery was split out.
     this.recentPath = path.join(recoveryRoot, 'recent.json');
@@ -298,7 +357,7 @@ export class UiDesignerUserDataStore {
     }
   }
 
-  recordRecentFile(filePath: string, options: { opened?: boolean; saved?: boolean; sceneName?: string } = {}): UiDesignerRecentFileRecord {
+  recordRecentFile(filePath: string, options: { opened?: boolean; saved?: boolean; sceneName?: string; thumbnailDataUrl?: string } = {}): UiDesignerRecentFileRecord {
     const resolved = path.resolve(filePath);
     const now = new Date().toISOString();
     const current = this.readRecentFiles();
@@ -310,18 +369,36 @@ export class UiDesignerUserDataStore {
       ...(options.saved || previous?.lastSavedAt ? { lastSavedAt: options.saved ? now : previous?.lastSavedAt } : {}),
       exists: fs.existsSync(resolved),
     };
+    let thumbnailUrl: string | undefined;
+    if (options.thumbnailDataUrl) {
+      const thumbnailPath = this.recentThumbnailPath(resolved);
+      writeFileAtomically(thumbnailPath, decodePngDataUrl(options.thumbnailDataUrl));
+      thumbnailUrl = pngDataUrl(thumbnailPath);
+    } else {
+      thumbnailUrl = pngDataUrl(this.recentThumbnailPath(resolved));
+    }
     const next = [record, ...current.filter((item) => item.sourcePath !== resolved)].slice(0, UI_DESIGNER_RECENT_LIMIT);
     writeJsonAtomically(this.recentFilesPath, next);
-    return record;
+    return { ...record, ...(thumbnailUrl ? { thumbnailUrl } : {}) };
   }
 
   listRecentFiles(): UiDesignerRecentFileRecord[] {
-    return this.readRecentFiles().map((record) => ({ ...record, exists: fs.existsSync(record.sourcePath) }));
+    return this.readRecentFiles().map((record) => {
+      const thumbnailUrl = pngDataUrl(this.recentThumbnailPath(record.sourcePath));
+      return { ...record, exists: fs.existsSync(record.sourcePath), ...(thumbnailUrl ? { thumbnailUrl } : {}) };
+    });
+  }
+
+  private recentThumbnailPath(sourcePath: string): string {
+    const key = crypto.createHash('sha256').update(path.resolve(sourcePath)).digest('hex');
+    return path.join(this.recentThumbnailsRoot, `${key}.png`);
   }
 
   removeRecentFile(filePath: string): void {
     const resolved = path.resolve(filePath);
     writeJsonAtomically(this.recentFilesPath, this.readRecentFiles().filter((record) => record.sourcePath !== resolved));
+    const thumbnailPath = this.recentThumbnailPath(resolved);
+    if (fs.existsSync(thumbnailPath)) fs.rmSync(thumbnailPath, { force: true });
   }
 
   listRecentSnapshots(): UiDesignerSnapshotRecord[] {

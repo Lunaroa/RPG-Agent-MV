@@ -148,7 +148,7 @@ test('authoring content uses Fabric objects while the runtime iframe belongs to 
   assert.doesNotMatch(canvas, /authoring-frame|UiCanvasNode|resourcePreviewUrls/)
 })
 
-test('container focus retains the scope boundary and exposes a visible way back', () => {
+test('container and list focus retain the scope boundary and expose a visible way back', () => {
   assert.match(fabricFactory, /collectNodeSubtreeIds\(document, \[scopeNodeId\]\)/)
   assert.match(fabricFactory, /if \(scopeNodeId === 'node_root'\) scopedIds\.delete\(scopeNodeId\)/)
   assert.match(fabricFactory, /if \(left\.id === scopeNodeId\) return -1/)
@@ -157,7 +157,7 @@ test('container focus retains the scope boundary and exposes a visible way back'
   assert.match(canvas, /data-ui-id="ui-designer-container-scope"[\s\S]*data-ui-id="ui-designer-container-scope-exit"[\s\S]*@click="exitContainer"/)
   assert.match(canvas, /\.canvas-edit-breadcrumb \{[^}]*top: calc\(var\(--workspace-top, 0px\) \+ 8px\);[^}]*left: calc\(var\(--workspace-left, 0px\) \+ 8px\);/)
   assert.match(fabricCanvas, /props\.designer\.selectNodes\(ids\.length \? ids : \[props\.scopeNodeId\]\)/)
-  assert.match(nodePanel, /const parentId = primary\?\.type === 'container' \? primary\.id : primary\?\.parentId \?\? 'node_root'/)
+  assert.match(nodePanel, /primary\?\.type === 'container' \|\| primary\?\.type === 'list' \? primary\.id : primary\?\.parentId \?\? 'node_root'/)
   assert.match(canvas, /designer\.addNode\(nodeType, editingRootId\.value, worldFromClient\(event\)\)/)
 })
 

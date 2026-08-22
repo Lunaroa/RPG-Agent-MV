@@ -47,24 +47,48 @@ const loadSceneTemplate = async (name: string) => {
 
 <template>
   <section class="welcome-panel" data-ui-id="ui-designer-welcome" data-testid="ui-designer-welcome">
-    <div class="welcome-mark">UI</div>
-    <h2>{{ t('welcomeTitle') }}</h2>
-    <p>{{ t('welcomeBody') }}</p>
-    <div class="welcome-actions">
-      <el-button v-if="designer.scenes.length" data-ui-id="ui-designer-welcome-return" data-testid="ui-designer-welcome-return" @click="emit('returnToScene')">{{ t('returnToScene') }}</el-button>
-      <el-button data-ui-id="ui-designer-welcome-new-scene" data-testid="ui-designer-new" type="primary" @click="emit('newScene')">{{ t('newScene') }}</el-button>
-      <el-button data-testid="ui-designer-open" :disabled="!designer.canSave" @click="void openScene()">{{ t('open') }}</el-button>
+    <div class="welcome-hero">
+      <div class="welcome-mark">UI</div>
+      <div class="welcome-copy">
+        <h2>{{ t('welcomeTitle') }}</h2>
+        <p>{{ t('welcomeBody') }}</p>
+      </div>
+      <div class="welcome-actions">
+        <el-button v-if="designer.scenes.length" data-ui-id="ui-designer-welcome-return" data-testid="ui-designer-welcome-return" @click="emit('returnToScene')">{{ t('returnToScene') }}</el-button>
+        <el-button data-ui-id="ui-designer-welcome-new-scene" data-testid="ui-designer-new" type="primary" @click="emit('newScene')">{{ t('newScene') }}</el-button>
+        <el-button data-testid="ui-designer-open" :disabled="!designer.canSave" @click="void openScene()">{{ t('open') }}</el-button>
+      </div>
     </div>
     <el-alert v-if="!designer.canSave" type="info" :closable="false" :title="t('adapterRequired')" />
     <el-alert v-else-if="!designer.hasProject" type="info" :closable="false" :title="t('projectRequired')" />
+    <div v-if="designer.hasProject" class="welcome-list">
+      <div class="list-title">{{ t('currentProjectScenes') }}</div>
+      <div v-if="!designer.sceneFiles.length" class="welcome-empty">{{ t('noProjectScenes') }}</div>
+      <div class="scene-card-grid">
+        <button v-for="(item, index) in designer.sceneFiles" :key="item.sourcePath" :data-testid="`ui-designer-project-open-${index}`" class="scene-card" type="button" @click="void openScene(item.sourcePath)">
+          <span class="scene-thumbnail">
+            <img v-if="item.thumbnailUrl" :src="item.thumbnailUrl" alt="" />
+            <span v-else class="scene-thumbnail-placeholder">UI</span>
+          </span>
+          <span class="scene-card-name">{{ item.sceneName }}</span>
+          <span class="scene-card-meta">{{ t('modifiedTime') }} {{ formatDate(item.modifiedAt) }}</span>
+        </button>
+      </div>
+    </div>
     <div v-if="designer.recentFiles.length" class="welcome-list">
       <div class="list-title">{{ t('recentFiles') }}</div>
-      <div v-for="(item, index) in designer.recentFiles.slice(0, 8)" :key="item.sourcePath" class="welcome-row">
-        <button :data-testid="`ui-designer-recent-open-${index}`" type="button" :disabled="!item.exists" @click="void openScene(item.sourcePath)">
-          <span class="recent-name">{{ item.sceneName || item.sourcePath }}</span>
-          <span class="recent-meta">{{ item.exists ? item.sourcePath : t('recentMissing') }} · {{ t('openedAt') }} {{ formatDate(item.lastOpenedAt) }}<template v-if="item.lastSavedAt"> · {{ t('savedAt') }} {{ formatDate(item.lastSavedAt) }}</template></span>
-        </button>
-        <el-button :data-testid="`ui-designer-recent-remove-${index}`" size="small" text @click="void designer.removeRecentFile(item.sourcePath)">{{ t('removeRecent') }}</el-button>
+      <div class="scene-card-grid">
+        <div v-for="(item, index) in designer.recentFiles.slice(0, 8)" :key="item.sourcePath" class="scene-card-shell">
+          <button :data-testid="`ui-designer-recent-open-${index}`" class="scene-card" type="button" :disabled="!item.exists" @click="void openScene(item.sourcePath)">
+            <span class="scene-thumbnail">
+              <img v-if="item.thumbnailUrl" :src="item.thumbnailUrl" alt="" />
+              <span v-else class="scene-thumbnail-placeholder">UI</span>
+            </span>
+            <span class="scene-card-name">{{ item.sceneName || item.sourcePath }}</span>
+            <span class="scene-card-meta">{{ item.exists ? item.sourcePath : t('recentMissing') }}</span>
+          </button>
+          <el-button :data-testid="`ui-designer-recent-remove-${index}`" class="scene-card-remove" size="small" text @click="void designer.removeRecentFile(item.sourcePath)">{{ t('removeRecent') }}</el-button>
+        </div>
       </div>
     </div>
     <div v-if="designer.recoveryRecords.length" class="welcome-list">
@@ -88,12 +112,28 @@ const loadSceneTemplate = async (name: string) => {
 </template>
 
 <style scoped>
-.welcome-panel { display: flex; flex: 1; flex-direction: column; align-items: center; gap: 9px; width: 100%; min-width: 0; min-height: 0; padding: 38px; overflow-y: auto; box-sizing: border-box; border: 1px solid var(--app-border); border-radius: 8px; background: color-mix(in srgb, var(--app-bg) 94%, var(--app-accent) 6%); text-align: center; }
+.welcome-panel { display: flex; flex: 1; flex-direction: column; align-items: center; gap: 9px; width: 100%; min-width: 0; min-height: 0; padding: 28px 38px; overflow-y: auto; box-sizing: border-box; border: 1px solid var(--app-border); border-radius: 8px; background: color-mix(in srgb, var(--app-bg) 94%, var(--app-accent) 6%); text-align: left; }
+.welcome-hero { display: grid; grid-template-columns: auto minmax(240px, 1fr); align-items: center; gap: 8px 14px; width: min(720px, 100%); }
 .welcome-mark { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid var(--app-accent); border-radius: 12px; color: var(--app-accent); font-weight: 750; }
+.welcome-copy { min-width: 0; }
 h2 { margin: 0; font-size: 19px; }
-p { margin: 0; max-width: 380px; color: var(--app-ink-soft); font-size: 12px; line-height: 1.6; }
-.welcome-actions { display: flex; gap: 8px; margin-top: 6px; }
+p { margin: 2px 0 0; color: var(--app-ink-soft); font-size: 12px; line-height: 1.6; }
+.welcome-actions { display: flex; grid-column: 2; flex-wrap: wrap; justify-content: flex-start; gap: 8px; }
 .welcome-panel .el-alert { width: min(720px, 100%); margin-top: 8px; box-sizing: border-box; text-align: left; }
-.welcome-list { width: min(720px, 100%); margin-top: 10px; text-align: left; }.list-title { margin-bottom: 5px; color: var(--app-ink-soft); font-size: 11px; font-weight: 650; }.welcome-row { display: flex; align-items: center; gap: 8px; min-height: 28px; border-top: 1px solid var(--app-border); font-size: 11px; }.welcome-row > button { flex: 1; overflow: hidden; border: 0; background: none; color: var(--app-ink); cursor: pointer; text-align: left; text-overflow: ellipsis; white-space: nowrap; }.welcome-row > button:disabled { color: var(--app-ink-soft); cursor: not-allowed; }.welcome-row > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.recent-name, .recent-meta { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.recent-meta { color: var(--app-ink-soft); font-size: 10px; }
+.welcome-list { width: min(720px, 100%); margin-top: 12px; text-align: left; }.list-title { margin-bottom: 7px; color: var(--app-ink-soft); font-size: 11px; font-weight: 650; }.welcome-row { display: flex; align-items: center; gap: 8px; min-height: 28px; border-top: 1px solid var(--app-border); font-size: 11px; }.welcome-row > button { flex: 1; overflow: hidden; border: 0; background: none; color: var(--app-ink); cursor: pointer; text-align: left; text-overflow: ellipsis; white-space: nowrap; }.welcome-row > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.welcome-empty { padding: 14px 0; border-top: 1px solid var(--app-border); color: var(--app-ink-soft); font-size: 11px; }
+.scene-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; width: 100%; }
+.scene-card-shell { position: relative; min-width: 0; }
+.scene-card { display: flex; flex-direction: column; gap: 5px; width: 100%; min-width: 0; padding: 7px; overflow: hidden; border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-bg); color: var(--app-ink); cursor: pointer; text-align: left; }
+.scene-card:hover { border-color: var(--app-accent); }
+.scene-card:disabled { opacity: .55; cursor: not-allowed; }
+.scene-thumbnail { display: grid; place-items: center; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 4px; background: color-mix(in srgb, var(--app-bg-soft) 86%, var(--app-accent) 14%); }
+.scene-thumbnail img { width: 100%; height: 100%; object-fit: cover; }
+.scene-thumbnail-placeholder { color: var(--app-ink-soft); font-size: 18px; font-weight: 700; }
+.scene-card-name, .scene-card-meta { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scene-card-name { font-size: 12px; font-weight: 650; }
+.scene-card-meta { color: var(--app-ink-soft); font-size: 10px; }
+.scene-card-remove { margin-top: 2px; }
 .learning-actions { display: flex; flex-wrap: wrap; gap: 2px; border-top: 1px solid var(--app-border); }
+@media (max-width: 760px) { .welcome-hero { grid-template-columns: auto 1fr; }.welcome-actions { grid-column: 1 / -1; justify-content: flex-start; } }
 </style>

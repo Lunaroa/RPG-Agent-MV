@@ -14,7 +14,7 @@ const compile = (name: string) => {
 
 test('node tree hover actions reserve space instead of shifting node names', () => {
   const source = compile('./UiDesignerNodePanel.vue')
-  assert.match(source, /node-row-actions \{[^}]*display: inline-flex;[^}]*flex: 0 1 72px;[^}]*max-width: 72px;[^}]*visibility: hidden;/)
+  assert.match(source, /node-row-actions \{[^}]*display: inline-flex;[^}]*flex: 0 1 72px;[^}]*max-width: 80px;[^}]*visibility: hidden;/)
   assert.doesNotMatch(source, /node-row-actions \{ display: none/)
   assert.match(source, /node-tree-entry\.selected \.node-row-actions/)
 })

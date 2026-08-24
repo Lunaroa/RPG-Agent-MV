@@ -34,7 +34,7 @@ describe('UI Designer Inspector transaction drafts', () => {
     assert.match(field, /emit\('commit', props\.sceneId, props\.nodeId\)/)
     assert.match(field, /emit\('cancel', props\.sceneId, props\.nodeId\)/)
     const inspector = compile('UiDesignerInspector.vue')
-    assert.match(inspector, /designer\.previewNodeProperty\(targetId, key, value\)/)
+    assert.match(inspector, /designer\.previewNodeProperty\(targetId, key, presentationPropertyValue\(targetId, key, value\)\)/)
     assert.match(inspector, /designer\.commitNodePropertyPreview\(targetId, key\)/)
     assert.match(inspector, /designer\.cancelNodePropertyPreview\(targetId, key\)/)
     assert.match(inspector, /const draftRect = unwrap\(designer\.draftRects\)\[node\.id\]/)

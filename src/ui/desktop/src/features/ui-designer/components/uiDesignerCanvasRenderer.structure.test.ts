@@ -264,7 +264,7 @@ test('bounded number sliders keep both end thumbs inside the inspector column', 
 })
 
 test('multiline property inputs use the same full inspector control column as single-line inputs', () => {
-  assert.match(propertyField, /\.property-field > \.el-input-number, \.property-field > \.el-input, \.property-field > \.el-textarea,[^{]*\{ grid-column: 2; grid-row: 1; width: 100%; min-width: 0; \}/)
+  assert.match(propertyField, /\.property-field > \.el-input-number,\s*\.property-field > \.el-input,\s*\.property-field > \.el-textarea,[^{]*\{\s*grid-column: 2; grid-row: 1; width: 100%; min-width: 0;\s*\}/)
 })
 
 test('rapid project generations serialize disposal before the newest host start', () => {

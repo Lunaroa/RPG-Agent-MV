@@ -26,7 +26,7 @@ test('Space release ends only the Space gesture and external preview leaves auth
 test('keeps drag pan available when the canvas fits the viewport', () => {
   assert.match(source, /canvasPanRoom\(viewportSize\.value\.width\)/)
   assert.match(source, /canvasPanRoom\(viewportSize\.value\.height\)/)
-  assert.match(source, /element\.scrollLeft = scrollLayout\.value\.centerScrollX/)
+  assert.match(source, /canvasScrollForWorldPoint\(\s*sceneScrollLayout\.value,\s*\{ x: document\.value\.canvas\.width \/ 2, y: document\.value\.canvas\.height \/ 2 \}/)
   assert.match(source, /\.canvas-viewport::-webkit-scrollbar \{ display: none; \}/)
   assert.doesNotMatch(source, /scrollLeft = 0; element\.scrollTop = 0/)
 })

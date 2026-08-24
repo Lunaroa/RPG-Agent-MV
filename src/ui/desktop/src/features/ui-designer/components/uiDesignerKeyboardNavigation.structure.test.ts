@@ -14,8 +14,8 @@ test('authoring canvas reserves arrows for editing and does not navigate node fo
   assert.doesNotMatch(canvasSource, /navigateSelection/)
 })
 
-test('fabric selection keeps model stacking and exposes only activation to the authoring shell', () => {
+test('fabric selection keeps model stacking and exposes only activation and thumbnail capture to the authoring shell', () => {
   assert.match(fabricSource, /preserveObjectStacking: true/)
   assert.doesNotMatch(fabricSource, /bringObjectToFront/)
-  assert.match(fabricSource, /defineExpose\(\{ activateNode \}\)/)
+  assert.match(fabricSource, /defineExpose\(\{ activateNode, captureThumbnail \}\)/)
 })

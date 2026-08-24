@@ -208,7 +208,7 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     list.type = 'list';
     list.children = ['inventory_label'];
     list.props = {
-      x: 100, y: 80, width: 220, height: 60, scaleX: 1, scaleY: 1, rotate: 0,
+      x: 100, y: 80, width: 100, height: 60, scaleX: 1, scaleY: 1, rotate: 0,
       opacity: 255, visible: true, anchorX: 0, anchorY: 0, zIndex: 0,
       dataSource: '[]', columns: 2, rows: 1, autoFlow: 'row', columnGap: 20, rowGap: 0,
       justifyItems: 'start', alignItems: 'start', maxItems: 10,
@@ -240,7 +240,48 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.equal(second.props.content, 'Ether:1');
     assert.deepEqual([first.props.x, first.props.y], [100, 80]);
     assert.deepEqual([second.props.x, second.props.y], [220, 80]);
+    assert.equal(runtime.scene.nodes.find((node: any) => node.id === 'inventory').props.width, 220, 'list adopts the derived grid extent');
     assert.equal(runtime.nodeViews[first.id].parent, runtime.nodeViews.inventory);
+    assert.equal(runtime.errors.length, 0);
+    runtime.cleanup();
+  });
+
+  test('truncates list items past maxWidth instead of squeezing cells', () => {
+    const context = makeContext();
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-list-truncate.js' });
+    const runtime = context.MZUIRuntime.create();
+    const source = allNodeScene();
+    const list = JSON.parse(JSON.stringify(source.nodes.find((node: any) => node.type === 'container')));
+    list.id = 'inventory';
+    list.name = 'Inventory';
+    list.type = 'list';
+    list.children = ['inventory_label'];
+    list.props = {
+      x: 0, y: 0, width: 100, height: 40, scaleX: 1, scaleY: 1, rotate: 0,
+      opacity: 255, visible: true, anchorX: 0, anchorY: 0, zIndex: 0,
+      dataSource: '[]', columns: 3, rows: 0, autoFlow: 'row', columnGap: 10, rowGap: 0,
+      justifyItems: 'start', alignItems: 'start', maxItems: 10,
+      columnWidths: [120], maxWidth: 250, maxHeight: 0,
+    };
+    list.propModes = { dataSource: 'code' };
+    list.propCodes = { dataSource: '[{ text: "A" }, { text: "B" }, { text: "C" }]' };
+    const label = JSON.parse(JSON.stringify(source.nodes.find((node: any) => node.type === 'text')));
+    label.id = 'inventory_label';
+    label.name = 'InventoryLabel';
+    label.parentId = list.id;
+    label.propModes = { content: 'code' };
+    label.propCodes = { content: '$item.text' };
+    source.nodes = [list, label];
+    source.zOrder = [list.id];
+
+    runtime.mount(source, { root: new context.PIXI.Container(), executionMode: 'editor-preview' });
+    runtime.update();
+
+    const clones = runtime.scene.nodes.filter((node: any) => node.id.startsWith('inventory__item_'));
+    assert.equal(clones.length, 2, 'third cell (x=240 + width 100 > maxWidth 250) is truncated');
+    assert.equal(clones[0].props.x, 0);
+    assert.equal(clones[1].props.x, 130, 'second column starts after the 120-wide override plus gap');
+    assert.equal(runtime.scene.nodes.find((node: any) => node.id === 'inventory').props.width, 250, 'derived extent is capped by maxWidth');
     assert.equal(runtime.errors.length, 0);
     runtime.cleanup();
   });

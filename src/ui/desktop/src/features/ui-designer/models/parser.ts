@@ -167,7 +167,7 @@ function validateAction(value: unknown, path: string, issues: UiValidationIssue[
 }
 
 function validatePropsShape(type: UiDesignerNodeType, props: Record<string, unknown>, path: string, issues: UiValidationIssue[]): void {
-  const numeric = new Set(['x', 'y', 'width', 'height', 'scaleX', 'scaleY', 'rotate', 'opacity', 'anchorX', 'anchorY', 'zIndex', 'scrollX', 'scrollY', 'borderTop', 'borderRight', 'borderBottom', 'borderLeft', 'defaultFrameDuration', 'speed', 'initialFrame', 'fontSize', 'wrapWidth', 'letterSpacing', 'strokeWidth', 'shadowOffsetX', 'shadowOffsetY', 'shadowBlur', 'borderWidth', 'borderRadius', 'pressedScale', 'focusWidth', 'trackRadius', 'fillRadius', 'currentValue', 'maxValue', 'playbackRate', 'maxParticles', 'emissionInterval', 'velocityX', 'velocityY', 'velocityRandomX', 'velocityRandomY', 'gravityX', 'gravityY', 'rotationSpeed', 'lifetime', 'lifetimeRandom', 'startScale', 'endScale', 'startOpacity', 'endOpacity', 'glow', 'columns', 'rows', 'columnGap', 'rowGap', 'maxItems'])
+  const numeric = new Set(['x', 'y', 'width', 'height', 'scaleX', 'scaleY', 'rotate', 'opacity', 'anchorX', 'anchorY', 'zIndex', 'scrollX', 'scrollY', 'borderTop', 'borderRight', 'borderBottom', 'borderLeft', 'defaultFrameDuration', 'speed', 'initialFrame', 'fontSize', 'wrapWidth', 'letterSpacing', 'strokeWidth', 'shadowOffsetX', 'shadowOffsetY', 'shadowBlur', 'borderWidth', 'borderRadius', 'pressedScale', 'focusWidth', 'trackRadius', 'fillRadius', 'currentValue', 'maxValue', 'playbackRate', 'maxParticles', 'emissionInterval', 'velocityX', 'velocityY', 'velocityRandomX', 'velocityRandomY', 'gravityX', 'gravityY', 'rotationSpeed', 'lifetime', 'lifetimeRandom', 'startScale', 'endScale', 'startOpacity', 'endOpacity', 'glow', 'columns', 'rows', 'columnGap', 'rowGap', 'maxItems', 'maxWidth', 'maxHeight'])
   const booleans = new Set(['visible', 'clip', 'loop', 'richText', 'italic', 'showGuides', 'animateValue', 'autoplay', 'muted', 'clickThrough'])
   const strings = new Set(['backgroundPath', 'path', 'tint', 'fillMode', 'repeatMode', 'blendMode', 'content', 'fontFile', 'fontWeight', 'textColor', 'strokeColor', 'shadowColor', 'align', 'verticalAlign', 'backgroundColor', 'borderColor', 'hoverTint', 'disabledCondition', 'focusColor', 'hoverSe', 'clickSe', 'trackImage', 'trackColor', 'fillImage', 'fillColor', 'fillDirection', 'posterPath', 'emissionArea', 'imagePath', 'shape', 'startColor', 'endColor', 'dataSource', 'autoFlow', 'justifyItems', 'alignItems'])
   copyExtensions(props, [...numeric, ...booleans, ...strings, 'frames', 'padding', 'imageStates'], path, issues)
@@ -217,7 +217,10 @@ function validatePropsShape(type: UiDesignerNodeType, props: Record<string, unkn
     for (const key of ['columns', 'rows', 'maxItems']) {
       if (has(props, key) && (!Number.isInteger(props[key]) || Number(props[key]) < (key === 'columns' ? 1 : 0))) issues.push(issue(`list.${key} must be an integer in range`, 'invalid-value', `${path}.${key}`))
     }
-    for (const key of ['columnGap', 'rowGap']) if (has(props, key) && isFiniteNumber(props[key]) && Number(props[key]) < 0) issues.push(issue(`list.${key} must be non-negative`, 'invalid-value', `${path}.${key}`))
+    for (const key of ['columnGap', 'rowGap', 'maxWidth', 'maxHeight']) if (has(props, key) && isFiniteNumber(props[key]) && Number(props[key]) < 0) issues.push(issue(`list.${key} must be non-negative`, 'invalid-value', `${path}.${key}`))
+    for (const key of ['columnWidths', 'rowHeights']) {
+      if (has(props, key) && (!Array.isArray(props[key]) || (props[key] as unknown[]).some((entry) => !isFiniteNumber(entry) || entry < 0))) issues.push(issue(`list.${key} must be an array of non-negative finite numbers`, 'invalid-value', `${path}.${key}`))
+    }
   }
   if (type === 'text' || type === 'button') {
     if (!isObject(props.padding)) issues.push(issue(`${type}.padding must contain top/right/bottom/left`, 'invalid-document-shape', `${path}.padding`))

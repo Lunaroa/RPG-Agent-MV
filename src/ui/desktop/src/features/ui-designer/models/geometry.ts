@@ -1,4 +1,5 @@
 import type { UiDesignerDocument, UiGuide, UiNode, UiPoint, UiRect, UiSnapResult, UiViewport } from '@contract/ui-designer'
+import { resolveUiListGridExtent } from './listLayout'
 import { resolveTreeOrderRanks } from './tree'
 import {
   UI_DESIGNER_PANE_LIMITS,
@@ -181,8 +182,11 @@ export interface SnapOptions {
 }
 
 export function nodeRect(node: UiNode): UiRect {
-  const width = Math.max(0, Math.abs(node.props.width * (Number.isFinite(node.props.scaleX) ? node.props.scaleX : 1)))
-  const height = Math.max(0, Math.abs(node.props.height * (Number.isFinite(node.props.scaleY) ? node.props.scaleY : 1)))
+  const size = node.type === 'list'
+    ? resolveUiListGridExtent(node.props)
+    : { width: node.props.width, height: node.props.height }
+  const width = Math.max(0, Math.abs(size.width * (Number.isFinite(node.props.scaleX) ? node.props.scaleX : 1)))
+  const height = Math.max(0, Math.abs(size.height * (Number.isFinite(node.props.scaleY) ? node.props.scaleY : 1)))
   return {
     x: node.props.x - width * node.props.anchorX,
     y: node.props.y - height * node.props.anchorY,

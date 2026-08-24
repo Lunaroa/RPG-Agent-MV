@@ -69,7 +69,11 @@ export interface UiContainerProps extends UiBaseNodeProps {
 export type UiListAutoFlow = 'row' | 'column'
 export type UiListItemAlignment = 'start' | 'center' | 'end' | 'stretch'
 
-/** A non-visual Grid-style repeater whose direct children form one item template. */
+/**
+ * A non-visual Grid-style repeater whose direct children form one item
+ * template. width/height are the PER-ITEM default cell size; the grid extent
+ * is derived from item size × column/row count plus gaps.
+ */
 export interface UiListProps extends UiBaseNodeProps {
   dataSource: string
   columns: number
@@ -80,6 +84,14 @@ export interface UiListProps extends UiBaseNodeProps {
   justifyItems: UiListItemAlignment
   alignItems: UiListItemAlignment
   maxItems: number
+  /** Per-column width overrides (grid-template-columns style); missing entries fall back to the item width. */
+  columnWidths: number[]
+  /** Per-row height overrides (grid-template-rows style); missing entries fall back to the item height. */
+  rowHeights: number[]
+  /** Overall grid width cap; 0 means unbounded. Items past the cap are truncated. */
+  maxWidth: number
+  /** Overall grid height cap; 0 means unbounded. Items past the cap are truncated. */
+  maxHeight: number
 }
 
 export interface UiSpriteProps extends UiBaseNodeProps {

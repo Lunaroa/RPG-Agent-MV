@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UiDesignerAdapterBundle, UiDesignerLifecycleAdapter, UiRuntimeStatus } from '@contract/ui-designer'
 import { useUiDesigner, type UiDesignerController } from '../composables/useUiDesigner'
 import { useUiDesignerLifecycle } from '../composables/useUiDesignerLifecycle'
@@ -76,6 +76,10 @@ rawDesigner = useUiDesigner({ adapters: props.adapters, projectPath: props.proje
 // Child templates receive a reactive facade so nested refs/computed values are
 // unwrapped consistently; the raw controller remains available for lifecycle.
 const designer = reactive(rawDesigner) as unknown as UiDesignerController
+watch(() => rawDesigner.fileStatus.value, (status, previous) => {
+  if (status !== 'error' || previous === 'error') return
+  ElMessage({ type: 'error', message: rawDesigner.fileMessage.value ? `${t('operationError')}: ${rawDesigner.fileMessage.value}` : t('operationError') })
+})
 const firstSaveConflict = computed(() => Boolean(designer.fileConflict && !designer.runtimeConflict && !designer.activeScene?.sourcePath))
 const lifecycle = useUiDesignerLifecycle({
   adapter: props.lifecycleAdapter,

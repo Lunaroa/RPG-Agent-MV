@@ -153,8 +153,8 @@ export function createDefaultNode(type: UiDesignerNodeType, options: CreateNodeO
     case 'list':
       return shell(type, {
         ...common,
-        width: options.width ?? 480,
-        height: options.height ?? 320,
+        width: options.width ?? 200,
+        height: options.height ?? 48,
         dataSource: '[]',
         columns: 1,
         rows: 0,
@@ -164,6 +164,10 @@ export function createDefaultNode(type: UiDesignerNodeType, options: CreateNodeO
         justifyItems: 'stretch',
         alignItems: 'stretch',
         maxItems: 100,
+        columnWidths: [],
+        rowHeights: [],
+        maxWidth: 0,
+        maxHeight: 0,
       } satisfies UiListProps, options) as UiListNode
     case 'sprite':
       return shell(type, {

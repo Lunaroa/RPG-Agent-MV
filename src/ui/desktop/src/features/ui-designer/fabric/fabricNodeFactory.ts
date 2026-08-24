@@ -18,6 +18,7 @@ import type {
 } from '@contract/ui-designer'
 import { UI_BUTTON_WINDOW_SKIN_RESOURCE_PATH } from '@contract/ui-designer-resources'
 import { collectNodeSubtreeIds, resolveTreeOrderRanks } from '../models/tree'
+import { resolveUiListGridExtent } from '../models/listLayout'
 import { uiDesignerText } from '../i18n'
 import { UiLayoutTextbox } from './uiLayoutTextbox'
 import { normalizeUiSingleLineText } from './uiSingleLineText'
@@ -278,7 +279,7 @@ const placeholder = (node: UiNode, label: string, fill = '#1d2230') => new Group
 ], { objectCaching: false })
 
 const imageInBounds = async (node: UiNode, url: string, fillMode: string) => {
-  const image = await FabricImage.fromURL(url)
+  const image = await FabricImage.fromURL(url, { crossOrigin: 'anonymous' })
   image.set({
     selectable: false,
     evented: false,
@@ -302,7 +303,7 @@ const createNineSliceNode = async (node: Extract<UiNode, { type: 'nineSlice' }>,
   const url = previewUrlFor(catalog, node.props.path)
   if (!url) return placeholder(node, node.props.path ? `${emptyLabel}\n${node.props.path}` : emptyLabel)
   try {
-    const source = await FabricImage.fromURL(url)
+    const source = await FabricImage.fromURL(url, { crossOrigin: 'anonymous' })
     return new UiNineSliceImage(source.getElement() as HTMLImageElement | HTMLCanvasElement, {
       width: node.props.width,
       height: node.props.height,
@@ -376,7 +377,7 @@ const createTextNode = (node: UiTextNode | UiButtonNode, fontFamily?: string, na
 const loadFabricImageSource = async (url: string | undefined) => {
   if (!url) return undefined
   try {
-    return (await FabricImage.fromURL(url)).getElement() as CanvasImageSource
+    return (await FabricImage.fromURL(url, { crossOrigin: 'anonymous' })).getElement() as CanvasImageSource
   } catch {
     return undefined
   }
@@ -520,7 +521,10 @@ export async function createFabricNodeObject(node: UiNode, catalog: UiProjectRes
   let object: FabricObject
   let extra: Partial<UiFabricObjectData> = {}
   if (node.type === 'container') object = await createContainer(node, catalog)
-  else if (node.type === 'list') object = boundary(node.props.width, node.props.height, { fill: '#ffffff04', stroke: '#d99473', dash: [8, 5], radius: 3 })
+  else if (node.type === 'list') {
+    const extent = resolveUiListGridExtent(node.props)
+    object = boundary(extent.width, extent.height, { fill: '#ffffff04', stroke: '#d99473', dash: [8, 5], radius: 3 })
+  }
   else if (node.type === 'sprite') object = await createImageNode(node, node.props.path, node.props.fillMode, catalog, uiDesignerText(language, 'canvasPlaceholderImage'))
   else if (node.type === 'nineSlice') object = await createNineSliceNode(node, catalog, uiDesignerText(language, 'canvasPlaceholderNineSlice'))
   else if (node.type === 'frameAnimation') object = await createImageNode(node, node.props.frames[node.props.initialFrame]?.path ?? node.props.frames[0]?.path ?? '', node.props.fillMode, catalog, uiDesignerText(language, 'canvasPlaceholderFrameAnimation'))
@@ -547,6 +551,7 @@ export async function createFabricNodeObject(node: UiNode, catalog: UiProjectRes
     extra = { animated: true }
   }
   const decorated = decorate(object, node, signature, document, extra)
+  if (node.type === 'list') decorated.set({ lockScalingX: true, lockScalingY: true })
   applyFabricNodeGeometry(decorated, node, document)
   return decorated
 }
@@ -614,6 +619,13 @@ export function applyFabricNodeGeometry(object: UiFabricNodeObject, node: UiNode
   }
   if (object instanceof UiParticleObject && node.type === 'particle') object.setParticleState(node.props)
   else if (object instanceof Group) applyGroupGeometry(object, node)
+  else if (object instanceof Rect && node.type === 'list') {
+    // The list boundary shows the derived grid extent; its size is not an
+    // independent prop, so direct scaling stays locked and geometry sync
+    // rewrites it here.
+    const extent = resolveUiListGridExtent(node.props)
+    object.set({ width: extent.width, height: extent.height })
+  }
   else if (object instanceof Rect && node.type !== 'nineSlice') object.set({ width: node.props.width, height: node.props.height })
   object.set({
     ...commonObjectOptions(node, document),
@@ -625,6 +637,7 @@ export function applyFabricNodeGeometry(object: UiFabricNodeObject, node: UiNode
     scaleX: node.props.scaleX,
     scaleY: node.props.scaleY,
   })
+  if (node.type === 'list') object.set({ lockScalingX: true, lockScalingY: true })
   applyHierarchyClipPath(object, node, document)
   object.setCoords()
 }

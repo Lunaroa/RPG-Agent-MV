@@ -18,7 +18,7 @@ type InspectorPurpose = 'identity' | 'geometry' | 'contentResources' | 'appearan
 
 interface FieldDescriptor {
   key: string
-  kind: 'number' | 'text' | 'boolean' | 'color' | 'enum' | 'resource'
+  kind: 'number' | 'text' | 'boolean' | 'color' | 'enum' | 'resource' | 'numberList'
   help?: string
   unit?: string
   multiline?: boolean
@@ -123,12 +123,14 @@ const labels: Record<string, UiDesignerMessageKey> = {
   x: 'x' as UiDesignerMessageKey, y: 'y' as UiDesignerMessageKey, width: 'width', height: 'height', scaleX: 'scaleX', scaleY: 'scaleY', rotate: 'rotate', opacity: 'opacity', visible: 'visible', anchorX: 'anchorX', anchorY: 'anchorY', zIndex: 'zIndex',
   content: 'content', path: 'path', backgroundPath: 'backgroundPath', fontSize: 'fontSize', textColor: 'textColor', backgroundColor: 'backgroundColor', fillColor: 'fillColor', currentValue: 'currentValue', maxValue: 'maxValue', imagePath: 'imagePath', velocityRandomX: 'velocityRandomX', velocityRandomY: 'velocityRandomY', rotationSpeed: 'rotationSpeed', lifetimeRandom: 'lifetimeRandom', startScale: 'startScale', endScale: 'endScale', startOpacity: 'startOpacity', endOpacity: 'endOpacity', glow: 'glow',
   fontFile: 'fontFile', fontWeight: 'fontWeight', italic: 'italic', letterSpacing: 'letterSpacing', strokeColor: 'strokeColor', strokeWidth: 'strokeWidth', shadowColor: 'shadowColor', shadowOffsetX: 'shadowOffsetX', shadowOffsetY: 'shadowOffsetY', shadowBlur: 'shadowBlur', align: 'align', verticalAlign: 'verticalAlign', wrapWidth: 'wrapWidth', richText: 'richText', fillMode: 'fillMode', repeatMode: 'repeatMode', blendMode: 'blendMode', backgroundFillMode: 'backgroundFillMode', backgroundRepeatMode: 'backgroundRepeatMode', clip: 'clip', scrollX: 'scrollX', scrollY: 'scrollY', borderTop: 'borderTop', borderRight: 'borderRight', borderBottom: 'borderBottom', borderLeft: 'borderLeft', showGuides: 'showGuides', defaultFrameDuration: 'defaultFrameDuration', loop: 'loop', speed: 'speed', initialFrame: 'initialFrame', fillDirection: 'fillDirection', animateValue: 'animateValue', clickThrough: 'clickThrough', autoplay: 'autoplay', muted: 'muted', playbackRate: 'playbackRate', posterPath: 'posterPath', maxParticles: 'maxParticles', emissionInterval: 'emissionInterval', emissionArea: 'emissionArea', shape: 'shape', velocityX: 'velocityX', velocityY: 'velocityY', gravityX: 'gravityX', gravityY: 'gravityY', lifetime: 'lifetime', startColor: 'startColor', endColor: 'endColor', trackImage: 'trackImage', fillImage: 'fillImage', trackColor: 'trackColor', borderColor: 'borderColor', borderWidth: 'borderWidth', borderRadius: 'borderRadius', pressedScale: 'pressedScale', hoverTint: 'hoverTint', disabledCondition: 'disabledCondition', focusColor: 'focusColor', focusWidth: 'focusWidth', hoverSe: 'hoverSe', clickSe: 'clickSe', tint: 'tint',
-  dataSource: 'dataSource', columns: 'columns', rows: 'rows', autoFlow: 'autoFlow', columnGap: 'columnGap', rowGap: 'rowGap', justifyItems: 'justifyItems', alignItems: 'alignItems', maxItems: 'maxItems',
+  dataSource: 'dataSource', columns: 'columns', rows: 'rows', autoFlow: 'autoFlow', columnGap: 'columnGap', rowGap: 'rowGap', justifyItems: 'justifyItems', alignItems: 'alignItems', maxItems: 'maxItems', columnWidths: 'columnWidths', rowHeights: 'rowHeights', maxWidth: 'maxWidth', maxHeight: 'maxHeight',
 }
 
 const labelFor = (key: string) => labels[key] ? t(labels[key]) : key
 const fieldLabel = (field: FieldDescriptor) => {
   const node = selectedNode.value
+  if (node?.type === 'list' && field.key === 'width') return t('itemWidth')
+  if (node?.type === 'list' && field.key === 'height') return t('itemHeight')
   if (node?.type === 'sprite' && field.key === 'path') return t('imageResource')
   if (node?.type === 'video' && field.key === 'path') return t('videoResource')
   if (node?.type === 'video' && field.key === 'posterPath') return t('videoPosterOptional')
@@ -156,7 +158,7 @@ const ADVANCED_FIELDS = new Set([
   'pressedScale', 'focusWidth', 'playbackRate',
   'maxParticles', 'emissionInterval', 'emissionArea', 'shape', 'velocityX', 'velocityY', 'velocityRandomX', 'velocityRandomY',
   'gravityX', 'gravityY', 'rotationSpeed', 'lifetime', 'lifetimeRandom', 'startScale', 'endScale', 'startOpacity', 'endOpacity', 'glow',
-  'columns', 'rows', 'autoFlow', 'columnGap', 'rowGap', 'justifyItems', 'alignItems', 'maxItems',
+  'columns', 'rows', 'autoFlow', 'columnGap', 'rowGap', 'justifyItems', 'alignItems', 'maxItems', 'columnWidths', 'rowHeights', 'maxWidth', 'maxHeight',
 ])
 const purposeForField = (field: FieldDescriptor): InspectorPurpose => {
   if (field.purpose) return field.purpose
@@ -180,7 +182,7 @@ const fields = computed<FieldDescriptor[]>(() => {
   if (!node) return []
   const special: Record<UiNode['type'], FieldDescriptor[]> = {
     container: [{ key: 'backgroundPath', kind: 'resource', resourceCategory: 'image' }, { key: 'backgroundFillMode', kind: 'enum', options: enumOptions(['stretch', 'cover', 'contain', 'tile']) }, { key: 'backgroundRepeatMode', kind: 'enum', options: enumOptions(['none', 'horizontal', 'vertical', 'both']) }, { key: 'clip', kind: 'boolean' }],
-    list: [{ key: 'dataSource', kind: 'text', purpose: 'contentResources' }, { key: 'columns', kind: 'number', min: 1, max: 100, step: 1 }, { key: 'rows', kind: 'number', min: 0, max: 100, step: 1 }, { key: 'autoFlow', kind: 'enum', options: enumOptions(['row', 'column']) }, { key: 'columnGap', kind: 'number', min: 0 }, { key: 'rowGap', kind: 'number', min: 0 }, { key: 'justifyItems', kind: 'enum', options: enumOptions(['start', 'center', 'end', 'stretch']) }, { key: 'alignItems', kind: 'enum', options: enumOptions(['start', 'center', 'end', 'stretch']) }, { key: 'maxItems', kind: 'number', min: 0, max: 1000, step: 1 }],
+    list: [{ key: 'dataSource', kind: 'text', purpose: 'contentResources' }, { key: 'columns', kind: 'number', min: 1, max: 100, step: 1 }, { key: 'rows', kind: 'number', min: 0, max: 100, step: 1 }, { key: 'autoFlow', kind: 'enum', options: enumOptions(['row', 'column']) }, { key: 'columnGap', kind: 'number', min: 0 }, { key: 'rowGap', kind: 'number', min: 0 }, { key: 'columnWidths', kind: 'numberList' }, { key: 'rowHeights', kind: 'numberList' }, { key: 'maxWidth', kind: 'number', min: 0 }, { key: 'maxHeight', kind: 'number', min: 0 }, { key: 'justifyItems', kind: 'enum', options: enumOptions(['start', 'center', 'end', 'stretch']) }, { key: 'alignItems', kind: 'enum', options: enumOptions(['start', 'center', 'end', 'stretch']) }, { key: 'maxItems', kind: 'number', min: 0, max: 1000, step: 1 }],
     sprite: [{ key: 'path', kind: 'resource', resourceCategory: 'image' }, { key: 'fillMode', kind: 'enum', options: enumOptions(['stretch', 'cover', 'contain', 'tile']) }, { key: 'repeatMode', kind: 'enum', options: enumOptions(['none', 'horizontal', 'vertical', 'both']) }, { key: 'tint', kind: 'color' }, { key: 'blendMode', kind: 'enum', options: enumOptions(['normal', 'add', 'multiply', 'screen', 'overlay']) }, { key: 'scrollX', kind: 'number' }, { key: 'scrollY', kind: 'number' }],
     nineSlice: [{ key: 'path', kind: 'resource', resourceCategory: 'image' }, { key: 'borderTop', kind: 'number', min: 0 }, { key: 'borderRight', kind: 'number', min: 0 }, { key: 'borderBottom', kind: 'number', min: 0 }, { key: 'borderLeft', kind: 'number', min: 0 }, { key: 'showGuides', kind: 'boolean' }],
     frameAnimation: [{ key: 'defaultFrameDuration', kind: 'number', min: 0 }, { key: 'loop', kind: 'boolean' }, { key: 'speed', kind: 'number', min: 0.1 }, { key: 'initialFrame', kind: 'number', min: 0 }, { key: 'fillMode', kind: 'enum', options: enumOptions(['stretch', 'cover', 'contain', 'tile']) }],

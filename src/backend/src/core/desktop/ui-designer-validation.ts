@@ -473,6 +473,13 @@ function validateNodeTypeProps(type: UiDesignerNodeType, value: unknown, addErro
       requireEnum(value, 'alignItems', ['start', 'center', 'end', 'stretch'], addError, path, nodeId);
       requireInteger(value, 'maxItems', addError, path, nodeId, 0);
       if (Number.isInteger(value.maxItems) && Number(value.maxItems) > 1000) addError('invalid-value', 'list.maxItems cannot exceed 1000.', `${path}.props.maxItems`, nodeId);
+      // columnWidths/rowHeights/maxWidth/maxHeight are optional; validate only when present.
+      for (const key of ['maxWidth', 'maxHeight']) {
+        if (Object.prototype.hasOwnProperty.call(value, key) && (!isFiniteNumber(value[key]) || Number(value[key]) < 0)) addError('invalid-value', `list.${key} must be a non-negative finite number.`, `${path}.props.${key}`, nodeId);
+      }
+      for (const key of ['columnWidths', 'rowHeights']) {
+        if (Object.prototype.hasOwnProperty.call(value, key) && (!Array.isArray(value[key]) || (value[key] as unknown[]).some((entry) => !isFiniteNumber(entry) || Number(entry) < 0))) addError('invalid-value', `list.${key} must be an array of non-negative finite numbers.`, `${path}.props.${key}`, nodeId);
+      }
       break;
     case 'sprite':
       requireString(value, 'path', addError, path, nodeId);

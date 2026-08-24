@@ -140,7 +140,7 @@ describe('ui designer document model', () => {
     assert.equal(container?.type === 'container' ? container.props.clip : undefined, false)
     assert.equal(document.nodes[0]?.type === 'container' ? document.nodes[0].props.clip : undefined, true)
     const list = nodes.find((node) => node.type === 'list')
-    assert.deepEqual(list?.type === 'list' ? { dataSource: list.props.dataSource, columns: list.props.columns, maxItems: list.props.maxItems } : undefined, { dataSource: '[]', columns: 1, maxItems: 100 })
+    assert.deepEqual(list?.type === 'list' ? { dataSource: list.props.dataSource, columns: list.props.columns, maxItems: list.props.maxItems, columnWidths: list.props.columnWidths, maxWidth: list.props.maxWidth } : undefined, { dataSource: '[]', columns: 1, maxItems: 100, columnWidths: [], maxWidth: 0 })
     const progress = nodes.find((node) => node.type === 'progressBar')
     assert.equal(progress?.type === 'progressBar' ? progress.props.currentValue : undefined, 50)
     const button = nodes.find((node) => node.type === 'button')

@@ -1,4 +1,4 @@
-import type { UiDesignerDocument, UiPoint, UiRect } from '@contract/ui-designer'
+import type { UiDesignerDocument, UiNode, UiPoint, UiRect } from '@contract/ui-designer'
 import { nodeVisualRect } from './geometry'
 
 export interface UiCanvasWorkspace {
@@ -41,7 +41,7 @@ export function resolveCanvasWorkspace(
     includeRect(nodeVisualRect(node))
     const draft = draftPositions[node.id]
     if (draft && Number.isFinite(draft.x) && Number.isFinite(draft.y)) {
-      includeRect(nodeVisualRect({ ...node, props: { ...node.props, x: draft.x, y: draft.y } }))
+      includeRect(nodeVisualRect({ ...node, props: { ...node.props, x: draft.x, y: draft.y } } as UiNode))
     }
   }
   const left = safeGutter + Math.max(0, -minX)

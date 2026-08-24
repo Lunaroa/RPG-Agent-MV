@@ -958,31 +958,63 @@
     return { x: left, y: top, width: Math.max(1, right - left), height: Math.max(1, bottom - top) };
   }
 
-  function listGridCell(props, itemIndex, itemCount) {
+  function listGridLayout(props, itemCount) {
     var configuredColumns = Math.max(1, Math.round(finite(props.columns, 1)));
     var configuredRows = Math.max(0, Math.round(finite(props.rows, 0)));
-    var columns = configuredColumns;
+    var columns;
     var rows;
+    if (props.autoFlow === 'column') {
+      rows = configuredRows > 0 ? configuredRows : Math.max(1, Math.ceil(itemCount / configuredColumns));
+      columns = Math.max(configuredColumns, Math.ceil(Math.max(itemCount, 1) / rows));
+    } else {
+      columns = configuredColumns;
+      rows = Math.max(configuredRows, Math.ceil(itemCount / columns), 1);
+    }
+    var itemWidth = Math.max(0, finite(props.width, 0));
+    var itemHeight = Math.max(0, finite(props.height, 0));
+    var configuredColumnWidths = Array.isArray(props.columnWidths) ? props.columnWidths : [];
+    var configuredRowHeights = Array.isArray(props.rowHeights) ? props.rowHeights : [];
+    var columnWidths = [];
+    var rowHeights = [];
+    var i;
+    for (i = 0; i < columns; i++) columnWidths.push(i < configuredColumnWidths.length && Number.isFinite(configuredColumnWidths[i]) && configuredColumnWidths[i] >= 0 ? configuredColumnWidths[i] : itemWidth);
+    for (i = 0; i < rows; i++) rowHeights.push(i < configuredRowHeights.length && Number.isFinite(configuredRowHeights[i]) && configuredRowHeights[i] >= 0 ? configuredRowHeights[i] : itemHeight);
+    var columnGap = Math.max(0, finite(props.columnGap, 0));
+    var rowGap = Math.max(0, finite(props.rowGap, 0));
+    var totalWidth = columnGap * Math.max(0, columns - 1);
+    var totalHeight = rowGap * Math.max(0, rows - 1);
+    for (i = 0; i < columns; i++) totalWidth += columnWidths[i];
+    for (i = 0; i < rows; i++) totalHeight += rowHeights[i];
+    var maxWidth = Math.max(0, finite(props.maxWidth, 0));
+    var maxHeight = Math.max(0, finite(props.maxHeight, 0));
+    if (maxWidth > 0) totalWidth = Math.min(totalWidth, maxWidth);
+    if (maxHeight > 0) totalHeight = Math.min(totalHeight, maxHeight);
+    return { columns: columns, rows: rows, columnWidths: columnWidths, rowHeights: rowHeights, columnGap: columnGap, rowGap: rowGap, totalWidth: totalWidth, totalHeight: totalHeight, maxWidth: maxWidth, maxHeight: maxHeight };
+  }
+
+  function listGridCell(props, layout, itemIndex) {
     var column;
     var row;
     if (props.autoFlow === 'column') {
-      rows = configuredRows > 0 ? configuredRows : Math.max(1, Math.ceil(itemCount / configuredColumns));
-      columns = Math.max(configuredColumns, Math.ceil(itemCount / rows));
-      row = itemIndex % rows;
-      column = Math.floor(itemIndex / rows);
+      row = itemIndex % layout.rows;
+      column = Math.floor(itemIndex / layout.rows);
     } else {
-      rows = Math.max(configuredRows, Math.ceil(itemCount / columns), 1);
-      column = itemIndex % columns;
-      row = Math.floor(itemIndex / columns);
+      column = itemIndex % layout.columns;
+      row = Math.floor(itemIndex / layout.columns);
     }
-    var columnGap = Math.max(0, finite(props.columnGap, 0));
-    var rowGap = Math.max(0, finite(props.rowGap, 0));
-    var cellWidth = Math.max(0, (Math.max(0, finite(props.width, 0)) - columnGap * Math.max(0, columns - 1)) / columns);
-    var cellHeight = Math.max(0, (Math.max(0, finite(props.height, 0)) - rowGap * Math.max(0, rows - 1)) / rows);
-    var listLeft = finite(props.x, 0) - finite(props.width, 0) * finite(props.anchorX, 0);
-    var listTop = finite(props.y, 0) - finite(props.height, 0) * finite(props.anchorY, 0);
-    return { x: listLeft + column * (cellWidth + columnGap), y: listTop + row * (cellHeight + rowGap), width: cellWidth, height: cellHeight };
+    var cellX = 0;
+    var cellY = 0;
+    var i;
+    for (i = 0; i < column; i++) cellX += layout.columnWidths[i] + layout.columnGap;
+    for (i = 0; i < row; i++) cellY += layout.rowHeights[i] + layout.rowGap;
+    var cellWidth = layout.columnWidths[column];
+    var cellHeight = layout.rowHeights[row];
+    var overflow = (layout.maxWidth > 0 && cellX + cellWidth > layout.maxWidth) || (layout.maxHeight > 0 && cellY + cellHeight > layout.maxHeight);
+    var listLeft = finite(props.x, 0) - layout.totalWidth * finite(props.anchorX, 0);
+    var listTop = finite(props.y, 0) - layout.totalHeight * finite(props.anchorY, 0);
+    return { x: listLeft + cellX, y: listTop + cellY, width: cellWidth, height: cellHeight, overflow: overflow };
   }
+
 
   function placeListClone(clone, templateBounds, cell, listProps) {
     var props = clone.props || (clone.props = {});
@@ -1025,6 +1057,15 @@
     }
     var maxItems = Math.max(0, Math.min(1000, Math.round(finite(listNode.props && listNode.props.maxItems, 100))));
     items = items.slice(0, maxItems);
+    var listProps = listNode.props || {};
+    var layout = listGridLayout(listProps, items.length);
+    // Items past the maxWidth/maxHeight cap are truncated, not squeezed.
+    items = items.filter(function (_item, itemIndex) { return !listGridCell(listProps, layout, itemIndex).overflow; });
+    layout = listGridLayout(listProps, items.length);
+    // The list node adopts the derived grid extent so anchor, pivot, and
+    // world-matrix math downstream keep working with total-extent semantics.
+    listProps.width = layout.totalWidth;
+    listProps.height = layout.totalHeight;
     var templateIds = listTemplateNodeIds(scene, listNode);
     var templateIdSet = {};
     templateIds.forEach(function (id) { templateIdSet[id] = true; });
@@ -1035,7 +1076,7 @@
     items.forEach(function (item, itemIndex) {
       var idMap = {};
       templates.forEach(function (template) { idMap[template.id] = listNode.id + '__item_' + itemIndex + '__' + template.id; });
-      var cell = listGridCell(listNode.props || {}, itemIndex, items.length);
+      var cell = listGridCell(listProps, layout, itemIndex);
       templates.forEach(function (template) {
         var clone = cloneRuntimeValue(template);
         clone.id = idMap[template.id];

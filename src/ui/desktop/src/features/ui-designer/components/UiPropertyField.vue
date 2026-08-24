@@ -17,7 +17,7 @@ const props = withDefaults(defineProps<{
   value: unknown
   mode?: UiPropertyMode
   code?: string
-  kind?: 'number' | 'text' | 'boolean' | 'color' | 'enum' | 'resource'
+  kind?: 'number' | 'text' | 'boolean' | 'color' | 'enum' | 'resource' | 'numberList'
   multiline?: boolean
   options?: Array<{ label: string; value: string }>
   resourceCategory?: UiDesignerManagedAssetKind
@@ -101,6 +101,7 @@ const cancelValue = () => {
   if (valueDraftPending) emit('cancel', props.sceneId, props.nodeId)
   valueDraftPending = false
   draftValue.value = valueDraftBaseline
+  if (props.kind === 'numberList') numberListText.value = formatNumberList(valueDraftBaseline)
 }
 const handleTextEnter = (event: KeyboardEvent) => {
   if (props.multiline && !event.ctrlKey && !event.metaKey) return
@@ -120,6 +121,28 @@ watch(() => props.value, (value) => {
   valueDraftBaseline = value
   draftValue.value = value
 })
+const numberListText = ref('')
+const formatNumberList = (value: unknown) => Array.isArray(value) ? (value as unknown[]).filter((entry) => typeof entry === 'number' && Number.isFinite(entry)).join(', ') : ''
+const parseNumberList = (text: string): number[] | null => {
+  const trimmed = text.trim()
+  if (!trimmed) return []
+  const parts = trimmed.split(',')
+  if (parts.some((part) => !part.trim())) return null
+  const numbers = parts.map((part) => Number(part.trim()))
+  return numbers.every((entry) => Number.isFinite(entry) && entry >= 0) ? numbers : null
+}
+const updateNumberList = (text: string) => {
+  numberListText.value = text
+  const parsed = parseNumberList(text)
+  if (parsed === null) return
+  if (!valueDraftPending) valueDraftBaseline = props.value
+  draftValue.value = parsed
+  valueDraftPending = true
+  emit('preview', parsed, props.sceneId, props.nodeId)
+}
+watch(() => props.value, (value) => {
+  if (props.kind === 'numberList') numberListText.value = formatNumberList(value)
+}, { immediate: true })
 const dropResource = (event: DragEvent) => {
   if (props.kind !== 'resource') return
   const rawPath = event.dataTransfer?.getData('text/ui-resource-path') ?? ''
@@ -227,6 +250,17 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
       />
       <span v-if="props.resourcePickerDisabled" class="resource-picker-hint">{{ t('noProject') }}</span>
     </div>
+    <el-input
+      v-else-if="props.mode === 'value' && props.kind === 'numberList'"
+      :model-value="numberListText"
+      size="small"
+      placeholder="100, 200, ..."
+      :data-ui-id="props.fieldKey ? `ui-designer-property-${props.fieldKey}-input` : undefined"
+      :data-testid="props.fieldKey ? `ui-designer-property-${props.fieldKey}-input` : undefined"
+      @update:model-value="updateNumberList"
+      @blur="commitValue"
+      @keydown.enter="handleTextEnter"
+    />
     <el-input
       v-else-if="props.mode === 'value'"
       :type="props.multiline ? 'textarea' : 'text'"

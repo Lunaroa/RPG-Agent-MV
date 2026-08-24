@@ -42,6 +42,7 @@ let reconcileGeneration = 0
 let renderFrame = 0
 let syncingSelection = false
 let selectionSyncQueued = false
+let reconcileRunning = 0
 const objects = new Map<string, UiFabricNodeObject>()
 const containerLabels = new Map<string, Textbox>()
 
@@ -73,7 +74,10 @@ const objectList = (target: FabricObject) => target instanceof ActiveSelection ?
 const selectedObjectIds = (target?: FabricObject) => target ? objectList(target).map(objectNodeId).filter((id): id is string => Boolean(id)) : []
 
 const applyControllerSelection = (target?: FabricObject) => {
-  if (syncingSelection) return
+  // Reconcile removes and recreates objects; fabric reports that as selection
+  // events, but the controller's selection stays authoritative and is
+  // reasserted by syncFabricSelection at the end of reconcile.
+  if (syncingSelection || reconcileRunning > 0) return
   const ids = selectedObjectIds(target)
   syncingSelection = true
   props.designer.selectNodes(ids.length ? ids : [props.scopeNodeId])
@@ -179,6 +183,8 @@ const syncContainerLabels = () => {
 const reconcile = async () => {
   if (!canvas) return
   const generation = ++reconcileGeneration
+  reconcileRunning += 1
+  try {
   // Geometry below is written in canvas-absolute coordinates. Objects inside a
   // multi-select ActiveSelection interpret left/top relative to the selection
   // group, so dissolve it first; syncFabricSelection rebuilds it at the end.
@@ -222,6 +228,9 @@ const reconcile = async () => {
   syncContainerLabels()
   syncFabricSelection()
   canvas.requestRenderAll()
+  } finally {
+    reconcileRunning -= 1
+  }
 }
 
 const startTransform = (event: { e?: MouseEvent; transform: { target: FabricObject; action?: string; corner: string; original: { left: number; top: number } } }) => {
@@ -452,7 +461,7 @@ onMounted(() => {
   canvas.on('selection:created', (event) => applyControllerSelection(event.selected.length > 1 ? canvas?.getActiveObject() : event.selected[0]))
   canvas.on('selection:updated', () => applyControllerSelection(canvas?.getActiveObject()))
   canvas.on('selection:cleared', () => applyControllerSelection(undefined))
-  canvas.on('before:transform', startTransform)
+  canvas.on('before:transform', (event) => startTransform({ ...event, e: event.e as MouseEvent | undefined }))
   canvas.on('object:moving', (event) => moveObject(event.target, event.e as MouseEvent | undefined))
   canvas.on('object:scaling', (event) => {
     if (!canvas) return

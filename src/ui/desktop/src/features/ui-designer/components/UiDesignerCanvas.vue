@@ -8,12 +8,14 @@ import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 import { useUiDesignerRendererHost } from '../composables/useUiDesignerRendererHost'
 import { openUiDesignerPreviewWindow, type UiDesignerPreviewWindowHandle } from '../composables/uiDesignerPreviewWindow'
 import UiDesignerFabricCanvas from './UiDesignerFabricCanvas.vue'
-import { viewportClientToWorld, worldPointToViewport, type UiCanvasViewportFrame, type UiSnapFeedbackLine } from '../models/geometry'
+import { resolveUiNodeResizePatch, viewportClientToWorld, worldPointToViewport, type UiCanvasViewportFrame, type UiSnapFeedbackLine } from '../models/geometry'
 import { canvasScrollForWorldPoint, clampCanvasScroll, createCanvasScrollLayout, fitCanvasZoom, panCanvasScroll } from '../models/viewport-navigation'
 import { fitContextMenuPosition } from '../models/context-menu-position'
 import type { UiNodeActionCommand, UiNodeActionPolicy } from '../models/actions'
 import { exportRuntimeDocument } from '../models/export'
 import { resolveCanvasWorkspace, type UiCanvasWorkspace } from '../models/canvas-workspace'
+import { Eye, EyeOff, Lock, Unlock } from '@lucide/vue'
+import { UI_DESIGNER_NODE_ACTION_GROUPS, UI_DESIGNER_NODE_ACTION_ICONS } from './uiDesignerNodePresentation'
 
 const props = defineProps<{ designer: UiDesignerController }>()
 const emit = defineEmits<{ editNode: [nodeId: string] }>()
@@ -60,25 +62,29 @@ const alignmentLabels: Record<'left' | 'centerX' | 'right' | 'top' | 'centerY' |
 const alignmentOptions = Object.keys(alignmentLabels) as Array<keyof typeof alignmentLabels>
 const alignmentReference = ref<'selection' | 'canvas'>('selection')
 const selectedActionPolicy = computed<UiNodeActionPolicy | undefined>(() => selectedIds.value[0] ? designer.getNodeActionPolicy(selectedIds.value[0]) as UiNodeActionPolicy : undefined)
-const nodeMenuItems = computed<Array<{ command: UiNodeActionCommand; label: string; danger?: boolean }>>(() => {
-  const target = nodeMenu.value ? document.value.nodes.find((node) => node.id === nodeMenu.value?.nodeId) : undefined
-  return [
-    { command: 'copy', label: t('copyAction') },
-    { command: 'cut', label: t('cutAction') },
-    { command: 'paste', label: t('pasteAction') },
-    { command: 'addChild', label: t('addChild') },
-    { command: 'rename', label: t('renameNode') },
-    { command: 'duplicate', label: t('duplicateNode') },
-    { command: 'group', label: t('group') },
-    { command: 'sameType', label: t('selectSameType') },
-    { command: 'moveUp', label: t('moveUp') },
-    { command: 'moveDown', label: t('moveDown') },
-    { command: 'moveTop', label: t('moveTop') },
-    { command: 'moveBottom', label: t('moveBottom') },
-    { command: 'toggleVisibility', label: target?.props.visible ? t('hideNode') : t('showNode') },
-    { command: 'toggleLock', label: target?.locked ? t('unlockNode') : t('lockNode') },
-    { command: 'delete', label: t('deleteNode'), danger: true },
-  ]
+const nodeActionLabels: Record<Exclude<UiNodeActionCommand, 'toggleVisibility' | 'toggleLock'>, UiDesignerMessageKey> = {
+  copy: 'copyAction', cut: 'cutAction', paste: 'pasteAction', addChild: 'addChild', rename: 'renameNode', duplicate: 'duplicateNode', group: 'group', sameType: 'selectSameType', moveUp: 'moveUp', moveDown: 'moveDown', moveTop: 'moveTop', moveBottom: 'moveBottom', delete: 'deleteNode',
+}
+const nodeMenuItems = computed(() => {
+  const selection = nodeMenuPolicy.value?.selectionIds
+    .map((id) => document.value.nodes.find((node) => node.id === id))
+    .filter((node): node is UiNode => Boolean(node)) ?? []
+  const allVisible = selection.every((node) => node.props.visible)
+  const allLocked = selection.every((node) => node.locked)
+  return UI_DESIGNER_NODE_ACTION_GROUPS.map((group) => group.map((command) => ({
+    command,
+    label: command === 'toggleVisibility'
+      ? allVisible ? t('hideNode') : t('showNode')
+      : command === 'toggleLock'
+        ? allLocked ? t('unlockNode') : t('lockNode')
+        : t(nodeActionLabels[command]),
+    icon: command === 'toggleVisibility'
+      ? allVisible ? EyeOff : Eye
+      : command === 'toggleLock'
+        ? allLocked ? Unlock : Lock
+        : UI_DESIGNER_NODE_ACTION_ICONS[command],
+    danger: command === 'delete',
+  })))
 })
 const rulerTicks = computed(() => ({
   horizontal: Array.from({ length: Math.ceil(document.value.canvas.width / 100) + 1 }, (_, index) => index * 100),
@@ -201,12 +207,7 @@ const runtimeScene = (): UiRuntimeSceneExport => {
     const draftRect = draftRects.value[node.id]
     const draftPosition = draftPositions.value[node.id]
     if (draftRect) {
-      const scaleX = Math.max(Math.abs(Number.isFinite(node.props.scaleX) ? node.props.scaleX : 1), 0.0001)
-      const scaleY = Math.max(Math.abs(Number.isFinite(node.props.scaleY) ? node.props.scaleY : 1), 0.0001)
-      node.props.x = draftRect.x + draftRect.width * node.props.anchorX
-      node.props.y = draftRect.y + draftRect.height * node.props.anchorY
-      node.props.width = draftRect.width / scaleX
-      node.props.height = draftRect.height / scaleY
+      Object.assign(node.props, resolveUiNodeResizePatch(node, draftRect))
     } else if (draftPosition) {
       node.props.x = draftPosition.x
       node.props.y = draftPosition.y
@@ -646,7 +647,12 @@ onBeforeUnmount(() => {
           <el-button size="small" text type="danger" @click="clearGuides">{{ t('guideMenuClear') }}</el-button>
         </div>
         <div v-if="nodeMenu && nodeMenuPolicy" ref="nodeMenuElement" class="node-context-menu" :style="{ left: `${nodeMenu.x}px`, top: `${nodeMenu.y}px` }" :data-ui-id="`ui-designer-node-menu-${nodeMenu.nodeId}`" @pointerdown.stop @contextmenu.prevent>
-          <el-button v-for="item in nodeMenuItems" :key="item.command" size="small" text :type="item.danger ? 'danger' : undefined" :disabled="!nodeMenuPolicy.allowed[item.command]" :data-ui-id="`ui-designer-node-command-${nodeMenu.nodeId}-${item.command}`" @click="runNodeCommand(item.command)">{{ item.label }}</el-button>
+          <div v-for="(group, groupIndex) in nodeMenuItems" :key="groupIndex" class="node-context-menu-group">
+            <el-button v-for="item in group" :key="item.command" size="small" text :type="item.danger ? 'danger' : undefined" :disabled="!nodeMenuPolicy.allowed[item.command]" :data-ui-id="`ui-designer-node-command-${nodeMenu.nodeId}-${item.command}`" @click="runNodeCommand(item.command)">
+              <component :is="item.icon" class="node-context-menu-icon" aria-hidden="true" />
+              <span>{{ item.label }}</span>
+            </el-button>
+          </div>
         </div>
       </Teleport>
       <div class="canvas-stage" :style="stageStyle">
@@ -683,6 +689,10 @@ onBeforeUnmount(() => {
 .canvas-ruler { position: absolute; z-index: 5; pointer-events: auto; cursor: crosshair; background: repeating-linear-gradient(to right, #ffffff55 0 1px, transparent 1px 32px); opacity: .35; }.canvas-ruler.horizontal { inset: 0 0 auto; height: 18px; }.canvas-ruler.vertical { inset: 0 auto 0 0; width: 18px; background: repeating-linear-gradient(to bottom, #ffffff55 0 1px, transparent 1px 32px); }.ruler-tick { position: absolute; color: #fff; font-size: 8px; line-height: 12px; pointer-events: none; transform: translateX(-1px); }.canvas-ruler.vertical .ruler-tick { transform: translateY(-1px) rotate(-90deg); transform-origin: left top; }
 .canvas-guide { position: absolute; z-index: 4; pointer-events: auto; cursor: ew-resize; background: var(--el-color-warning); opacity: .55; }.canvas-guide.vertical { top: 0; bottom: 0; width: 3px; margin-left: -1px; }.canvas-guide.horizontal { right: 0; left: 0; height: 3px; margin-top: -1px; cursor: ns-resize; }.canvas-guide.locked { cursor: not-allowed; opacity: .35; }.canvas-guide.snapped { opacity: 1; }.canvas-snap-line { position: absolute; z-index: 4; pointer-events: none; border-color: #fff; filter: drop-shadow(0 0 1px #fff); }.canvas-snap-line.vertical { width: 0; margin-left: -1px; border-left: 2px dashed; }.canvas-snap-line.horizontal { height: 0; margin-top: -1px; border-top: 2px dashed; }
 .guide-context-menu, .node-context-menu { position: fixed; z-index: 4000; display: flex; flex-direction: column; min-width: 150px; max-height: min(480px, calc(100vh - 16px)); overflow: auto; padding: 5px; border: 1px solid var(--app-border); border-radius: 5px; background: var(--app-bg); box-shadow: 0 8px 18px #0007; }.guide-context-menu .el-button, .node-context-menu .el-button { justify-content: flex-start; margin: 0; }
+.node-context-menu-group { display: flex; flex-direction: column; padding-block: 3px; border-top: 1px solid var(--app-border); }
+.node-context-menu-group:first-child { padding-top: 0; border-top: 0; }
+.node-context-menu-group:last-child { padding-bottom: 0; }
+.node-context-menu-icon { width: 14px; height: 14px; margin-right: 8px; flex: 0 0 auto; stroke-width: 1.7; }
 .canvas-stage { position: absolute; overflow: hidden; transform-origin: 0 0; }.canvas-scene-frame { position: absolute; z-index: 0; box-shadow: 0 16px 36px #0007; pointer-events: none; }.canvas-scene-frame.checkerboard { background-image: conic-gradient(#ffffff09 25%, transparent 0 50%, #ffffff09 0 75%, transparent 0); background-size: 24px 24px; }.canvas-edit-breadcrumb { position: absolute; z-index: 8; top: calc(var(--workspace-top, 0px) + 8px); left: calc(var(--workspace-left, 0px) + 8px); display: flex; align-items: center; gap: 4px; padding: 3px 5px; border: 1px solid #ffffff1f; border-radius: 4px; color: var(--app-ink-soft); background: #12141be8; font-size: 10px; }.canvas-edit-breadcrumb .el-button { padding: 2px 5px; }
 .canvas-grid { position: absolute; z-index: 1; opacity: 0; background-image: linear-gradient(to right, var(--grid-color) 1px, transparent 1px), linear-gradient(to bottom, var(--grid-color) 1px, transparent 1px); background-size: var(--grid-size) var(--grid-size); pointer-events: none; }.canvas-grid.active { opacity: .18; }
 .canvas-runtime-state { position: absolute; z-index: 9; top: 48px; right: 8px; display: flex; max-width: min(560px, calc(100% - 16px)); align-items: center; gap: 8px; padding: 6px 9px; border: 1px solid var(--app-border); border-radius: 5px; color: var(--app-ink-soft); background: color-mix(in srgb, #12141b 92%, transparent); box-shadow: 0 5px 14px #0005; font-size: 11px; text-align: left; pointer-events: none; }.canvas-runtime-state > span { min-width: 0; flex: 1 1 auto; }.canvas-runtime-state .el-button { flex: 0 0 auto; pointer-events: auto; }

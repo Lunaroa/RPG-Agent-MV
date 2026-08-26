@@ -17,6 +17,11 @@ test('node tree hover actions reserve space instead of shifting node names', () 
   assert.match(source, /node-row-actions \{[^}]*display: inline-flex;[^}]*flex: 0 1 72px;[^}]*max-width: 80px;[^}]*visibility: hidden;/)
   assert.doesNotMatch(source, /node-row-actions \{ display: none/)
   assert.match(source, /node-tree-entry\.selected \.node-row-actions/)
+  assert.match(source, /v-if="selectedIds\.length < 2" class="node-row-actions"/)
+  assert.match(source, /:expand-on-click-node="false"/)
+  assert.match(source, /UI_DESIGNER_NODE_TYPE_ICONS\[data\.type\]/)
+  assert.match(source, /UI_DESIGNER_NODE_ACTION_GROUPS/)
+  assert.match(source, /class="panel-heading-actions"[\s\S]*duplicateNode[\s\S]*deleteNode/)
 })
 
 test('left node panel contains selected-row actions and palette feedback without widening the workspace', () => {
@@ -31,10 +36,26 @@ test('left node panel contains selected-row actions and palette feedback without
 
 test('canvas routes node context menus before the guide menu and dismisses menus outside', () => {
   const source = compile('./UiDesignerCanvas.vue')
+  const fabricCanvas = compile('./UiDesignerFabricCanvas.vue')
   assert.match(source, /const openFabricContextMenu = \(payload: \{ event: MouseEvent; node\?: UiNode \}\)/)
   assert.match(source, /if \(payload\.node\) openNodeMenu\(payload\.event, payload\.node\)[\s\S]*else openGuideMenu\(payload\.event\)/)
   assert.match(source, /window\.addEventListener\('pointerdown', dismissContextMenus, true\)/)
   assert.match(source, /@contextmenu="openFabricContextMenu"/)
+  assert.match(fabricCanvas, /const contextNode = \(target\?: FabricObject\)[\s\S]*target instanceof ActiveSelection[\s\S]*selectedObjectIds\(target\)\[0\]/)
+  assert.match(fabricCanvas, /const contextTargetAt = \(event: MouseEvent, target\?: FabricObject\)[\s\S]*active instanceof ActiveSelection[\s\S]*active\.containsPoint\(canvas\.getScenePoint\(event\)\)/)
+  assert.match(fabricCanvas, /emit\('contextmenu', \{ event: pointerEvent, node: contextNode\(contextTargetAt\(pointerEvent, event\.target\)\) \}\)/)
+})
+
+test('Inspector padding directions are visible and property expressions can be resized vertically', () => {
+  const padding = compile('./UiPaddingEditor.vue')
+  const property = compile('./UiPropertyField.vue')
+  const editor = compile('./UiCodeMirrorEditor.vue')
+  assert.match(padding, /class="padding-side-label">\{\{ t\(sideLabels/)
+  assert.match(padding, /top: 'paddingTop', right: 'paddingRight', bottom: 'paddingBottom', left: 'paddingLeft'/)
+  assert.match(property, /:rows="3" resizable/)
+  assert.match(editor, /class="editor-host" :class="\{ resizable: props\.resizable \}"/)
+  assert.match(editor, /\.editor-host\.resizable \{[^}]*resize: vertical;/)
+  assert.match(editor, /new ResizeObserver\(\(\) => editor\?\.refreshLayout\?\.\(\)\)/)
 })
 
 test('narrow layouts preserve the inspector without duplicating resources and events below the main tabs', () => {

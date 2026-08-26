@@ -274,7 +274,7 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
       @keydown.enter="handleTextEnter"
     />
     <div v-else class="code-field">
-      <UiCodeMirrorEditor v-if="props.codeAdapter" :adapter="props.codeAdapter" :model-value="props.code" :rows="1" :format-on-blur="props.formatOnBlur" :font-family="props.codeFontFamily" :font-size="props.codeFontSize" :scene-id="props.sceneId" :completion-items="props.completionItems" :draft-coordinator="props.draftCoordinator" @update:model-value="updateCodeDraft" />
+      <UiCodeMirrorEditor v-if="props.codeAdapter" :adapter="props.codeAdapter" :model-value="props.code" :rows="3" resizable :format-on-blur="props.formatOnBlur" :font-family="props.codeFontFamily" :font-size="props.codeFontSize" :scene-id="props.sceneId" :completion-items="props.completionItems" :draft-coordinator="props.draftCoordinator" @update:model-value="updateCodeDraft" />
       <span v-else class="code-note">{{ t('unavailable') }}</span>
     </div>
     <p v-if="props.kind === 'resource' && resourceDropError" class="resource-drop-error">{{ resourceDropError }}</p>

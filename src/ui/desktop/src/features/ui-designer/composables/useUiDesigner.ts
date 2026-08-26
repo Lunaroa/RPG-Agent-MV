@@ -1224,12 +1224,24 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     else if (command === 'moveTop') moveToEdge(targetId, 'top')
     else if (command === 'moveBottom') moveToEdge(targetId, 'bottom')
     else if (command === 'toggleVisibility') {
-      const node = findNode(document.value, targetId)
-      if (node) updateNodeProperty(targetId, 'visible', !node.props.visible)
+      const nodes = policy.selectionIds.map((id) => findNode(document.value, id)).filter((node): node is UiNode => Boolean(node))
+      const visible = !nodes.every((node) => node.props.visible)
+      const next = cloneUiDocument(document.value)
+      for (const id of policy.selectionIds) {
+        const node = findNode(next, id)
+        if (node) node.props.visible = visible
+      }
+      replaceActiveDocument(next, visible ? 'Show nodes' : 'Hide nodes')
     }
     else if (command === 'toggleLock') {
-      const node = findNode(document.value, targetId)
-      if (node) setNodeLocked(targetId, !node.locked)
+      const nodes = policy.selectionIds.map((id) => findNode(document.value, id)).filter((node): node is UiNode => Boolean(node))
+      const locked = !nodes.every((node) => node.locked)
+      const next = cloneUiDocument(document.value)
+      for (const id of policy.selectionIds) {
+        const node = findNode(next, id)
+        if (node) node.locked = locked
+      }
+      replaceActiveDocument(next, locked ? 'Lock nodes' : 'Unlock nodes')
     }
     else if (command === 'delete') removeSelected()
     else return false

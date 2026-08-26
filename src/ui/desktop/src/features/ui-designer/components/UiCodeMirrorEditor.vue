@@ -10,6 +10,7 @@ const props = withDefaults(defineProps<{
   modelValue: string
   label?: string
   rows?: number
+  resizable?: boolean
   mode?: 'javascript' | 'json'
   completionItems?: string[]
   debounceMs?: number
@@ -19,12 +20,13 @@ const props = withDefaults(defineProps<{
   draftCoordinator?: UiDesignerDraftCoordinator
   /** Stable scene identity captured with a delayed edit. */
   sceneId?: string
-}>(), { label: 'JavaScript', rows: 12, mode: 'javascript', debounceMs: 0, fontFamily: '', fontSize: 0 })
+}>(), { label: 'JavaScript', rows: 12, resizable: false, mode: 'javascript', debounceMs: 0, fontFamily: '', fontSize: 0 })
 const { t } = useUiDesignerI18n()
 const emit = defineEmits<{ 'update:modelValue': [value: string, sceneId?: string] }>()
 const host = ref<HTMLElement>()
 const error = ref('')
 let editor: UiCodeEditorHandle | undefined
+let resizeObserver: ResizeObserver | undefined
 let changeTimer: ReturnType<typeof setTimeout> | undefined
 let pendingChange: string | undefined
 let pendingSceneId: string | undefined
@@ -86,11 +88,19 @@ const mountEditor = () => {
   }
 }
 
-onMounted(() => { void nextTick(mountEditor) })
+onMounted(() => {
+  void nextTick(() => {
+    mountEditor()
+    if (props.resizable && host.value && typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => editor?.refreshLayout?.())
+      resizeObserver.observe(host.value)
+    }
+  })
+})
 watch(() => props.modelValue, (value) => {
   if (editor && editor.getValue() !== value) editor.setValue(value)
 })
-onBeforeUnmount(() => { flushPendingChange(); unregisterDraft?.(); editor?.dispose(); editor = undefined })
+onBeforeUnmount(() => { flushPendingChange(); unregisterDraft?.(); resizeObserver?.disconnect(); resizeObserver = undefined; editor?.dispose(); editor = undefined })
 
 const format = () => editor?.format?.()
 const refreshLayout = () => editor?.refreshLayout?.()
@@ -99,7 +109,7 @@ defineExpose({ format, refreshLayout })
 
 <template>
   <div class="code-mirror-editor">
-    <div ref="host" class="editor-host" :style="{ height: `calc(${Math.max(1, props.rows) * 1.5}em + 8px)`, fontFamily: props.fontFamily || 'ui-monospace, SFMono-Regular, Consolas, monospace', fontSize: `${props.fontSize > 0 ? props.fontSize : 12}px` }" />
+    <div ref="host" class="editor-host" :class="{ resizable: props.resizable }" :style="{ height: `calc(${Math.max(1, props.rows) * 1.5}em + 8px)`, fontFamily: props.fontFamily || 'ui-monospace, SFMono-Regular, Consolas, monospace', fontSize: `${props.fontSize > 0 ? props.fontSize : 12}px` }" />
     <el-alert v-if="error" type="error" :closable="false" :title="t('operationError')">
       <details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ error }}</span></details>
     </el-alert>
@@ -109,6 +119,7 @@ defineExpose({ format, refreshLayout })
 <style scoped>
 .code-mirror-editor { display: flex; flex-direction: column; gap: 7px; min-height: 0; }
 .editor-host { border: 1px solid var(--app-border); border-radius: 4px; overflow: hidden; background: #101218; }
+.editor-host.resizable { min-height: 58px; max-height: 360px; overflow: auto; resize: vertical; }
 .editor-host :deep(.CodeMirror) { height: 100%; font-family: inherit; font-size: inherit; }
 .status-detail { color: var(--app-ink-soft); font-size: 10px; }
 </style>

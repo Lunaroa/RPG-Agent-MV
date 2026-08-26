@@ -10,7 +10,7 @@ const props = defineProps<{
   templateOptions: string[]
   templateLabel: (name: string) => string
 }>()
-const emit = defineEmits<{ 'update:modelValue': [value: boolean]; 'update:template': [value: string]; create: []; cancel: [] }>()
+const emit = defineEmits<{ 'update:modelValue': [value: boolean]; 'update:template': [value: string]; nameEdited: []; create: []; cancel: [] }>()
 const { t } = useUiDesignerI18n()
 const sceneNameValid = computed(() => isValidUiDesignerSceneName(props.draft.name))
 const sceneNameError = computed(() => sceneNameValid.value ? '' : t('sceneNameInvalid'))
@@ -21,7 +21,7 @@ const close = (visible: boolean) => { if (!visible) emit('cancel'); emit('update
   <el-dialog :model-value="props.modelValue" :title="t('newScene')" width="min(620px, 92vw)" destroy-on-close data-ui-id="ui-designer-new-scene-dialog" data-testid="ui-designer-new-scene-dialog" @update:model-value="close">
     <el-form label-position="top">
       <el-form-item data-ui-id="ui-designer-new-scene-name-field" data-testid="ui-designer-new-scene-name-field" :label="t('sceneName')" :error="sceneNameError">
-        <el-input v-model="props.draft.name" data-ui-id="ui-designer-new-scene-name" data-testid="ui-designer-new-scene-name" :aria-label="t('sceneName')" />
+        <el-input :model-value="props.draft.name" data-ui-id="ui-designer-new-scene-name" data-testid="ui-designer-new-scene-name" :aria-label="t('sceneName')" @update:model-value="props.draft.name = $event; emit('nameEdited')" />
         <template #error><span v-if="sceneNameError" data-ui-id="ui-designer-new-scene-validation" data-testid="ui-designer-new-scene-validation">{{ sceneNameError }}</span></template>
       </el-form-item>
       <el-form-item :label="t('sceneTemplates')"><el-select :model-value="props.template" @update:model-value="$emit('update:template', $event)"><el-option v-for="name in props.templateOptions" :key="name" :label="props.templateLabel(name)" :value="name" /></el-select></el-form-item>

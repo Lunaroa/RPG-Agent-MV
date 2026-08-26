@@ -7,6 +7,7 @@ import { useUiDesignerLifecycle } from '../composables/useUiDesignerLifecycle'
 import { createUiDesignerShortcutRegistry, type UiDesignerShortcutDisplay } from '../composables/shortcutRegistry'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 import { normalizePaneSize } from '../models/geometry'
+import { isBuiltInUiDesignerTemplate, uiDesignerBuiltInTemplateSceneName } from '../models/templates'
 import UiDesignerCanvas from './UiDesignerCanvas.vue'
 import UiDesignerCodePanel from './UiDesignerCodePanel.vue'
 import UiDesignerJsonPanel from './UiDesignerJsonPanel.vue'
@@ -39,6 +40,7 @@ const runtimePromptBusy = ref(false)
 const runtimePromptDismissedProject = ref('')
 const newSceneDraft = reactive({ name: '', width: 816, height: 624, sceneBase: 'Scene_Base' })
 const newSceneTemplate = ref('blank')
+const newSceneNameAutomatic = ref(true)
 const leftPaneWidth = ref(260)
 const centerPaneWidth = ref(640)
 const rightPaneWidth = ref(320)
@@ -106,11 +108,19 @@ const openNewScene = () => {
   const size = rawDesigner.newSceneCanvasSize.value
   if (!size) return
   newSceneDraft.name = `Scene_New_${rawDesigner.scenes.value.length + 1}`
+  newSceneNameAutomatic.value = true
   newSceneDraft.width = size.width
   newSceneDraft.height = size.height
   newSceneDraft.sceneBase = 'Scene_Base'
   newSceneTemplate.value = 'blank'
   surface.value = 'newScene'
+}
+const selectNewSceneTemplate = (template: string) => {
+  newSceneTemplate.value = template
+  if (!newSceneNameAutomatic.value) return
+  newSceneDraft.name = isBuiltInUiDesignerTemplate(template)
+    ? uiDesignerBuiltInTemplateSceneName(template)
+    : `Scene_New_${rawDesigner.scenes.value.length + 1}`
 }
 const createNewScene = () => {
   const created = rawDesigner.newScene(newSceneDraft.name, { width: newSceneDraft.width, height: newSceneDraft.height, sceneBase: newSceneDraft.sceneBase, template: newSceneTemplate.value === 'blank' ? undefined : newSceneTemplate.value })
@@ -333,7 +343,7 @@ onBeforeUnmount(() => {
       <div v-if="!showWelcome" class="workspace-splitter" role="separator" :aria-label="t('rightPane')" @pointerdown="beginPaneDrag('right', $event)" />
       <UiDesignerInspector v-if="!showWelcome" ref="inspectorRef" :designer="designer" />
     </div>
-    <UiDesignerNewSceneSurface v-if="surface === 'newScene'" :model-value="true" :draft="newSceneDraft" :template="newSceneTemplate" :template-options="sceneTemplateOptions" :template-label="sceneTemplateLabel" @update:model-value="closeSurface" @update:template="newSceneTemplate = $event" @create="createNewScene" @cancel="surface = null" />
+    <UiDesignerNewSceneSurface v-if="surface === 'newScene'" :model-value="true" :draft="newSceneDraft" :template="newSceneTemplate" :template-options="sceneTemplateOptions" :template-label="sceneTemplateLabel" @update:model-value="closeSurface" @update:template="selectNewSceneTemplate" @name-edited="newSceneNameAutomatic = false" @create="createNewScene" @cancel="surface = null" />
     <UiDesignerSettingsSurface v-if="surface === 'settings'" :model-value="true" :designer="designer" :left-pane-width="leftPaneWidth" :right-pane-width="rightPaneWidth" :clamp-pane="(side, value) => clampPane(side, value)" @update:model-value="closeSurface" />
     <UiDesignerExportSurface v-if="surface === 'export'" :model-value="true" :designer="designer" :export-path="exportPath" :export-completed="exportCompleted" :apply-project-changes="props.applyProjectChanges" @update:model-value="closeSurface" @update:export-path="exportPath = $event" @completed="exportCompleted = $event" />
     <UiDesignerHelpSurface v-if="surface === 'help' || surface === 'shortcuts' || surface === 'tour'" :model-value="true" :surface="surface" :tour-step="tourStep" :shortcut-bindings="shortcutBindings" @update:model-value="closeSurface" @update:tour-step="tourStep = $event" @complete="void completeTour()" />

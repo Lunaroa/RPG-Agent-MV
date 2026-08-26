@@ -57,6 +57,7 @@ import {
   validateTreeInvariants,
   UI_DESIGNER_BUILT_IN_TEMPLATES,
   createBuiltInUiDesignerTemplate,
+  uiDesignerBuiltInTemplateSceneName,
   reorderEventActions,
 } from './index'
 
@@ -91,6 +92,8 @@ describe('ui designer document model', () => {
     assert.equal(container?.props.x, 70)
     assert.equal(firstSlot?.props.x, 94)
     assert.equal(firstSlot?.props.y, 104)
+    assert.equal(uiDesignerBuiltInTemplateSceneName('builtin:menu'), 'Scene_Menu')
+    assert.equal(uiDesignerBuiltInTemplateSceneName('builtin:logo-animation'), 'Scene_LogoAnimation')
   })
 
   test('runtime scene data import adds editor defaults and remains a dirty editable copy', () => {

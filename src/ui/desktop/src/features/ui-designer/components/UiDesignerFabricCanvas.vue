@@ -72,6 +72,19 @@ const objectNode = (object?: FabricObject) => {
 }
 const objectList = (target: FabricObject) => target instanceof ActiveSelection ? target.getObjects() : [target]
 const selectedObjectIds = (target?: FabricObject) => target ? objectList(target).map(objectNodeId).filter((id): id is string => Boolean(id)) : []
+const contextNode = (target?: FabricObject) => {
+  const direct = objectNode(target)
+  if (direct) return direct
+  if (!(target instanceof ActiveSelection)) return undefined
+  const selectedId = selectedObjectIds(target)[0] ?? unwrap(props.designer.selectedIds)[0]
+  return selectedId ? nodeById(selectedId) : undefined
+}
+const contextTargetAt = (event: MouseEvent, target?: FabricObject) => {
+  if (target || !canvas) return target
+  const active = canvas.getActiveObject()
+  if (!(active instanceof ActiveSelection)) return undefined
+  return active.containsPoint(canvas.getScenePoint(event)) ? active : undefined
+}
 
 const applyControllerSelection = (target?: FabricObject) => {
   // Reconcile removes and recreates objects; fabric reports that as selection
@@ -473,8 +486,9 @@ onMounted(() => {
   canvas.on('mouse:over', (event) => props.designer.setHoveredNode(objectNodeId(event.target)))
   canvas.on('mouse:out', () => props.designer.setHoveredNode(undefined))
   canvas.on('mouse:down', (event) => {
-    if ((event.e as MouseEvent).button !== 2) return
-    emit('contextmenu', { event: event.e as MouseEvent, node: objectNode(event.target) })
+    const pointerEvent = event.e as MouseEvent
+    if (pointerEvent.button !== 2) return
+    emit('contextmenu', { event: pointerEvent, node: contextNode(contextTargetAt(pointerEvent, event.target)) })
   })
   canvas.on('text:changed', (event) => {
     const object = event.target

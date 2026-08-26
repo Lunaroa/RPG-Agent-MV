@@ -40,8 +40,12 @@ export function isBuiltInUiDesignerTemplate(name: string): name is UiDesignerBui
   return (UI_DESIGNER_BUILT_IN_TEMPLATES as readonly string[]).includes(name)
 }
 
+export function uiDesignerBuiltInTemplateSceneName(name: UiDesignerBuiltInTemplate): string {
+  return `Scene_${name.slice('builtin:'.length).split('-').map((part) => part[0].toUpperCase() + part.slice(1)).join('')}`
+}
+
 export function createBuiltInUiDesignerTemplate(name: UiDesignerBuiltInTemplate): UiDesignerDocument {
-  const sceneName = `Scene_${name.slice('builtin:'.length).split('-').map((part) => part[0].toUpperCase() + part.slice(1)).join('')}`
+  const sceneName = uiDesignerBuiltInTemplateSceneName(name)
   const document = createUiDocument(sceneName)
   if (name === 'builtin:title') {
     addNode(document, 'text', { id: 'builtin_title_heading', name: 'TitleHeading', parentId: 'node_root', x: 208, y: 130, width: 400, height: 90 })

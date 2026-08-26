@@ -5,6 +5,7 @@ import type { UiDesignerDocument, UiNode, UiPoint, UiProjectResourceCatalog, UiR
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import { accumulateRotationDegrees, nodeRect, normalizeRotationDegrees, pointerResizeDelta, type UiResizeHandle } from '../models/geometry'
 import { collectNodeSubtreeIds, selectionRootNodeIds } from '../models/tree'
+import { resolveNodeActionPolicy } from '../models/actions'
 import {
   animateFabricNode,
   applyFabricNodeGeometry,
@@ -112,7 +113,8 @@ const syncFabricSelection = () => {
   if (!selected.length) canvas.discardActiveObject()
   else if (selected.length === 1) canvas.setActiveObject(selected[0])
   else {
-    const selection = new ActiveSelection(selected, { canvas, hasControls: false, lockScalingX: true, lockScalingY: true, lockRotation: true })
+    const transformable = resolveNodeActionPolicy(props.document, ids, ids[0], false).canTransform
+    const selection = new ActiveSelection(selected, { canvas, hasControls: false, lockScalingX: true, lockScalingY: true, lockRotation: true, lockMovementX: !transformable, lockMovementY: !transformable })
     canvas.setActiveObject(selection)
   }
   canvas.requestRenderAll()

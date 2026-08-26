@@ -20,6 +20,7 @@ import { UI_BUTTON_WINDOW_SKIN_RESOURCE_PATH } from '@contract/ui-designer-resou
 import { collectNodeSubtreeIds, resolveTreeOrderRanks } from '../models/tree'
 import { resolveUiListGridExtent } from '../models/listLayout'
 import { resizeCursor, resolveUiNodeResizePatch, type UiResizeHandle } from '../models/geometry'
+import { subtreeContainsLockedNode } from '../models/actions'
 import { uiDesignerText } from '../i18n'
 import { UiLayoutTextbox } from './uiLayoutTextbox'
 import { normalizeUiSingleLineText } from './uiSingleLineText'
@@ -170,6 +171,10 @@ const nodeAncestors = (document: UiDesignerDocument, node: UiNode) => {
 const commonObjectOptions = (node: UiNode, document?: UiDesignerDocument) => {
   const ancestors = document ? nodeAncestors(document, node) : []
   const locked = node.locked || ancestors.some((ancestor) => ancestor.locked)
+  // A node whose subtree contains a locked descendant fails the shared
+  // transform policy; block the canvas gesture itself so the visual never
+  // diverges from the document when the commit is refused.
+  const transformLocked = locked || (document ? subtreeContainsLockedNode(document, node) : false)
   const visible = node.props.visible && ancestors.every((ancestor) => ancestor.props.visible)
   return ({
   left: node.props.x,
@@ -181,14 +186,14 @@ const commonObjectOptions = (node: UiNode, document?: UiDesignerDocument) => {
   visible,
   selectable: true,
   evented: true,
-  lockMovementX: locked,
-  lockMovementY: locked,
-  lockScalingX: locked,
-  lockScalingY: locked,
-  lockRotation: locked,
+  lockMovementX: transformLocked,
+  lockMovementY: transformLocked,
+  lockScalingX: transformLocked,
+  lockScalingY: transformLocked,
+  lockRotation: transformLocked,
   centeredRotation: true,
-  hasControls: !locked,
-  hoverCursor: locked ? 'not-allowed' : 'move',
+  hasControls: !transformLocked,
+  hoverCursor: transformLocked ? 'not-allowed' : 'move',
   borderColor: '#d06b42',
   cornerColor: '#d06b42',
   cornerStrokeColor: '#171a24',

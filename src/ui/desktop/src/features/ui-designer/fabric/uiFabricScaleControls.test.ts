@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { Point, Rect, controlsUtils } from 'fabric'
 import { test } from 'vitest'
-import { configureFabricScaleControls } from './fabricNodeFactory'
+import { configureFabricScaleControls, createFabricNodeObject } from './fabricNodeFactory'
+import { createDefaultNode, createUiDocument } from '../models/document'
 
 const handleKeys = ['tl', 'mt', 'tr', 'mr', 'br', 'mb', 'bl', 'ml'] as const
 const expectedByAngle = {
@@ -32,4 +33,29 @@ test('all eight resize controls feed the dimension-resize gesture and rotate the
     assert.equal(object.controls.mt.actionHandler, controlsUtils.scalingY)
     if (angle === 0) assert.equal(cursors[2], 'nesw-resize')
   }
+})
+
+test('a container with a locked descendant blocks canvas transforms so a refused commit cannot desync the view', async () => {
+  const document = createUiDocument('Scene_Lock')
+  const container = createDefaultNode('container', { id: 'node_box', name: 'Box', parentId: 'node_root' })
+  const child = createDefaultNode('text', { id: 'node_box_label', name: 'BoxLabel', parentId: 'node_box' })
+  child.locked = true
+  document.nodes.push(container, child)
+  document.nodes[0].children.push(container.id)
+  container.children.push(child.id)
+  document.zOrder.push(container.id)
+
+  const object = await createFabricNodeObject(container, null, document)
+  assert.equal(object.lockScalingX, true)
+  assert.equal(object.lockScalingY, true)
+  assert.equal(object.lockMovementX, true)
+  assert.equal(object.lockMovementY, true)
+  assert.equal(object.lockRotation, true)
+  assert.equal(object.hasControls, false)
+  assert.equal(object.selectable, true)
+
+  child.locked = false
+  const unlocked = await createFabricNodeObject(container, null, document)
+  assert.equal(unlocked.lockScalingX, false)
+  assert.equal(unlocked.hasControls, true)
 })

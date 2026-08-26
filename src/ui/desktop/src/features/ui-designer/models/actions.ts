@@ -33,7 +33,7 @@ function topLevelSelection(document: UiDesignerDocument, ids: readonly string[])
   return document.nodes.filter((node) => selected.has(node.id) && (node.parentId === null || !selected.has(node.parentId)))
 }
 
-function subtreeContainsLockedNode(document: UiDesignerDocument, node: UiNode): boolean {
+export function subtreeContainsLockedNode(document: UiDesignerDocument, node: UiNode): boolean {
   const pending = [node]
   const seen = new Set<string>()
   while (pending.length) {

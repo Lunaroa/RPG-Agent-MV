@@ -79,12 +79,13 @@ describe('UI Designer shared project asset workspace', () => {
     assert.match(buttonStates, /thumbnailUrl[\s\S]*previewUrl/)
   })
 
-  test('renders the fixed six Inspector groups with advanced settings collapsed by default', () => {
+  test('renders the fixed six Inspector groups with advanced settings first and expanded by default', () => {
     compileVue('UiDesignerInspector.vue', inspector)
-    assert.match(inspector, /\['identity', 'contentResources', 'geometry', 'appearance', 'behavior', 'advanced'\]/)
+    assert.match(inspector, /\['advanced', 'identity', 'contentResources', 'geometry', 'appearance', 'behavior'\]/)
     assert.match(inspector, /<el-collapse v-model="expandedPurposes"/)
     assert.match(inspector, /<el-collapse-item v-for="group in fieldGroups"/)
-    assert.match(inspector, /PURPOSE_ORDER\.filter\(\(purpose\) => purpose !== 'advanced'\)/)
+    assert.match(inspector, /ref<InspectorPurpose\[\]>\(\[\.\.\.PURPOSE_ORDER\]\)/)
+    assert.doesNotMatch(inspector, /performance-line|designer\.performance/)
     assert.match(inspector, /group\.purpose === 'identity'[\s\S]*:model-value="nodeNameDraft"/)
     assert.match(inspector, /draftCoordinator\.register\(commitNodeName/)
     assert.match(inspector, /@update:model-value="previewNodeName"/)

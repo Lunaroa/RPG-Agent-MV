@@ -65,7 +65,7 @@ test('narrow layouts preserve the inspector without duplicating resources and ev
   assert.doesNotMatch(shell, /@media \(max-width: 900px\)[^{]*\{[\s\S]*\.inspector-panel \{ display: none;/)
   assert.doesNotMatch(inspector, /ui-designer-inspector-resources/)
   assert.doesNotMatch(inspector, /ui-designer-inspector-events-shortcut/)
-  assert.match(inspector, /\['identity', 'contentResources', 'geometry', 'appearance', 'behavior', 'advanced'\]/)
+  assert.match(inspector, /\['advanced', 'identity', 'contentResources', 'geometry', 'appearance', 'behavior'\]/)
   assert.doesNotMatch(inspector, /inspector-primary-actions/)
   assert.match(inspector, /v-if="!selectedNode"[\s\S]*v-else-if="activeSection === 'properties'"[\s\S]*<UiDesignerEvents\s+v-else-if="activeSection === 'events'"/)
 })

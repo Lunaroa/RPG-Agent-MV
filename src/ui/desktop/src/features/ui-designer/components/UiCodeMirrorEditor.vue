@@ -121,5 +121,6 @@ defineExpose({ format, refreshLayout })
 .editor-host { border: 1px solid var(--app-border); border-radius: 4px; overflow: hidden; background: #101218; }
 .editor-host.resizable { min-height: 58px; max-height: 360px; overflow: auto; resize: vertical; }
 .editor-host :deep(.CodeMirror) { height: 100%; font-family: inherit; font-size: inherit; }
+.editor-host :deep(.CodeMirror-vscrollbar), .editor-host :deep(.CodeMirror-hscrollbar), .editor-host :deep(.CodeMirror-scrollbar-filler), .editor-host :deep(.CodeMirror-gutter-filler) { display: none !important; }
 .status-detail { color: var(--app-ink-soft); font-size: 10px; }
 </style>

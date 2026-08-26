@@ -10,10 +10,8 @@ const runtimeLabels: Record<UiRuntimeStatus['state'], UiDesignerMessageKey> = {
   unknown: 'runtimeUnknown', missing: 'runtimeMissing', 'file-unconfigured': 'runtimeFileUnconfigured', 'configured-disabled': 'runtimeConfiguredDisabled', 'enabled-compatible': 'runtimeEnabledCompatible', 'version-too-old': 'runtimeVersionTooOld', 'content-mismatch': 'runtimeContentMismatch', 'staged-pending': 'runtimeStagedPending', error: 'runtimeError',
 }
 const previewLabels: Record<UiPreviewState, UiDesignerMessageKey> = { idle: 'previewIdle', unavailable: 'previewUnavailable', preparing: 'previewPreparing', running: 'previewRunning', stopped: 'previewStopped', error: 'previewError' }
-const performanceLabels: Record<'smooth' | 'moderate' | 'mayStutter', UiDesignerMessageKey> = { smooth: 'performanceSmooth', moderate: 'performanceModerate', mayStutter: 'performanceMayStutter' }
 const runtimeLabel = (state: UiRuntimeStatus['state']) => t(runtimeLabels[state])
 const previewLabel = (state: UiPreviewState) => t(previewLabels[state])
-const performanceLabel = (rating: 'smooth' | 'moderate' | 'mayStutter') => t(performanceLabels[rating])
 const operationSummary = () => designer.previewStatus === 'error' ? t('editorPreviewFailed') : designer.previewStatus === 'unavailable' || designer.fileStatus === 'error' || designer.resourceStatus === 'error' || designer.actionError ? t('operationError') : previewLabel(designer.previewStatus)
 const operationDetails = () => designer.previewMessage || designer.fileMessage || designer.resourceMessage || designer.actionError
 const compatibilitySummary = () => {
@@ -28,7 +26,6 @@ const compatibilitySummary = () => {
 <template>
   <footer class="status-bar">
     <span class="status-item" :class="{ warning: designer.isDirty }">{{ designer.isDirty ? t('unsaved') : t('saved') }}</span>
-    <span class="status-item">{{ designer.performance.nodeCount }} {{ t('nodes') }} · {{ performanceLabel(designer.performance.rating) }}</span>
     <span class="status-item" :class="{ error: designer.validation.errors.length > 0 }">{{ designer.validation.errors.length ? `${designer.validation.errors.length} ${t('validationErrors')}` : t('valid') }}</span>
     <span v-if="designer.runtimeDiagnostics.length" class="status-item warning">{{ t('runtimeDiagnostics') }}: {{ designer.runtimeDiagnostics.length }}</span>
     <span class="status-item">{{ t('runtime') }}: {{ runtimeLabel(designer.runtimeStatus.state) }}</span>

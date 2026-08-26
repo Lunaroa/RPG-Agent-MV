@@ -286,9 +286,10 @@ onMounted(async () => {
   modifier('e', () => { exportCompleted.value = false; surface.value = 'export' }, false, 'shortcutExport')
   modifier('p', toggleEditorPreview, false, 'shortcutEditorPreview')
   modifier(';', () => { designer.setCanvasSetting('guidesVisible', !designer.document.canvas.guidesVisible) }, false, 'shortcutToggleGuides')
-  // Shift+arrows remain an authoring nudge. Button focus navigation belongs
-  // exclusively to editor/game preview and is handled by the runtime.
+  // Bare arrows nudge 1px, Shift+arrows nudge 10px. During editor/game preview,
+  // bare arrows belong to runtime button focus navigation, so nudge is skipped.
   for (const [key, delta] of [['ArrowLeft', { x: -1, y: 0 }], ['ArrowRight', { x: 1, y: 0 }], ['ArrowUp', { x: 0, y: -1 }], ['ArrowDown', { x: 0, y: 1 }]] as const) {
+    shortcutRegistry.register({ key, description: 'shortcutNudge', handler: () => { if (!designer.isPreviewing && !designer.isEditorPreviewing) designer.nudgeSelected({ x: delta.x, y: delta.y }) } })
     shortcutRegistry.register({ key, shift: true, description: 'shortcutNudge', handler: () => { designer.nudgeSelected({ x: delta.x * 10, y: delta.y * 10 }) } })
   }
   shortcutRegistry.register({ key: 'Delete', description: 'shortcutDelete', handler: () => { designer.removeSelected() } })

@@ -232,8 +232,6 @@ const fieldLabel = (field: FieldDescriptor) => {
   if (node?.type === 'progressBar' && field.key === 'fillImage') return t('fillImageOptional')
   return labelFor(field.key)
 }
-const performanceLabel = (rating: 'smooth' | 'moderate' | 'mayStutter') => t(rating === 'smooth' ? 'performanceSmooth' : rating === 'moderate' ? 'performanceModerate' : 'performanceMayStutter')
-const performanceSuggestionLabel = (suggestion: string) => suggestion.startsWith('Consider merging') ? t('performanceSuggestionNodeCount') : suggestion.startsWith('Multiple particle') ? t('performanceSuggestionParticles') : suggestion.startsWith('Code-mode') ? t('performanceSuggestionCode') : suggestion.startsWith('onUpdate') ? t('performanceSuggestionUpdate') : t('operationError')
 const validationLabels: Partial<Record<UiValidationIssue['code'], UiDesignerMessageKey>> = { 'invalid-value': 'invalidValue', 'invalid-code': 'invalidCode', 'invalid-reference': 'invalidReference', 'missing-resource': 'missingResource', 'invalid-document-shape': 'validationIssue', 'scene-name-empty': 'invalidValue', 'scene-name-invalid': 'invalidValue' }
 const validationIssueLabel = (issue: UiValidationIssue) => t(validationLabels[issue.code] ?? 'validationIssue')
 const issuesForField = (field: FieldDescriptor): UiValidationIssue[] => selectedNode.value ? nodeValidationErrors.value.filter((issue) => issue.path?.endsWith(`.${field.key}`) || issue.path?.endsWith(field.key)) : []
@@ -291,8 +289,8 @@ const fields = computed<FieldDescriptor[]>(() => {
   return [...baseFields, ...special[node.type], ...inferred].map((field) => ({ ...field, purpose: purposeForField(field), help: field.help ?? t('propertyHelpGeneric') }))
 })
 
-const PURPOSE_ORDER: InspectorPurpose[] = ['identity', 'contentResources', 'geometry', 'appearance', 'behavior', 'advanced']
-const expandedPurposes = ref<InspectorPurpose[]>(PURPOSE_ORDER.filter((purpose) => purpose !== 'advanced'))
+const PURPOSE_ORDER: InspectorPurpose[] = ['advanced', 'identity', 'contentResources', 'geometry', 'appearance', 'behavior']
+const expandedPurposes = ref<InspectorPurpose[]>([...PURPOSE_ORDER])
 const purposeLabelKey: Record<InspectorPurpose, UiDesignerMessageKey> = {
   identity: 'inspectorGroupIdentity',
   geometry: 'inspectorGroupGeometry',
@@ -530,19 +528,6 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
             :resource-picker-disabled="!designer.hasProject"
             @update="updateProperty('frames', $event)"
           />
-          <template v-if="group.purpose === 'advanced'">
-            <el-divider />
-            <div class="inspector-section-title">{{ t('performance') }}</div>
-            <el-popover placement="top" width="320" trigger="click">
-              <template #reference><button type="button" class="performance-line"><span>{{ performanceLabel(designer.performance.rating) }}</span><span>{{ designer.performance.nodeCount }} {{ t('nodes') }}</span></button></template>
-              <div class="performance-details">
-                <div>{{ designer.performance.particleSystems }} · {{ designer.performance.maxParticleTotal }} {{ t('particles') }}</div>
-                <div>{{ designer.performance.frameCount }} {{ t('frames') }} · {{ designer.performance.codeModeProperties }} {{ t('codeProperties') }}</div>
-                <ul v-if="designer.performance.suggestions.length"><li v-for="suggestion in designer.performance.suggestions" :key="suggestion"><span>{{ performanceSuggestionLabel(suggestion) }}</span><details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ suggestion }}</span></details></li></ul>
-                <span v-else>{{ t('valid') }}</span>
-              </div>
-            </el-popover>
-          </template>
         </el-collapse-item>
       </el-collapse>
     </div>
@@ -638,5 +623,4 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
 .resource-workspace-resize-edge.nw, .resource-workspace-resize-edge.sw { left: -5px; }
 .inspector-empty { display: grid; place-items: center; flex: 1; min-height: 180px; color: var(--app-ink-soft); font-size: 12px; text-align: center; }
 .inspector-section-title { color: var(--app-ink-soft); font-size: 11px; font-weight: 650; text-transform: uppercase; }
-.performance-line { display: flex; justify-content: space-between; width: 100%; padding: 0; border: 0; background: transparent; color: var(--app-ink-soft); cursor: pointer; font-size: 11px; text-align: left; }.performance-details { color: var(--app-ink); font-size: 11px; line-height: 1.5; }.performance-details ul { margin: 6px 0 0; padding-left: 16px; }.performance-details li { margin-bottom: 4px; }.performance-details .status-detail { color: var(--app-ink-soft); font-size: 10px; }
 </style>

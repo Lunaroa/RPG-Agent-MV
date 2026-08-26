@@ -21,7 +21,24 @@ export interface UiListGridCell {
   overflow: boolean
 }
 
+export type UiListGridResizeProps = Pick<UiListNode['props'], 'width' | 'height' | 'columnWidths' | 'rowHeights' | 'maxWidth' | 'maxHeight'>
+
 const finite = (value: unknown, fallback: number): number => (typeof value === 'number' && Number.isFinite(value) ? value : fallback)
+
+const distributeTrackSizes = (source: readonly number[], targetTotal: number): number[] => {
+  const count = Math.max(1, source.length)
+  const total = Math.max(count, Math.round(targetTotal))
+  const remaining = total - count
+  const weights = source.map((value) => Math.max(0, finite(value, 0)))
+  const weightTotal = weights.reduce((sum, value) => sum + value, 0)
+  const quotas = weights.map((value) => remaining * (weightTotal > 0 ? value / weightTotal : 1 / count))
+  const result = quotas.map((value) => 1 + Math.floor(value))
+  let remainder = total - result.reduce((sum, value) => sum + value, 0)
+  const order = quotas.map((value, index) => ({ index, fraction: value - Math.floor(value) }))
+    .sort((left, right) => right.fraction - left.fraction || left.index - right.index)
+  for (let index = 0; remainder > 0; index += 1, remainder -= 1) result[order[index % order.length].index] += 1
+  return result
+}
 
 export function resolveUiListGridLayout(props: UiListNode['props'], itemCount: number): UiListGridLayout {
   const configuredColumns = Math.max(1, Math.round(finite(props.columns, 1)))
@@ -81,4 +98,25 @@ export function resolveUiListGridExtent(props: UiListNode['props']): { width: nu
   const configuredRows = Math.max(1, Math.round(finite(props.rows, 0)))
   const layout = resolveUiListGridLayout(props, Math.max(1, configuredColumns * configuredRows))
   return { width: layout.totalWidth, height: layout.totalHeight }
+}
+
+/** Resize the designer-time outer frame while keeping row/column gaps unchanged. */
+export function resizeUiListGridToExtent(props: UiListNode['props'], targetWidth: number, targetHeight: number): UiListGridResizeProps {
+  const configuredColumns = Math.max(1, Math.round(finite(props.columns, 1)))
+  const configuredRows = Math.max(1, Math.round(finite(props.rows, 0)))
+  const layout = resolveUiListGridLayout(props, configuredColumns * configuredRows)
+  const horizontalGaps = layout.columnGap * Math.max(0, layout.columns - 1)
+  const verticalGaps = layout.rowGap * Math.max(0, layout.rows - 1)
+  const columnWidths = distributeTrackSizes(layout.columnWidths, Math.max(layout.columns, targetWidth - horizontalGaps))
+  const rowHeights = distributeTrackSizes(layout.rowHeights, Math.max(layout.rows, targetHeight - verticalGaps))
+  const resizedWidth = columnWidths.reduce((sum, value) => sum + value, 0) + horizontalGaps
+  const resizedHeight = rowHeights.reduce((sum, value) => sum + value, 0) + verticalGaps
+  return {
+    width: Math.max(1, Math.round(columnWidths.reduce((sum, value) => sum + value, 0) / columnWidths.length)),
+    height: Math.max(1, Math.round(rowHeights.reduce((sum, value) => sum + value, 0) / rowHeights.length)),
+    columnWidths,
+    rowHeights,
+    maxWidth: props.maxWidth > 0 ? resizedWidth : 0,
+    maxHeight: props.maxHeight > 0 ? resizedHeight : 0,
+  }
 }

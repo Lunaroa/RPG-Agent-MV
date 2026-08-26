@@ -19,6 +19,7 @@ import type {
 import { UI_BUTTON_WINDOW_SKIN_RESOURCE_PATH } from '@contract/ui-designer-resources'
 import { collectNodeSubtreeIds, resolveTreeOrderRanks } from '../models/tree'
 import { resolveUiListGridExtent } from '../models/listLayout'
+import { resizeCursor, resolveUiNodeResizePatch, type UiResizeHandle } from '../models/geometry'
 import { uiDesignerText } from '../i18n'
 import { UiLayoutTextbox } from './uiLayoutTextbox'
 import { normalizeUiSingleLineText } from './uiSingleLineText'
@@ -102,13 +103,22 @@ export const resolveNativeTextProfile = async (catalog: UiProjectResourceCatalog
 }
 
 const geometryKeys = new Set(['x', 'y', 'width', 'height', 'scaleX', 'scaleY', 'rotate', 'opacity', 'visible', 'anchorX', 'anchorY', 'zIndex'])
-const scaleControlKeys = ['tl', 'mt', 'tr', 'mr', 'br', 'mb', 'bl', 'ml'] as const
+const scaleControlHandles = {
+  tl: 'nw',
+  mt: 'n',
+  tr: 'ne',
+  mr: 'e',
+  br: 'se',
+  mb: 's',
+  bl: 'sw',
+  ml: 'w',
+} as const satisfies Record<string, UiResizeHandle>
 
 export function configureFabricScaleControls(object: FabricObject) {
-  for (const key of scaleControlKeys) {
+  for (const [key, handle] of Object.entries(scaleControlHandles)) {
     const control = object.controls[key]
     if (!control) continue
-    control.cursorStyleHandler = controlsUtils.scaleCursorStyleHandler
+    control.cursorStyleHandler = (_event, _control, target) => resizeCursor(handle, target.getTotalAngle())
     control.actionHandler = key === 'ml' || key === 'mr'
       ? controlsUtils.scalingX
       : key === 'mt' || key === 'mb'
@@ -551,7 +561,6 @@ export async function createFabricNodeObject(node: UiNode, catalog: UiProjectRes
     extra = { animated: true }
   }
   const decorated = decorate(object, node, signature, document, extra)
-  if (node.type === 'list') decorated.set({ lockScalingX: true, lockScalingY: true })
   applyFabricNodeGeometry(decorated, node, document)
   return decorated
 }
@@ -620,9 +629,7 @@ export function applyFabricNodeGeometry(object: UiFabricNodeObject, node: UiNode
   if (object instanceof UiParticleObject && node.type === 'particle') object.setParticleState(node.props)
   else if (object instanceof Group) applyGroupGeometry(object, node)
   else if (object instanceof Rect && node.type === 'list') {
-    // The list boundary shows the derived grid extent; its size is not an
-    // independent prop, so direct scaling stays locked and geometry sync
-    // rewrites it here.
+    // The boundary is the derived grid extent; dragging it updates track sizes.
     const extent = resolveUiListGridExtent(node.props)
     object.set({ width: extent.width, height: extent.height })
   }
@@ -637,22 +644,16 @@ export function applyFabricNodeGeometry(object: UiFabricNodeObject, node: UiNode
     scaleX: node.props.scaleX,
     scaleY: node.props.scaleY,
   })
-  if (node.type === 'list') object.set({ lockScalingX: true, lockScalingY: true })
   applyHierarchyClipPath(object, node, document)
   object.setCoords()
 }
 
 export function positionFabricNodeFromRect(object: UiFabricNodeObject, node: UiNode, document: UiDesignerDocument, rect: { x: number; y: number; width: number; height: number }) {
-  const scaleX = Math.max(Math.abs(Number.isFinite(node.props.scaleX) ? node.props.scaleX : 1), 0.0001)
-  const scaleY = Math.max(Math.abs(Number.isFinite(node.props.scaleY) ? node.props.scaleY : 1), 0.0001)
   const draftNode = {
     ...node,
     props: {
       ...node.props,
-      x: rect.x + rect.width * node.props.anchorX,
-      y: rect.y + rect.height * node.props.anchorY,
-      width: rect.width / scaleX,
-      height: rect.height / scaleY,
+      ...resolveUiNodeResizePatch(node, rect),
     },
   } as UiNode
   const draftDocument = { ...document, nodes: document.nodes.map((candidate) => candidate.id === node.id ? draftNode : candidate) }

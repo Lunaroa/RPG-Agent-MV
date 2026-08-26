@@ -1,5 +1,5 @@
 import type { UiDesignerDocument, UiGuide, UiNode, UiPoint, UiRect, UiSnapResult, UiViewport } from '@contract/ui-designer'
-import { resolveUiListGridExtent } from './listLayout'
+import { resizeUiListGridToExtent, resolveUiListGridExtent } from './listLayout'
 import { resolveTreeOrderRanks } from './tree'
 import {
   UI_DESIGNER_PANE_LIMITS,
@@ -71,6 +71,38 @@ export type UiNodeGeometryTransaction =
   | { kind: 'properties'; patch: Partial<Pick<UiNode['props'], 'x' | 'y' | 'width' | 'height'>> }
   | { kind: 'rect'; rect: UiRect }
 
+export interface UiNodeResizePatch {
+  x: number
+  y: number
+  width: number
+  height: number
+  columnWidths?: number[]
+  rowHeights?: number[]
+  maxWidth?: number
+  maxHeight?: number
+}
+
+export function resolveUiNodeResizePatch(node: UiNode, rect: UiRect): UiNodeResizePatch {
+  const normalized = normalizeGeometryRect(rect, nodeRect(node))
+  const scaleX = Math.max(Math.abs(Number.isFinite(node.props.scaleX) ? node.props.scaleX : 1), 0.0001)
+  const scaleY = Math.max(Math.abs(Number.isFinite(node.props.scaleY) ? node.props.scaleY : 1), 0.0001)
+  const base = {
+    x: normalizeUiDesignerInteger(normalized.x + normalized.width * node.props.anchorX, node.props.x),
+    y: normalizeUiDesignerInteger(normalized.y + normalized.height * node.props.anchorY, node.props.y),
+  }
+  if (node.type !== 'list') {
+    return {
+      ...base,
+      width: normalizeUiDesignerInteger(normalized.width / scaleX, node.props.width, 1),
+      height: normalizeUiDesignerInteger(normalized.height / scaleY, node.props.height, 1),
+    }
+  }
+  return {
+    ...base,
+    ...resizeUiListGridToExtent(node.props, normalized.width / scaleX, normalized.height / scaleY),
+  }
+}
+
 /** The sole document mutation path for node x/y/width/height. */
 export function applyNodeGeometryTransaction(document: UiDesignerDocument, nodeId: string, transaction: UiNodeGeometryTransaction): UiDesignerDocument {
   const next = cloneDocument(document)
@@ -84,13 +116,7 @@ export function applyNodeGeometryTransaction(document: UiDesignerDocument, nodeI
     if (patch.height !== undefined) node.props.height = normalizeUiDesignerInteger(patch.height, node.props.height, 1)
     return normalizeUiDesignerDocumentGeometry(next)
   }
-  const rect = normalizeGeometryRect(transaction.rect, nodeRect(node))
-  const scaleX = Math.max(Math.abs(Number.isFinite(node.props.scaleX) ? node.props.scaleX : 1), 0.0001)
-  const scaleY = Math.max(Math.abs(Number.isFinite(node.props.scaleY) ? node.props.scaleY : 1), 0.0001)
-  node.props.x = normalizeUiDesignerInteger(rect.x + rect.width * node.props.anchorX, node.props.x)
-  node.props.y = normalizeUiDesignerInteger(rect.y + rect.height * node.props.anchorY, node.props.y)
-  node.props.width = normalizeUiDesignerInteger(rect.width / scaleX, node.props.width, 1)
-  node.props.height = normalizeUiDesignerInteger(rect.height / scaleY, node.props.height, 1)
+  Object.assign(node.props, resolveUiNodeResizePatch(node, transaction.rect))
   return normalizeUiDesignerDocumentGeometry(next)
 }
 

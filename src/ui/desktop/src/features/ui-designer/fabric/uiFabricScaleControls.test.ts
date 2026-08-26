@@ -5,10 +5,10 @@ import { configureFabricScaleControls } from './fabricNodeFactory'
 
 const handleKeys = ['tl', 'mt', 'tr', 'mr', 'br', 'mb', 'bl', 'ml'] as const
 const expectedByAngle = {
-  0: ['nw-resize', 'n-resize', 'ne-resize', 'e-resize', 'se-resize', 's-resize', 'sw-resize', 'w-resize'],
-  45: ['n-resize', 'ne-resize', 'e-resize', 'se-resize', 's-resize', 'sw-resize', 'w-resize', 'nw-resize'],
-  90: ['ne-resize', 'e-resize', 'se-resize', 's-resize', 'sw-resize', 'w-resize', 'nw-resize', 'n-resize'],
-  135: ['e-resize', 'se-resize', 's-resize', 'sw-resize', 'w-resize', 'nw-resize', 'n-resize', 'ne-resize'],
+  0: ['nwse-resize', 'ns-resize', 'nesw-resize', 'ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize', 'ew-resize'],
+  45: ['ns-resize', 'nesw-resize', 'ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize', 'ew-resize', 'nwse-resize'],
+  90: ['nesw-resize', 'ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize', 'ew-resize', 'nwse-resize', 'ns-resize'],
+  135: ['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize', 'ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'],
 } as const
 
 test('all eight resize controls feed the dimension-resize gesture and rotate their cursor directions with the object', () => {
@@ -30,5 +30,6 @@ test('all eight resize controls feed the dimension-resize gesture and rotate the
     assert.equal(object.controls.tl.actionHandler, controlsUtils.scalingEqually)
     assert.equal(object.controls.mr.actionHandler, controlsUtils.scalingX)
     assert.equal(object.controls.mt.actionHandler, controlsUtils.scalingY)
+    if (angle === 0) assert.equal(cursors[2], 'nesw-resize')
   }
 })

@@ -88,6 +88,28 @@ test('resizing a container changes only the container dimensions', () => {
   assert.equal(designer.draftRects.value[childId], undefined)
 })
 
+test('resizing a list changes its complete grid extent and keeps the configured gaps', () => {
+  const designer = useUiDesigner()
+  const nodeId = designer.addNode('list', 'node_root', { x: 120, y: 100 })!
+  const node = designer.document.value.nodes.find((candidate) => candidate.id === nodeId)!
+  if (node.type !== 'list') throw new Error('expected list node')
+  node.props.columns = 3
+  node.props.rows = 2
+  node.props.columnGap = 8
+  node.props.rowGap = 6
+  const origin = nodeRect(node)
+  const preview = designer.previewNodeResizeWithSnap(nodeId, origin, 'se', { x: 75, y: 34 }, { preserveAspect: false, fromCenter: false })!
+  assert.equal(designer.commitDraftRect(nodeId), true)
+
+  const resized = designer.document.value.nodes.find((candidate) => candidate.id === nodeId)!
+  if (resized.type !== 'list') throw new Error('expected list node')
+  assert.deepEqual(nodeRect(resized), preview)
+  assert.equal(resized.props.columnGap, 8)
+  assert.equal(resized.props.rowGap, 6)
+  assert.equal(resized.props.columnWidths.length, 3)
+  assert.equal(resized.props.rowHeights.length, 2)
+})
+
 test('resizing text preserves font size and explicit scale', () => {
   const designer = useUiDesigner()
   const nodeId = designer.addNode('text', 'node_root', { x: 80, y: 60 })!

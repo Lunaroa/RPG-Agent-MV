@@ -1,5 +1,6 @@
 import type { UiDesignerDocument, UiRuntimeSceneExport } from '@contract/ui-designer'
 import { UI_DESIGNER_RENDERER_BRIDGE_MAX_BYTES, UI_DESIGNER_RENDERER_BRIDGE_MAX_PATCHES, type UiDesignerRendererJsonValue, type UiDesignerRendererNodePatch } from '@contract/ui-designer-renderer-bridge'
+import { resolveUiNodeResizePatch } from './models/geometry'
 
 export type UiDesignerRendererUpdate =
   | { kind: 'mount'; revision: number; scene: UiRuntimeSceneExport }
@@ -41,12 +42,7 @@ export function buildUiDesignerRendererDraftPatches(
     const rect = drafts.rects?.[nodeId]
     const position = drafts.positions?.[nodeId]
     if (rect) {
-      const scaleX = Math.max(Math.abs(Number.isFinite(node.props.scaleX) ? node.props.scaleX : 1), 0.0001)
-      const scaleY = Math.max(Math.abs(Number.isFinite(node.props.scaleY) ? node.props.scaleY : 1), 0.0001)
-      props.x = rect.x + rect.width * node.props.anchorX
-      props.y = rect.y + rect.height * node.props.anchorY
-      props.width = rect.width / scaleX
-      props.height = rect.height / scaleY
+      Object.assign(props, resolveUiNodeResizePatch(node, rect) as unknown as Record<string, UiDesignerRendererJsonValue>)
     } else if (position) {
       props.x = position.x
       props.y = position.y

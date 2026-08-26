@@ -13,6 +13,7 @@ import { normalizeUiSingleLineText } from '../fabric/uiSingleLineText'
 import UiButtonStatesEditor from './UiButtonStatesEditor.vue'
 import UiFrameListEditor from './UiFrameListEditor.vue'
 import ProjectAssetsWorkspace from '../../../components/ProjectAssetsWorkspace.vue'
+import { resizeDialogFromEdge, type UiDialogRect, type UiDialogResizeEdge } from '../models/dialog-edge-resize'
 
 type InspectorPurpose = 'identity' | 'geometry' | 'contentResources' | 'appearance' | 'behavior' | 'advanced'
 
@@ -78,6 +79,91 @@ const resourceWorkspaceCategory = ref<UiDesignerManagedAssetKind>('image')
 const resourceWorkspaceCurrentPath = ref('')
 const resourceWorkspaceMultiple = ref(false)
 const resourceWorkspaceRequest = ref(0)
+const resourceWorkspaceSize = ref({ width: 1180, height: 760 })
+const resourceWorkspacePosition = ref<{ left: number; top: number }>()
+const resourceWorkspaceDialogElement = ref<HTMLElement>()
+const resourceWorkspaceChromeHeight = ref(0)
+const resourceWorkspaceResizeEdges: UiDialogResizeEdge[] = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw']
+const resourceWorkspaceDialogStyle = computed(() => resourceWorkspacePosition.value
+  ? { position: 'fixed', margin: '0', left: `${resourceWorkspacePosition.value.left}px`, top: `${resourceWorkspacePosition.value.top}px` }
+  : undefined)
+const resourceWorkspaceResizeFrameStyle = computed(() => resourceWorkspacePosition.value
+  ? {
+      left: `${resourceWorkspacePosition.value.left}px`,
+      top: `${resourceWorkspacePosition.value.top}px`,
+      width: `${resourceWorkspaceSize.value.width}px`,
+      height: `${resourceWorkspaceSize.value.height + resourceWorkspaceChromeHeight.value}px`,
+    }
+  : undefined)
+let resourceWorkspaceResize: {
+  edge: UiDialogResizeEdge
+  startX: number
+  startY: number
+  rect: UiDialogRect
+  chromeHeight: number
+} | undefined
+const clampResourceWorkspaceSize = (width: number, height: number) => {
+  const maxWidth = Math.max(1, Math.floor(window.innerWidth * 0.94))
+  const maxHeight = Math.max(1, Math.floor(window.innerHeight * 0.82))
+  return {
+    width: Math.min(maxWidth, Math.max(Math.min(720, maxWidth), Math.round(width))),
+    height: Math.min(maxHeight, Math.max(Math.min(520, maxHeight), Math.round(height))),
+  }
+}
+const moveResourceWorkspaceResize = (event: PointerEvent) => {
+  if (!resourceWorkspaceResize) return
+  const { edge, startX, startY, rect, chromeHeight } = resourceWorkspaceResize
+  const next = resizeDialogFromEdge(rect, edge, event.clientX - startX, event.clientY - startY, {
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+    minWidth: Math.min(720, Math.max(1, window.innerWidth - 16)),
+    minHeight: Math.min(chromeHeight + 520, Math.max(1, window.innerHeight - 16)),
+    margin: 8,
+  })
+  resourceWorkspacePosition.value = { left: next.left, top: next.top }
+  resourceWorkspaceSize.value = { width: next.width, height: Math.max(1, next.height - chromeHeight) }
+}
+const endResourceWorkspaceResize = () => {
+  resourceWorkspaceResize = undefined
+  window.removeEventListener('pointermove', moveResourceWorkspaceResize)
+  window.removeEventListener('pointerup', endResourceWorkspaceResize)
+  window.removeEventListener('pointercancel', endResourceWorkspaceResize)
+}
+const beginResourceWorkspaceResize = (event: PointerEvent, edge: UiDialogResizeEdge) => {
+  event.preventDefault()
+  event.stopPropagation()
+  const dialog = resourceWorkspaceDialogElement.value
+  if (!dialog) return
+  endResourceWorkspaceResize()
+  const bounds = dialog.getBoundingClientRect()
+  resourceWorkspaceResize = {
+    edge,
+    startX: event.clientX,
+    startY: event.clientY,
+    rect: { left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height },
+    chromeHeight: Math.max(0, bounds.height - resourceWorkspaceSize.value.height),
+  }
+  window.addEventListener('pointermove', moveResourceWorkspaceResize)
+  window.addEventListener('pointerup', endResourceWorkspaceResize)
+  window.addEventListener('pointercancel', endResourceWorkspaceResize)
+}
+const handleResourceWorkspaceOpened = async () => {
+  await nextTick()
+  const dialog = document.querySelector<HTMLElement>('.el-dialog[data-ui-id="ui-designer-resource-workspace-dialog"]')
+  if (!dialog) return
+  const bounds = dialog.getBoundingClientRect()
+  resourceWorkspaceDialogElement.value = dialog
+  resourceWorkspaceChromeHeight.value = Math.max(0, bounds.height - resourceWorkspaceSize.value.height)
+  resourceWorkspacePosition.value = { left: Math.round(bounds.left), top: Math.round(bounds.top) }
+}
+const handleResourceWorkspaceClosed = () => {
+  endResourceWorkspaceResize()
+  resourceWorkspaceDialogElement.value = undefined
+  resourceWorkspacePosition.value = undefined
+}
+watch(resourceWorkspaceVisible, (visible) => {
+  if (visible) void handleResourceWorkspaceOpened()
+})
 interface ResourceWorkspaceSelection {
   path: string
   width?: number
@@ -91,6 +177,9 @@ const openResourceWorkspace = (category: UiDesignerManagedAssetKind = 'image', c
   resourceWorkspaceCategory.value = category
   resourceWorkspaceCurrentPath.value = currentPath
   resourceWorkspaceMultiple.value = false
+  resourceWorkspaceSize.value = clampResourceWorkspaceSize(resourceWorkspaceSize.value.width, resourceWorkspaceSize.value.height)
+  resourceWorkspacePosition.value = undefined
+  resourceWorkspaceDialogElement.value = undefined
   resourceWorkspaceVisible.value = true
 })
 const openMultiResourceWorkspace = (category: UiDesignerManagedAssetKind = 'image') => new Promise<string[] | null>((resolve) => {
@@ -100,6 +189,9 @@ const openMultiResourceWorkspace = (category: UiDesignerManagedAssetKind = 'imag
   resourceWorkspaceCategory.value = category
   resourceWorkspaceCurrentPath.value = ''
   resourceWorkspaceMultiple.value = true
+  resourceWorkspaceSize.value = clampResourceWorkspaceSize(resourceWorkspaceSize.value.width, resourceWorkspaceSize.value.height)
+  resourceWorkspacePosition.value = undefined
+  resourceWorkspaceDialogElement.value = undefined
   resourceWorkspaceVisible.value = true
 })
 const pickResourcePath = async (category: UiDesignerManagedAssetKind = 'image', currentPath = '') => (await openResourceWorkspace(category, currentPath))?.path ?? null
@@ -114,6 +206,7 @@ const closeResourceWorkspace = (visible: boolean) => {
   if (!visible && resolveResourceWorkspace) settleResourceWorkspace(null)
 }
 onBeforeUnmount(() => {
+  endResourceWorkspaceResize()
   commitNodeName()
   unregisterNodeNameDraft()
   settleResourceWorkspace(null)
@@ -330,7 +423,10 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
         <span class="inspector-title">{{ t('inspector') }}</span>
         <span v-if="selectedNode" class="inspector-node">{{ selectedNode.name }}</span>
       </div>
-      <el-button v-if="selectedNode" size="small" text :disabled="!selectedActionPolicy?.allowed.duplicate" @click="designer.duplicateSelected()">{{ t('duplicateNode') }}</el-button>
+      <span v-if="selectedNode" class="inspector-head-actions">
+        <el-button size="small" text :disabled="!selectedActionPolicy?.allowed.duplicate" @click="designer.duplicateSelected()">{{ t('duplicateNode') }}</el-button>
+        <el-button size="small" text type="danger" :disabled="!selectedActionPolicy?.allowed.delete" @click="designer.executeNodeAction('delete', selectedNode.id)">{{ t('deleteNode') }}</el-button>
+      </span>
     </div>
     <div v-if="selectedNode" class="inspector-tabs">
       <el-button data-ui-id="ui-designer-inspector-properties" data-testid="ui-designer-inspector-properties" size="small" text :class="{ active: activeSection === 'properties' }" @click="activeSection = 'properties'">{{ t('value') }}</el-button>
@@ -463,33 +559,51 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
     <el-dialog
       :model-value="resourceWorkspaceVisible"
       :title="t('chooseResource')"
-      width="min(1180px, 94vw)"
+      :width="`${resourceWorkspaceSize.width}px`"
+      :style="resourceWorkspaceDialogStyle"
       top="4vh"
       append-to-body
       destroy-on-close
       data-ui-id="ui-designer-resource-workspace-dialog"
       @update:model-value="closeResourceWorkspace"
+      @opened="handleResourceWorkspaceOpened"
+      @closed="handleResourceWorkspaceClosed"
     >
-      <div class="resource-workspace-host">
-        <ProjectAssetsWorkspace
-          :key="resourceWorkspaceRequest"
-          mode="select"
-          :resource-kind="resourceWorkspaceCategory"
-          :current-path="resourceWorkspaceCurrentPath"
-          :multiple="resourceWorkspaceMultiple"
-          @select="settleResourceWorkspace"
-          @select-many="settleResourceWorkspace"
-          @cancel="settleResourceWorkspace(null)"
-          @mutated="designer.notifyResourceMutation"
-        />
+      <div class="resource-workspace-shell">
+        <div class="resource-workspace-host" :style="{ height: `${resourceWorkspaceSize.height}px` }">
+          <ProjectAssetsWorkspace
+            :key="resourceWorkspaceRequest"
+            mode="select"
+            :resource-kind="resourceWorkspaceCategory"
+            :current-path="resourceWorkspaceCurrentPath"
+            :multiple="resourceWorkspaceMultiple"
+            @select="settleResourceWorkspace"
+            @select-many="settleResourceWorkspace"
+            @cancel="settleResourceWorkspace(null)"
+            @mutated="designer.notifyResourceMutation"
+          />
+        </div>
       </div>
     </el-dialog>
+    <Teleport v-if="resourceWorkspaceVisible && resourceWorkspacePosition" to="body">
+      <div class="resource-workspace-resize-frame" :style="resourceWorkspaceResizeFrameStyle" aria-hidden="true">
+        <div
+          v-for="edge in resourceWorkspaceResizeEdges"
+          :key="edge"
+          class="resource-workspace-resize-edge"
+          :class="edge"
+          @pointerdown="beginResourceWorkspaceResize($event, edge)"
+        />
+      </div>
+    </Teleport>
   </aside>
 </template>
 
 <style scoped>
 .inspector-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; gap: 9px; padding: 10px; overflow: hidden; background: var(--app-bg); }
 .inspector-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.inspector-head-actions { display: inline-flex; align-items: center; }
+.inspector-head-actions .el-button { margin-left: 0; padding-inline: 5px; }
 .inspector-title { display: block; font-size: 13px; font-weight: 650; }
 .inspector-node { display: block; max-width: 210px; overflow: hidden; text-overflow: ellipsis; color: var(--app-ink-soft); font-size: 11px; }
 .inspector-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; border-bottom: 1px solid var(--app-border); }
@@ -508,7 +622,20 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
 .property-grid .button-states-priority { order: 1; }
 .property-grid .button-events-priority { order: 2; justify-self: start; margin: 0; }
 .property-grid .button-se-priority { order: 3; }
-.resource-workspace-host { height: min(760px, 82vh); min-height: 520px; overflow: hidden; }
+.resource-workspace-shell { margin: 0 -4px -4px 0; }
+.resource-workspace-host { min-height: 0; overflow: hidden; }
+.resource-workspace-resize-frame { position: fixed; z-index: 4000; pointer-events: none; }
+.resource-workspace-resize-edge { position: absolute; z-index: 10; background: transparent; pointer-events: auto; touch-action: none; user-select: none; }
+.resource-workspace-resize-edge.n { top: -5px; right: 12px; left: 12px; height: 10px; cursor: ns-resize; }
+.resource-workspace-resize-edge.e { top: 12px; right: -5px; bottom: 12px; width: 10px; cursor: ew-resize; }
+.resource-workspace-resize-edge.s { right: 12px; bottom: -5px; left: 12px; height: 10px; cursor: ns-resize; }
+.resource-workspace-resize-edge.w { top: 12px; bottom: 12px; left: -5px; width: 10px; cursor: ew-resize; }
+.resource-workspace-resize-edge.ne, .resource-workspace-resize-edge.sw { width: 17px; height: 17px; cursor: nesw-resize; }
+.resource-workspace-resize-edge.nw, .resource-workspace-resize-edge.se { width: 17px; height: 17px; cursor: nwse-resize; }
+.resource-workspace-resize-edge.ne, .resource-workspace-resize-edge.nw { top: -5px; }
+.resource-workspace-resize-edge.se, .resource-workspace-resize-edge.sw { bottom: -5px; }
+.resource-workspace-resize-edge.ne, .resource-workspace-resize-edge.se { right: -5px; }
+.resource-workspace-resize-edge.nw, .resource-workspace-resize-edge.sw { left: -5px; }
 .inspector-empty { display: grid; place-items: center; flex: 1; min-height: 180px; color: var(--app-ink-soft); font-size: 12px; text-align: center; }
 .inspector-section-title { color: var(--app-ink-soft); font-size: 11px; font-weight: 650; text-transform: uppercase; }
 .performance-line { display: flex; justify-content: space-between; width: 100%; padding: 0; border: 0; background: transparent; color: var(--app-ink-soft); cursor: pointer; font-size: 11px; text-align: left; }.performance-details { color: var(--app-ink); font-size: 11px; line-height: 1.5; }.performance-details ul { margin: 6px 0 0; padding-left: 16px; }.performance-details li { margin-bottom: 4px; }.performance-details .status-detail { color: var(--app-ink-soft); font-size: 10px; }

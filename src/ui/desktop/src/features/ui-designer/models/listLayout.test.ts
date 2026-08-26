@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import type { UiListNode } from '@contract/ui-designer'
-import { resolveUiListGridCell, resolveUiListGridExtent, resolveUiListGridLayout } from './listLayout'
+import { resizeUiListGridToExtent, resolveUiListGridCell, resolveUiListGridExtent, resolveUiListGridLayout } from './listLayout'
 import { createDefaultNode } from './document'
 
 const listProps = (overrides: Partial<UiListNode['props']> = {}): UiListNode['props'] => ({
@@ -51,5 +51,18 @@ describe('ui designer list grid layout', () => {
     assert.deepEqual(extent, { width: 80 * 4 + 5 * 3, height: 30 })
     const fixed = resolveUiListGridExtent(listProps({ width: 80, height: 30, columns: 2, rows: 2, columnGap: 5, rowGap: 5, maxHeight: 50 }))
     assert.deepEqual(fixed, { width: 165, height: 50 })
+  })
+
+  test('resizes the outer grid by changing tracks while preserving gaps', () => {
+    const props = listProps({ width: 80, height: 30, columns: 3, rows: 2, columnGap: 7, rowGap: 5, maxWidth: 120, maxHeight: 50 })
+    const resized = resizeUiListGridToExtent(props, 317, 125)
+    const next = { ...props, ...resized }
+    assert.equal(next.columnGap, 7)
+    assert.equal(next.rowGap, 5)
+    assert.deepEqual(resolveUiListGridExtent(next), { width: 317, height: 125 })
+    assert.equal(next.columnWidths.reduce((sum, value) => sum + value, 0), 303)
+    assert.equal(next.rowHeights.reduce((sum, value) => sum + value, 0), 120)
+    assert.equal(next.maxWidth, 317)
+    assert.equal(next.maxHeight, 125)
   })
 })

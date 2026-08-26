@@ -936,6 +936,8 @@ export interface UiDesignerRecentFileRecord {
   sourcePath: string
   /** Scene title captured by the persistence layer; old records may omit it. */
   sceneName?: string
+  /** RPG Maker project associated with this recent entry; old records may omit it. */
+  projectPath?: string
   lastOpenedAt: string
   lastSavedAt?: string
   exists: boolean

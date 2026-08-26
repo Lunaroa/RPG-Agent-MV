@@ -141,7 +141,7 @@ declare global {
         setEnabled(request: ProductPluginSetEnabledRequest): Promise<ProductPluginSetEnabledResult>;
       };
       uiDesigner: {
-        open(request?: Pick<UiDesignerFileRequest, 'path'>): Promise<UiDesignerSaveResult<UiDesignerDocument>>;
+        open(request?: Pick<UiDesignerFileRequest, 'path' | 'project'>): Promise<UiDesignerSaveResult<UiDesignerDocument>>;
         save(request: UiDesignerFileRequest, document: UiDesignerDocument): Promise<UiDesignerSaveResult<UiDesignerDocument>>;
         saveAs(request: UiDesignerFileRequest, document: UiDesignerDocument): Promise<UiDesignerSaveResult<UiDesignerDocument>>;
         revealSource(sourcePath: string): Promise<UiFileResult<null>>;
@@ -159,7 +159,7 @@ declare global {
         confirmRenderer(sessionId: string): Promise<UiFileResult<UiDesignerRendererHostSession>>;
         stopRenderer(request?: { sessionId?: string; reason?: UiDesignerRendererHostStopReason }): Promise<UiFileResult<null>>;
         syncRendererResources(request: UiDesignerRendererResourceSyncRequest): Promise<UiFileResult<UiDesignerRendererResourceSyncResult>>;
-        listRecentFiles(): Promise<UiFileResult<UiDesignerRecentFileRecord[]>>;
+        listRecentFiles(request?: UiDesignerProjectRequest): Promise<UiFileResult<UiDesignerRecentFileRecord[]>>;
         removeRecentFile(filePath: string): Promise<UiFileResult<null>>;
         writeRecovery(request: UiDesignerRecoveryWriteRequest): Promise<UiFileResult<UiDesignerRecoveryRecord>>;
         listRecovery(): Promise<UiFileResult<UiDesignerRecoveryRecord[]>>;
@@ -284,8 +284,8 @@ declare global {
       projectAssets: {
         editorCatalog(project?: string): Promise<unknown>;
         listRelativeDirectory(relativeDirectory: string, project?: string, recursive?: boolean): Promise<unknown>;
-        browseTree(project?: string): Promise<unknown>;
-        browseCategory(categoryId: string, project?: string, thumbnailSizeBucket?: number): Promise<unknown>;
+        browseTree(project?: string, options?: ProjectAssetBrowseOptions): Promise<unknown>;
+        browseCategory(categoryId: string, project?: string, thumbnailSizeBucket?: number, options?: ProjectAssetBrowseOptions): Promise<unknown>;
         invalidateBrowseCache(project?: string): Promise<unknown>;
         detail(target: unknown, project?: string): Promise<unknown>;
         rename(target: unknown, nextName: string, project?: string): Promise<unknown>;
@@ -445,7 +445,7 @@ import type {
   ProjectAssetCopyBatchInput, ProjectAssetCopyBatchResult,
   ProjectAssetMoveBatchInput, ProjectAssetMoveBatchResult,
   ProjectAssetAnnotation, ProjectAssetAnnotationInput,
-  ProjectAssetCategoryTree, ProjectAssetCategoryListing, ProjectAssetBrowseCacheInvalidationResult,
+  ProjectAssetCategoryTree, ProjectAssetCategoryListing, ProjectAssetBrowseCacheInvalidationResult, ProjectAssetBrowseOptions,
   ProjectAssetReference, ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
   ProjectAssetImportLocalFilesInput, ProjectAssetImportBatchResult, ProjectAssetImportItemResult,
@@ -476,7 +476,7 @@ export type {
   PluginTranslationPayload, PluginTranslationRecord,
   EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, EditorTilesetCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset, ProjectAssetReference,
-  ProjectAssetCategoryTree, ProjectAssetCategoryListing, ProjectAssetBrowseCacheInvalidationResult,
+  ProjectAssetCategoryTree, ProjectAssetCategoryListing, ProjectAssetBrowseCacheInvalidationResult, ProjectAssetBrowseOptions,
   ProjectAssetReplaceMissingReferenceInput,
   ProjectAssetReplaceMissingReferenceResult, ProjectAssetImportLocalFileInput,
   ProjectAssetImportLocalFilesInput, ProjectAssetImportBatchResult, ProjectAssetImportItemResult,
@@ -565,7 +565,7 @@ export const uiDesigner = {
   confirmRenderer(sessionId: string) { return desktopApi().uiDesigner.confirmRenderer(sessionId) },
   stopRenderer(request?: { sessionId?: string; reason?: UiDesignerRendererHostStopReason }) { return desktopApi().uiDesigner.stopRenderer(toPlain(request)) },
   syncRendererResources(request: UiDesignerRendererResourceSyncRequest) { return desktopApi().uiDesigner.syncRendererResources(toPlain(request)) },
-  listRecentFiles() { return desktopApi().uiDesigner.listRecentFiles() },
+  listRecentFiles(request?: UiDesignerProjectRequest) { return desktopApi().uiDesigner.listRecentFiles(request ? toPlain(request) : undefined) },
   removeRecentFile(filePath: string) { return desktopApi().uiDesigner.removeRecentFile(filePath) },
   writeRecovery(request: UiDesignerRecoveryWriteRequest) { return desktopApi().uiDesigner.writeRecovery(toPlain(request)) },
   listRecovery() { return desktopApi().uiDesigner.listRecovery() },
@@ -1249,14 +1249,15 @@ export const projectAssets = {
       recursive,
     ) as Promise<ProjectRelativeDirectoryListResult>;
   },
-  browseTree(project: string = DEFAULT_PROJECT) {
-    return desktopApi().projectAssets.browseTree(project) as Promise<ProjectAssetCategoryTree>;
+  browseTree(project: string = DEFAULT_PROJECT, options?: ProjectAssetBrowseOptions) {
+    return desktopApi().projectAssets.browseTree(project, options) as Promise<ProjectAssetCategoryTree>;
   },
-  browseCategory(categoryId: string, project: string = DEFAULT_PROJECT, thumbnailSizeBucket?: number) {
+  browseCategory(categoryId: string, project: string = DEFAULT_PROJECT, thumbnailSizeBucket?: number, options?: ProjectAssetBrowseOptions) {
     return desktopApi().projectAssets.browseCategory(
       categoryId,
       project,
       thumbnailSizeBucket,
+      options,
     ) as Promise<ProjectAssetCategoryListing>;
   },
   invalidateBrowseCache(project?: string) {

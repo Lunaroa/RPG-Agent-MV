@@ -22,6 +22,7 @@ const RESOURCE_PATH_KEYS = new Set([
 const IMAGE_STATE_KEYS = new Set<keyof UiButtonImageStates>(['normal', 'hover', 'pressed', 'disabled']);
 
 const IMAGE_CATEGORY_IDS = new Set([
+  'img',
   'animations',
   'battlebacks1',
   'battlebacks2',

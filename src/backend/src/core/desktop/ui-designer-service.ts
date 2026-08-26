@@ -156,6 +156,7 @@ export interface UiDesignerSnapshotRecord {
 export interface UiDesignerRecentFileRecord {
   sourcePath: string;
   sceneName?: string;
+  projectPath?: string;
   lastOpenedAt: string;
   lastSavedAt?: string;
   exists: boolean;
@@ -357,14 +358,16 @@ export class UiDesignerUserDataStore {
     }
   }
 
-  recordRecentFile(filePath: string, options: { opened?: boolean; saved?: boolean; sceneName?: string; thumbnailDataUrl?: string } = {}): UiDesignerRecentFileRecord {
+  recordRecentFile(filePath: string, options: { opened?: boolean; saved?: boolean; sceneName?: string; projectPath?: string; thumbnailDataUrl?: string } = {}): UiDesignerRecentFileRecord {
     const resolved = path.resolve(filePath);
     const now = new Date().toISOString();
     const current = this.readRecentFiles();
     const previous = current.find((item) => item.sourcePath === resolved);
+    const owningProject = options.projectPath || previous?.projectPath;
     const record: UiDesignerRecentFileRecord = {
       sourcePath: resolved,
       ...(options.sceneName || previous?.sceneName ? { sceneName: options.sceneName || previous?.sceneName } : {}),
+      ...(owningProject ? { projectPath: path.resolve(owningProject) } : {}),
       lastOpenedAt: options.opened === true || !previous ? now : previous.lastOpenedAt,
       ...(options.saved || previous?.lastSavedAt ? { lastSavedAt: options.saved ? now : previous?.lastSavedAt } : {}),
       exists: fs.existsSync(resolved),
@@ -382,8 +385,11 @@ export class UiDesignerUserDataStore {
     return { ...record, ...(thumbnailUrl ? { thumbnailUrl } : {}) };
   }
 
-  listRecentFiles(): UiDesignerRecentFileRecord[] {
-    return this.readRecentFiles().map((record) => {
+  listRecentFiles(projectPath?: string): UiDesignerRecentFileRecord[] {
+    const project = projectPath?.trim() ? path.resolve(projectPath) : '';
+    return this.readRecentFiles().filter((record) => !project
+      || (record.projectPath ? isPathWithin(project, record.projectPath) && isPathWithin(record.projectPath, project) : isPathWithin(project, record.sourcePath)))
+      .map((record) => {
       const thumbnailUrl = pngDataUrl(this.recentThumbnailPath(record.sourcePath));
       return { ...record, exists: fs.existsSync(record.sourcePath), ...(thumbnailUrl ? { thumbnailUrl } : {}) };
     });
@@ -722,7 +728,8 @@ function isSnapshotRecord(value: unknown): value is UiDesignerSnapshotRecord {
 function isPathWithin(root: string, candidate: string): boolean {
   const rootPath = path.resolve(root);
   const candidatePath = path.resolve(candidate);
-  return candidatePath === rootPath || candidatePath.startsWith(`${rootPath}${path.sep}`);
+  const relative = path.relative(rootPath, candidatePath);
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
 }
 
 function isRecentFileRecord(value: unknown): value is UiDesignerRecentFileRecord {
@@ -730,6 +737,7 @@ function isRecentFileRecord(value: unknown): value is UiDesignerRecentFileRecord
   const record = value as Record<string, unknown>;
   return typeof record.sourcePath === 'string' && record.sourcePath.length > 0
     && (record.sceneName === undefined || typeof record.sceneName === 'string')
+    && (record.projectPath === undefined || typeof record.projectPath === 'string')
     && typeof record.lastOpenedAt === 'string'
     && (record.lastSavedAt === undefined || typeof record.lastSavedAt === 'string')
     && typeof record.exists === 'boolean';

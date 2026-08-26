@@ -54,6 +54,8 @@ describe('projectAssetLocalization', () => {
     assert.equal(projectAssetCategoryLabel('pictures/ui', 'zh-CN'), 'ui');
     assert.equal(projectAssetCategoryLabel('pictures/ui/portraits', 'en-US'), 'portraits');
     assert.equal(isProjectAssetImageCategory('pictures/ui'), true);
+    assert.equal(projectAssetCategoryLabel('img/custom_ui/hud', 'zh-CN'), 'hud');
+    assert.equal(isProjectAssetImageCategory('img/custom_ui/hud'), true);
     assert.equal(isProjectAssetGroupCategory('pictures/ui'), false);
     assert.equal(projectAssetMediaKind('pictures/ui'), 'image');
   });

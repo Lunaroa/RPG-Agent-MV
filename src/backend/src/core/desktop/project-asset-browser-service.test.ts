@@ -214,28 +214,39 @@ describe('project asset browser service', () => {
     }
   });
 
-  test('MV pictures stay flat even when nested directories exist on disk', async () => {
+  test('MV image folders expose nested and custom directories recursively', async () => {
     const root = tempRoot();
     const project = path.join(root, 'projects', 'sample');
     try {
       await bootstrapDatabase(root, { importLegacyJson: false });
       writeMvProjectSkeleton(project);
       fs.mkdirSync(path.join(project, 'www', 'img', 'pictures', 'ui'), { recursive: true });
+      fs.mkdirSync(path.join(project, 'www', 'img', 'custom_ui', 'hud'), { recursive: true });
       fs.writeFileSync(path.join(project, 'www', 'img', 'pictures', 'Root.png'), 'root');
       fs.writeFileSync(path.join(project, 'www', 'img', 'pictures', 'ui', 'Hidden.png'), 'hidden');
+      fs.writeFileSync(path.join(project, 'www', 'img', 'custom_ui', 'hud', 'Panel.png'), 'panel');
 
-      const tree = buildProjectAssetCategoryTree(root, project);
-      const pictures = tree.nodes.find((node) => node.id === 'img')?.children?.find((child) => child.id === 'pictures');
+      const standardTree = buildProjectAssetCategoryTree(root, project);
+      const standardImages = standardTree.nodes.find((node) => node.id === 'img');
+      assert.equal(standardImages?.children?.find((child) => child.id === 'pictures')?.children, undefined);
+      assert.equal(standardImages?.children?.some((child) => child.id === 'img/custom_ui'), false);
+      assert.throws(() => listProjectAssetCategory(root, project, 'img/custom_ui/hud'), /Unknown project asset browser category/);
+
+      const tree = buildProjectAssetCategoryTree(root, project, { includeAllImageDirectories: true });
+      const images = tree.nodes.find((node) => node.id === 'img');
+      const pictures = images?.children?.find((child) => child.id === 'pictures');
       assert.ok(pictures);
-      assert.equal(pictures!.children, undefined);
-      assert.equal(pictures!.entryCount, 1);
+      assert.equal(pictures!.children?.[0]?.id, 'pictures/ui');
+      assert.equal(pictures!.entryCount, 2);
+      const custom = images?.children?.find((child) => child.id === 'img/custom_ui');
+      assert.equal(custom?.children?.[0]?.id, 'img/custom_ui/hud');
+      assert.equal(custom?.entryCount, 1);
 
-      const listing = listProjectAssetCategory(root, project, 'pictures');
-      assert.deepEqual(listing.entries.map((entry) => entry.name), ['Root']);
-      assert.throws(
-        () => listProjectAssetCategory(root, project, 'pictures/ui'),
-        /only supported for MZ pictures/,
-      );
+      const pictureListing = listProjectAssetCategory(root, project, 'pictures/ui', undefined, { includeAllImageDirectories: true });
+      assert.deepEqual(pictureListing.entries.map((entry) => entry.name), ['ui/Hidden']);
+      const customListing = listProjectAssetCategory(root, project, 'img/custom_ui/hud', undefined, { includeAllImageDirectories: true });
+      assert.equal(customListing.directory, 'www/img/custom_ui/hud');
+      assert.deepEqual(customListing.entries.map((entry) => entry.id), ['img:custom_ui/hud/Panel']);
     } finally {
       closeDatabase();
       fs.rmSync(root, { recursive: true, force: true });

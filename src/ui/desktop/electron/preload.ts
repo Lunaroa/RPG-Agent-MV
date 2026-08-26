@@ -7,6 +7,7 @@ import type {
   MapOverviewPngExportProgressEvent,
   MapOverviewPngExportScene,
   MapOverviewScanProgressEvent,
+  ProjectAssetBrowseOptions,
 } from '../../../contract/types.ts';
 import type {
   UiDesignerDocument,
@@ -118,7 +119,7 @@ contextBridge.exposeInMainWorld('api', {
     setEnabled: (request: unknown) => ipcRenderer.invoke('product-plugin:set-enabled', request),
   },
   uiDesigner: {
-    open: (request?: Pick<UiDesignerFileRequest, 'path'>) => ipcRenderer.invoke('ui-designer:file:open', request),
+    open: (request?: Pick<UiDesignerFileRequest, 'path' | 'project'>) => ipcRenderer.invoke('ui-designer:file:open', request),
     save: (request: UiDesignerFileRequest, document: UiDesignerDocument) => ipcRenderer.invoke('ui-designer:file:save', request, document),
     saveAs: (request: UiDesignerFileRequest, document: UiDesignerDocument) => ipcRenderer.invoke('ui-designer:file:save-as', request, document),
     revealSource: (sourcePath: string) => ipcRenderer.invoke('ui-designer:file:reveal-source', sourcePath),
@@ -136,7 +137,7 @@ contextBridge.exposeInMainWorld('api', {
     confirmRenderer: (sessionId: string) => ipcRenderer.invoke('ui-designer:renderer:confirm', sessionId),
     stopRenderer: (request?: { sessionId?: string; reason?: UiDesignerRendererHostStopReason }) => ipcRenderer.invoke('ui-designer:renderer:stop', request),
     syncRendererResources: (request: UiDesignerRendererResourceSyncRequest) => ipcRenderer.invoke('ui-designer:renderer:sync-resources', request),
-    listRecentFiles: () => ipcRenderer.invoke('ui-designer:recent:list'),
+    listRecentFiles: (request?: UiDesignerProjectRequest) => ipcRenderer.invoke('ui-designer:recent:list', request),
     removeRecentFile: (filePath: string) => ipcRenderer.invoke('ui-designer:recent:remove', filePath),
     writeRecovery: (request: UiDesignerRecoveryWriteRequest) => ipcRenderer.invoke('ui-designer:recovery:write', request),
     listRecovery: () => ipcRenderer.invoke('ui-designer:recovery:list'),
@@ -315,9 +316,9 @@ contextBridge.exposeInMainWorld('api', {
     editorCatalog: (project?: string) => ipcRenderer.invoke('projectAssets:editorCatalog', project),
     listRelativeDirectory: (relativeDirectory: string, project?: string, recursive?: boolean) =>
       ipcRenderer.invoke('projectAssets:listRelativeDirectory', relativeDirectory, project, recursive),
-    browseTree: (project?: string) => ipcRenderer.invoke('projectAssets:browseTree', project),
-    browseCategory: (categoryId: string, project?: string, thumbnailSizeBucket?: number) =>
-      ipcRenderer.invoke('projectAssets:browseCategory', categoryId, project, thumbnailSizeBucket),
+    browseTree: (project?: string, options?: ProjectAssetBrowseOptions) => ipcRenderer.invoke('projectAssets:browseTree', project, options),
+    browseCategory: (categoryId: string, project?: string, thumbnailSizeBucket?: number, options?: ProjectAssetBrowseOptions) =>
+      ipcRenderer.invoke('projectAssets:browseCategory', categoryId, project, thumbnailSizeBucket, options),
     invalidateBrowseCache: (project?: string) =>
       ipcRenderer.invoke('projectAssets:invalidateBrowseCache', project),
     detail: (target: unknown, project?: string) => ipcRenderer.invoke('projectAssets:detail', target, project),

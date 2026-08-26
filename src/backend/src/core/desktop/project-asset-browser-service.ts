@@ -28,11 +28,8 @@ import { invalidateProjectAssetReferenceGraphCache } from './project-asset-refer
 import { getProjectFileForRead, getProjectStagingStatus } from './staging-service.ts';
 
 const BROWSER_CATEGORIES = RMMV_ASSET_CATEGORIES.filter((category) => category.id !== 'plugins');
+const IMAGE_BROWSER_EXTENSIONS = BROWSER_CATEGORIES.find((category) => category.directory.startsWith('img/'))?.extensions ?? ['.png', '.jpg', '.jpeg', '.webp', '.rpgmvp'];
 
-/**
- * MZ projects use the `data` layout (no `www/`); MV uses `www-data`.
- * Prefer layout over full engine inspect so incomplete test skeletons still browse.
- */
 function projectAllowsPictureSubfolders(project: string): boolean {
   return projectAssetBrowserAllowsPictureSubfolders(
     resolveRmmvLayout(project).kind === 'data' ? 'rpg-maker-mz' : 'rpg-maker-mv',
@@ -51,6 +48,8 @@ export interface ProjectAssetBrowserDependencies {
   readDirectoryEntries?: ProjectAssetDirectoryScanner;
   readSubdirectories?: ProjectAssetSubdirectoryScanner;
   stagingStatus?: ProjectStagingStatus;
+  /** Selection-only view that exposes every directory under the game img root. */
+  includeAllImageDirectories?: boolean;
 }
 
 interface ListingCacheEntry {
@@ -154,7 +153,7 @@ export function buildProjectAssetCategoryTree(
   const stagingStatus = dependencies.stagingStatus ?? getProjectStagingStatus(workflowRoot, project);
   const deps: ProjectAssetBrowserDependencies = { ...dependencies, stagingStatus };
   const layout = resolveRmmvLayout(project);
-  const allowPictureSubfolders = projectAllowsPictureSubfolders(project);
+  const includeAllImageDirectories = dependencies.includeAllImageDirectories === true;
   const groups = new Map<string, {
     id: string;
     directory: string;
@@ -165,7 +164,10 @@ export function buildProjectAssetCategoryTree(
   for (const category of BROWSER_CATEGORIES) {
     const relativeDirectory = resourceRelativePath(layout, category.directory);
     if (!projectRelativeDirectoryPresent(project, relativeDirectory, stagingStatus)) continue;
-    const recursiveCount = allowPictureSubfolders && category.id === PROJECT_ASSET_PICTURES_CATEGORY_ID
+    const imageCategory = category.directory.startsWith('img/');
+    const recursiveImageCategory = imageCategory && (includeAllImageDirectories
+      || (category.id === PROJECT_ASSET_PICTURES_CATEGORY_ID && projectAllowsPictureSubfolders(project)));
+    const recursiveCount = recursiveImageCategory
       ? countCategoryFiles(
         workflowRoot,
         project,
@@ -182,10 +184,11 @@ export function buildProjectAssetCategoryTree(
       directory: relativeDirectory,
       entryCount: recursiveCount,
     };
-    if (allowPictureSubfolders && category.id === PROJECT_ASSET_PICTURES_CATEGORY_ID) {
-      const children = buildPictureSubfolderNodes(
+    if (recursiveImageCategory) {
+      const children = buildImageSubfolderNodes(
         workflowRoot,
         project,
+        category.id,
         relativeDirectory,
         '',
         category.extensions,
@@ -209,6 +212,43 @@ export function buildProjectAssetCategoryTree(
     group.children.push(node);
   }
 
+  const imageGroup = groups.get('img');
+  if (includeAllImageDirectories && imageGroup) {
+    const standardImageDirectories = new Set(BROWSER_CATEGORIES
+      .filter((category) => category.directory.startsWith('img/'))
+      .map((category) => category.directory.slice('img/'.length).split('/')[0]));
+    const customDirectories = projectAssetSubdirectories(project, imageGroup.directory, '', stagingStatus, deps)
+      .filter((name) => !standardImageDirectories.has(name));
+    for (const name of customDirectories) {
+      const children = buildImageSubfolderNodes(
+        workflowRoot,
+        project,
+        'img',
+        imageGroup.directory,
+        name,
+        IMAGE_BROWSER_EXTENSIONS,
+        stagingStatus,
+        deps,
+      );
+      imageGroup.children.push({
+        id: projectAssetBrowserNodeId('img', name),
+        directory: `${imageGroup.directory}/${name}`,
+        entryCount: countCategoryFiles(
+          workflowRoot,
+          project,
+          imageGroup.directory,
+          name,
+          IMAGE_BROWSER_EXTENSIONS,
+          stagingStatus,
+          deps.readDirectoryEntries ?? defaultDirectoryScanner,
+          true,
+        ),
+        ...(children.length > 0 ? { children } : {}),
+      });
+    }
+    imageGroup.children.sort((left, right) => left.directory.localeCompare(right.directory));
+  }
+
   const nodes: ProjectAssetCategoryTreeNode[] = [];
   for (const group of groups.values()) {
     nodes.push({
@@ -227,8 +267,8 @@ export function buildProjectAssetCategoryTree(
 }
 
 /**
- * List files for a browser node id. Accepts engine category ids (`pictures`) or
- * MZ picture subfolder ids (`pictures/ui`).
+ * List files for a browser node id. Image categories accept arbitrary safe
+ * subdirectories; `img/<path>` covers custom folders outside engine buckets.
  */
 export function listProjectAssetCategory(
   workflowRoot: string,
@@ -239,18 +279,19 @@ export function listProjectAssetCategory(
 ): ProjectAssetCategoryListing {
   const { categoryId, subpath } = parseProjectAssetBrowserNodeId(categoryIdOrNodeId);
   const category = BROWSER_CATEGORIES.find((entry) => entry.id === categoryId);
-  if (!category) {
+  const genericImageCategory = categoryId === 'img';
+  const includeAllImageDirectories = dependencies.includeAllImageDirectories === true;
+  if (!category && !(genericImageCategory && includeAllImageDirectories)) {
     throw new Error(
       `Unknown project asset browser category: ${categoryId}. Use a category id from RMMV_ASSET_CATEGORIES excluding plugins.`,
     );
   }
   if (subpath) {
-    if (
-      categoryId !== PROJECT_ASSET_PICTURES_CATEGORY_ID
-      || !projectAllowsPictureSubfolders(project)
-    ) {
+    const legacyPicturesSubfolder = categoryId === PROJECT_ASSET_PICTURES_CATEGORY_ID && projectAllowsPictureSubfolders(project);
+    const extendedImageSubfolder = includeAllImageDirectories && (genericImageCategory || category?.directory.startsWith('img/'));
+    if (!legacyPicturesSubfolder && !extendedImageSubfolder) {
       throw new Error(
-        `Project asset subfolders are only supported for MZ pictures; got node id: ${categoryIdOrNodeId}`,
+        `Project asset subfolders are unavailable for this browser scope; got node id: ${categoryIdOrNodeId}`,
       );
     }
     assertSafeSubpath(subpath);
@@ -260,7 +301,7 @@ export function listProjectAssetCategory(
   const stagingStatus = dependencies.stagingStatus ?? getProjectStagingStatus(workflowRoot, project);
   const readDirectoryEntries = dependencies.readDirectoryEntries ?? defaultDirectoryScanner;
   const layout = resolveRmmvLayout(project);
-  const categoryRelativeDirectory = resourceRelativePath(layout, category.directory);
+  const categoryRelativeDirectory = resourceRelativePath(layout, genericImageCategory ? 'img' : category!.directory);
   const relativeDirectory = subpath
     ? `${categoryRelativeDirectory}/${subpath}`
     : categoryRelativeDirectory;
@@ -275,12 +316,12 @@ export function listProjectAssetCategory(
     project,
     categoryRelativeDirectory,
     subpath,
-    category.extensions,
+    genericImageCategory ? IMAGE_BROWSER_EXTENSIONS : category!.extensions,
     stagingStatus,
     readDirectoryEntries,
   );
-  const grouped = groupProjectAssetLogicalEntries(scanned, category.extensions);
-  const imageCategory = category.directory.startsWith('img/');
+  const grouped = groupProjectAssetLogicalEntries(scanned, genericImageCategory ? IMAGE_BROWSER_EXTENSIONS : category!.extensions);
+  const imageCategory = genericImageCategory || category!.directory.startsWith('img/');
   const entries: ProjectAssetBrowseEntry[] = grouped.map((entry) => {
     const variants: ProjectAssetBrowseVariant[] = entry.variants.map((variant) => ({
       relativePath: variant.relativePath,
@@ -291,7 +332,7 @@ export function listProjectAssetCategory(
       encrypted: variant.encrypted,
     }));
     return {
-      id: `${category.id}:${entry.name}`,
+      id: `${categoryId}:${entry.name}`,
       name: entry.name,
       variants,
       bytes: entry.bytes,
@@ -313,17 +354,14 @@ export function listProjectAssetCategory(
   return listing;
 }
 
-function buildPictureSubfolderNodes(
-  workflowRoot: string,
+function projectAssetSubdirectories(
   project: string,
   categoryRelativeDirectory: string,
   parentSubpath: string,
-  extensions: readonly string[],
   stagingStatus: ProjectStagingStatus,
   dependencies: ProjectAssetBrowserDependencies,
-): ProjectAssetCategoryTreeNode[] {
+): string[] {
   const readSubdirectories = dependencies.readSubdirectories ?? defaultSubdirectoryScanner;
-  const readDirectoryEntries = dependencies.readDirectoryEntries ?? defaultDirectoryScanner;
   const absoluteDirectory = absoluteProjectPath(
     project,
     parentSubpath ? `${categoryRelativeDirectory}/${parentSubpath}` : categoryRelativeDirectory,
@@ -340,15 +378,31 @@ function buildPictureSubfolderNodes(
     if (slash <= 0) continue;
     names.add(remainder.slice(0, slash));
   }
+  return [...names].sort((left, right) => left.localeCompare(right));
+}
+
+function buildImageSubfolderNodes(
+  workflowRoot: string,
+  project: string,
+  categoryId: string,
+  categoryRelativeDirectory: string,
+  parentSubpath: string,
+  extensions: readonly string[],
+  stagingStatus: ProjectStagingStatus,
+  dependencies: ProjectAssetBrowserDependencies,
+): ProjectAssetCategoryTreeNode[] {
+  const readDirectoryEntries = dependencies.readDirectoryEntries ?? defaultDirectoryScanner;
+  const names = projectAssetSubdirectories(project, categoryRelativeDirectory, parentSubpath, stagingStatus, dependencies);
 
   const nodes: ProjectAssetCategoryTreeNode[] = [];
-  for (const name of [...names].sort((left, right) => left.localeCompare(right))) {
+  for (const name of names) {
     assertSafeSubpathSegment(name);
     const childSubpath = parentSubpath ? `${parentSubpath}/${name}` : name;
     const childDirectory = `${categoryRelativeDirectory}/${childSubpath}`;
-    const children = buildPictureSubfolderNodes(
+    const children = buildImageSubfolderNodes(
       workflowRoot,
       project,
+      categoryId,
       categoryRelativeDirectory,
       childSubpath,
       extensions,
@@ -366,7 +420,7 @@ function buildPictureSubfolderNodes(
       true,
     );
     nodes.push({
-      id: projectAssetBrowserNodeId(PROJECT_ASSET_PICTURES_CATEGORY_ID, childSubpath),
+      id: projectAssetBrowserNodeId(categoryId, childSubpath),
       directory: childDirectory,
       entryCount,
       ...(children.length > 0 ? { children } : {}),

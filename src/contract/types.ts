@@ -765,6 +765,11 @@ export interface ProjectAssetCategoryTree {
   nodes: ProjectAssetCategoryTreeNode[];
 }
 
+export interface ProjectAssetBrowseOptions {
+  /** UI Designer selection scope: include every nested/custom directory under img. */
+  allImageDirectories?: boolean;
+}
+
 export interface ProjectAssetBrowseVariant {
   relativePath: string;
   fileName: string;

@@ -310,6 +310,33 @@ describe('ui designer user data store', () => {
     assert.equal(fs.existsSync(path.join(tempRoot, 'user-data', 'runtime', 'ui-designer', 'recovery.json')), true);
   });
 
+  test('filters recent files by the owning project', () => {
+    const projectA = path.join(tempRoot, 'project-a');
+    const projectB = path.join(tempRoot, 'project-b');
+    const sceneA = path.join(projectA, 'ui', 'scene-a.mzui');
+    const legacySceneA = path.join(projectA, 'ui', 'legacy-a.mzui');
+    const sceneB = path.join(projectB, 'ui', 'scene-b.mzui');
+    fs.mkdirSync(path.dirname(sceneA), { recursive: true });
+    fs.mkdirSync(path.dirname(sceneB), { recursive: true });
+    saveUiDesignerFile(sceneA, sampleDocument());
+    saveUiDesignerFile(legacySceneA, sampleDocument());
+    saveUiDesignerFile(sceneB, sampleDocument());
+
+    const store = new UiDesignerUserDataStore(path.join(tempRoot, 'user-data'));
+    store.recordRecentFile(sceneA, { opened: true, projectPath: projectA });
+    store.recordRecentFile(legacySceneA, { opened: true });
+    store.recordRecentFile(sceneB, { opened: true, projectPath: projectB });
+
+    assert.deepEqual(
+      store.listRecentFiles(projectA).map((record) => record.sourcePath).sort(),
+      [legacySceneA, sceneA].map((value) => path.resolve(value)).sort(),
+    );
+    assert.deepEqual(
+      store.listRecentFiles(projectB).map((record) => record.sourcePath),
+      [path.resolve(sceneB)],
+    );
+  });
+
   test('writes in-memory recovery records and rejects recovery paths outside user data', () => {
     const storeRoot = path.join(tempRoot, 'user-data');
     const store = new UiDesignerUserDataStore(storeRoot);

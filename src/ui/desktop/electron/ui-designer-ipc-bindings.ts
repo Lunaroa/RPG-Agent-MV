@@ -70,8 +70,8 @@ export interface UiDesignerIpcDependencies {
 interface UiDesignerUserDataStoreLike {
   isWorkingDocumentPath(path: string): boolean
   saveWorkingDocument(document: UiDesignerDocument, options?: { path?: string; duplicate?: boolean; expected?: Pick<UiDesignerFileMetadata, 'digest' | 'mtimeMs'>; force?: boolean }): UiDesignerFileMetadata
-  listRecentFiles(): UiDesignerRecentFileRecord[]
-  recordRecentFile(path: string, options?: { opened?: boolean; saved?: boolean; sceneName?: string; thumbnailDataUrl?: string }): UiDesignerRecentFileRecord
+  listRecentFiles(projectPath?: string): UiDesignerRecentFileRecord[]
+  recordRecentFile(path: string, options?: { opened?: boolean; saved?: boolean; sceneName?: string; projectPath?: string; thumbnailDataUrl?: string }): UiDesignerRecentFileRecord
   removeRecentFile(path: string): void
   writeRecovery(document: UiDesignerDocument, sourcePath?: string, sourceMetadata?: Pick<UiDesignerFileMetadata, 'digest' | 'mtimeMs'>, key?: string): UiDesignerRecoveryRecord
   listRecovery(): UiDesignerRecoveryRecord[]
@@ -127,14 +127,21 @@ export function registerUiDesignerIpcHandlers(
   dialog: DialogLike,
   dependencies: UiDesignerIpcDependencies,
 ): void {
-  ipcMain.handle('ui-designer:file:open', async (event, request?: Pick<UiDesignerFileRequest, 'path'>) => {
+  ipcMain.handle('ui-designer:file:open', async (event, request?: Pick<UiDesignerFileRequest, 'path' | 'project'>) => {
     const parent = dependencies.dialogParent?.(event.sender)
     const filePath = request?.path || await selectedPath(dialog, parent, 'open')
     if (!filePath) return { status: 'idle', operation: 'open', message: 'Canceled.' }
     try {
       const result = dependencies.file.readUiDesignerFile(filePath)
       const store = dependencies.userDataStore()
-      store.recordRecentFile(result.metadata.path, { opened: true, sceneName: result.document.meta.sceneName })
+      const project = typeof request?.project === 'string' && request.project.trim()
+        ? dependencies.resolveProject(request.project)
+        : undefined
+      store.recordRecentFile(result.metadata.path, {
+        opened: true,
+        sceneName: result.document.meta.sceneName,
+        ...(project ? { projectPath: project } : {}),
+      })
       return { status: 'ready', operation: 'open', value: result.document, metadata: result.metadata, sourcePath: result.metadata.path, message: 'Ready.' }
     } catch (error) { return uiDesignerOperationError('open', error) }
   })
@@ -172,7 +179,13 @@ export function registerUiDesignerIpcHandlers(
       if (thumbnailDataUrl && project && isPathInside(project, metadata.path)) {
         dependencies.file.writeProjectUiDesignerThumbnail(project, document.meta.sceneName, thumbnailDataUrl)
       }
-      store.recordRecentFile(metadata.path, { saved: true, opened: mode === 'saveAs', sceneName: document.meta.sceneName, thumbnailDataUrl })
+      store.recordRecentFile(metadata.path, {
+        saved: true,
+        opened: mode === 'saveAs',
+        sceneName: document.meta.sceneName,
+        ...(project ? { projectPath: project } : {}),
+        thumbnailDataUrl,
+      })
       return { status: 'success', operation: mode, metadata, sourcePath: metadata.path, message: 'Saved.' }
     } catch (error) { return uiDesignerOperationError(mode, error) }
   }
@@ -303,7 +316,12 @@ export function registerUiDesignerIpcHandlers(
   ipcMain.handle('ui-designer:recovery:write', (_event, request: UiDesignerRecoveryWriteRequest) => safeStoreCall(dependencies, 'write-recovery', (store) => store.writeRecovery(request.document, request.sourcePath, request.sourceMetadata, request.key)))
   ipcMain.handle('ui-designer:recovery:read', (_event, id: string) => safeStoreCall(dependencies, 'read-recovery', (store) => store.readRecovery(String(id))))
   ipcMain.handle('ui-designer:recovery:clear', (_event, id: string) => safeStoreCall(dependencies, 'clear-recovery', (store) => { store.clearRecovery(String(id)); return null }))
-  ipcMain.handle('ui-designer:recent:list', () => safeStoreCall(dependencies, 'list-recent', (store) => store.listRecentFiles()))
+  ipcMain.handle('ui-designer:recent:list', (_event, request?: UiDesignerProjectRequest) => safeStoreCall(dependencies, 'list-recent', (store) => {
+    const project = typeof request?.project === 'string' && request.project.trim()
+      ? dependencies.resolveProject(request.project)
+      : undefined
+    return store.listRecentFiles(project)
+  }))
   ipcMain.handle('ui-designer:recent:remove', (_event, filePath: string) => safeStoreCall(dependencies, 'remove-recent', (store) => { store.removeRecentFile(String(filePath)); return null }))
   ipcMain.handle('ui-designer:preferences:read', () => safeStoreCall(dependencies, 'read-preferences', (store) => store.readPreferences()))
   ipcMain.handle('ui-designer:preferences:write', (_event, value: Record<string, unknown>) => safeStoreCall(dependencies, 'write-preferences', (store) => { store.writePreferences(value); return value }))

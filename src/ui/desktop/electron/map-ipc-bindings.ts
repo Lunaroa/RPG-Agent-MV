@@ -9,6 +9,7 @@ import type {
   MapOverviewPngExportScene,
   MapOverviewPngExportStartResult,
   MapOverviewScanProgressEvent,
+  ProjectAssetBrowseOptions,
   WorkspaceSurfaceVersionRequest,
 } from '../../../contract/types.ts';
 import { electronText } from './electronLocalization.ts';
@@ -447,19 +448,23 @@ export function registerMapIpcHandlers(
       relativeDirectory,
       { recursive: recursive === true },
     ));
-  handle('projectAssets:browseTree', (_event, value?: string) =>
-    desktop.projectAssetBrowser.buildProjectAssetCategoryTree(workflowRoot, project(value)));
+  handle('projectAssets:browseTree', (_event, value?: string, browseOptions?: ProjectAssetBrowseOptions) =>
+    desktop.projectAssetBrowser.buildProjectAssetCategoryTree(workflowRoot, project(value), {
+      includeAllImageDirectories: browseOptions?.allImageDirectories === true,
+    }));
   handle('projectAssets:browseCategory', (
     _event,
     categoryId: string,
     value?: string,
     thumbnailSizeBucket?: number,
+    browseOptions?: ProjectAssetBrowseOptions,
   ) =>
     desktop.projectAssetBrowser.listProjectAssetCategory(
       workflowRoot,
       project(value),
       categoryId,
       thumbnailSizeBucket,
+      { includeAllImageDirectories: browseOptions?.allImageDirectories === true },
     ));
   handle('projectAssets:invalidateBrowseCache', (_event, value?: string) => {
     const resolved = value === undefined || value === null || value === ''

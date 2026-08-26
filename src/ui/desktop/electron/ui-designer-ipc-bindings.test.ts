@@ -23,7 +23,8 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
   const revealPath = path.join(revealRoot, 'scene.mzui')
   fs.writeFileSync(revealPath, '{}', 'utf8')
   const revealed: string[] = []
-  const recent: Array<{ path: string; options?: { opened?: boolean; saved?: boolean; sceneName?: string; thumbnailDataUrl?: string } }> = []
+  const recent: Array<{ path: string; options?: { opened?: boolean; saved?: boolean; sceneName?: string; projectPath?: string; thumbnailDataUrl?: string } }> = []
+  const recentProjects: Array<string | undefined> = []
   const thumbnails: Array<{ project: string; sceneName: string; dataUrl: string }> = []
   let rendererStarts = 0
   const userDataStore = {
@@ -33,8 +34,8 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
       const filePath = !options.duplicate && options.path?.startsWith('runtime/documents/') ? options.path : `runtime/documents/${saved}.mzui`
       return { path: filePath, digest: `digest-${saved}`, mtimeMs: saved, size: 2 }
     },
-    recordRecentFile(path: string, options?: { opened?: boolean; saved?: boolean; sceneName?: string; thumbnailDataUrl?: string }) { recent.push({ path, options }); return { sourcePath: path, lastOpenedAt: 'now', exists: true } },
-    listRecentFiles: () => [],
+    recordRecentFile(path: string, options?: { opened?: boolean; saved?: boolean; sceneName?: string; projectPath?: string; thumbnailDataUrl?: string }) { recent.push({ path, options }); return { sourcePath: path, lastOpenedAt: 'now', exists: true } },
+    listRecentFiles: (project?: string) => { recentProjects.push(project); return [] },
     removeRecentFile: () => {},
     writeRecovery: () => ({ id: 'recovery', sourcePath: '', snapshotPath: 'snapshot', savedAt: 'now', digest: 'digest', mtimeMs: 1 }),
     listRecovery: () => [],
@@ -117,6 +118,10 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
   assert.equal(saveDialogs, 0)
   assert.equal(recent[1].options?.saved, true)
   assert.equal(recent[1].options?.opened, false)
+  assert.equal(recent[1].options?.projectPath, revealRoot)
+  const projectRecent = await handlers.get('ui-designer:recent:list')!(null, { project: revealRoot })
+  assert.equal(projectRecent.status, 'success')
+  assert.deepEqual(recentProjects, [revealRoot])
   const revealResult = await handlers.get('ui-designer:file:reveal-source')!(null, revealPath)
   assert.equal(revealResult.status, 'success')
   assert.deepEqual(revealed, [path.resolve(revealPath)])

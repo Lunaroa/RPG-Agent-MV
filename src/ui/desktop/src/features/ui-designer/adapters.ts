@@ -193,11 +193,11 @@ function unwrapRuntimeResult(result: UiFileResult<unknown>): UiFileResult<UiDesi
 
 export function createDesktopUiDesignerAdapters(projectPath?: string, lifecycle?: UiDesignerAdapterBundle['lifecycle']): UiDesignerAdapterBundle {
   const file: UiDesignerPersistenceAdapter = {
-    async open(request) { return asSaveResult(await api.uiDesigner.open(request), 'The UI designer source file could not be opened.') },
+    async open(request) { return asSaveResult(await api.uiDesigner.open({ ...request, project: projectPath }), 'The UI designer source file could not be opened.') },
     async save(document, request) { return asSaveResult(await api.uiDesigner.save({ ...request, project: projectPath }, document), 'The UI designer source file could not be saved.') },
     async saveAs(document, request) { return asSaveResult(await api.uiDesigner.saveAs({ ...request, project: projectPath }, document), 'The UI designer source file could not be saved as.') },
     async revealSource(sourcePath) { return asResult(await api.uiDesigner.revealSource(sourcePath), 'The source file could not be revealed.') },
-    async listRecentFiles() { return asResult(await api.uiDesigner.listRecentFiles(), 'Recent UI designer files are unavailable.') },
+    async listRecentFiles() { return asResult(await api.uiDesigner.listRecentFiles({ project: projectPath }), 'Recent UI designer files are unavailable.') },
     async removeRecentFile(path) { return asResult(await api.uiDesigner.removeRecentFile(path), 'The recent UI designer file record could not be removed.') },
     async writeRecovery(document, request) { return asResult(await api.uiDesigner.writeRecovery({ document, ...request }), 'The recovery snapshot could not be written.') },
     async listRecovery() { return asResult(await api.uiDesigner.listRecovery(), 'Recovery snapshots are unavailable.') },

@@ -174,6 +174,9 @@ const emit = defineEmits<{
   mutated: [manifest: ProjectAssetChangeManifest]
 }>()
 const isSelectionMode = computed(() => props.mode === 'select')
+const browseOptions = computed(() => ({
+  allImageDirectories: isSelectionMode.value && props.resourceKind === 'image',
+}))
 
 function emitMutation(manifest: ProjectAssetChangeManifest | null | undefined): void {
   if (!manifest) return
@@ -253,7 +256,7 @@ function categoryAllowedInSelectionMode(categoryId: string): boolean {
   if (!isSelectionMode.value) return true
   // Selection mode only offers categories whose assets match the requested kind;
   // group nodes stay when any child survives the same filter.
-  if (categoryId === 'img') return props.resourceKind === 'image'
+  if (categoryId === 'img' || categoryId.startsWith('img/')) return props.resourceKind === 'image'
   if (categoryId === 'audio') return props.resourceKind === 'audio'
   return projectAssetCategoryMatchesUiDesignerResourceKind(categoryId, props.resourceKind)
 }
@@ -981,11 +984,15 @@ const visibleItems = computed(() => {
 async function ensureFolderPreview(categoryId: string) {
   const project = projectStore.currentProject
   if (!project) return
+  if (categoryId === FAVORITES_NODE_ID) {
+    folderPreviews.value.set(categoryId, [])
+    return
+  }
   if (folderPreviews.value.has(categoryId) || folderPreviewLoading.has(categoryId)) return
   const generation = folderPreviewGeneration
   folderPreviewLoading.add(categoryId)
   try {
-    const listing = await projectAssets.browseCategory(categoryId, project, 128)
+    const listing = await projectAssets.browseCategory(categoryId, project, 128, browseOptions.value)
     const urls = listing.entries
       .filter((entry) => Boolean(entry.thumbnailUrl) && !entry.encrypted)
       .slice(0, 3)
@@ -1398,7 +1405,7 @@ async function loadTree(preferredCategoryId?: string) {
   treeLoading.value = true
   treeError.value = ''
   try {
-    const tree = await projectAssets.browseTree(project)
+    const tree = await projectAssets.browseTree(project, browseOptions.value)
     if (!treeCoordinator.isCurrent(token) || projectStore.currentProject !== project) return
     treeNodes.value = tree.nodes
     const compatibleNodes = selectionTreeNodes(tree.nodes)
@@ -1470,7 +1477,7 @@ async function loadCategory(categoryId: string, options: { preserveViewState?: b
 
   await listingCoordinator.runExclusive(token, async (context) => {
     try {
-      const listing = await projectAssets.browseCategory(categoryId, project, bucket)
+      const listing = await projectAssets.browseCategory(categoryId, project, bucket, browseOptions.value)
       if (!context.isCurrent()) return
       categoryEntries.value = listing.entries
       categoryDirectory.value = listing.directory || ''
@@ -1534,7 +1541,7 @@ async function loadFavoritesListing(options: { preserveViewState?: boolean } = {
       const nodes = favoriteListingNodes(ids)
       const listings = await boundedAsyncMap(nodes, 4, async (node) => {
         try {
-          return await projectAssets.browseCategory(node, project, bucket)
+          return await projectAssets.browseCategory(node, project, bucket, browseOptions.value)
         } catch {
           return null // node vanished on disk; its favorites simply do not resolve
         }
@@ -2793,7 +2800,7 @@ async function runImportForSourceFiles(
   if (!categoryOverride || category === selectedCategoryId.value) {
     existingNames = new Set(categoryEntries.value.map((entry) => entry.name))
   } else {
-    const listing = await projectAssets.browseCategory(category, projectStore.currentProject)
+    const listing = await projectAssets.browseCategory(category, projectStore.currentProject, undefined, browseOptions.value)
     existingNames = new Set(
       ((listing as { entries?: ProjectAssetBrowseEntry[] }).entries || []).map((entry) => entry.name),
     )
@@ -3416,7 +3423,7 @@ async function refreshSilently() {
   if (!project) return
   await projectAssets.invalidateBrowseCache(project)
   try {
-    const tree = await projectAssets.browseTree(project)
+    const tree = await projectAssets.browseTree(project, browseOptions.value)
     if (projectStore.currentProject !== project) return
     treeNodes.value = tree.nodes
     treeError.value = ''

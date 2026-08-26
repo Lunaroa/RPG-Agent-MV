@@ -45,6 +45,7 @@ describe('projectAssetsView phase1 structure', () => {
     assert.match(viewSource, /loadFavoritesListing/);
     assert.match(viewSource, /favoriteListingNodes/);
     assert.match(viewSource, /entryCategoryId/);
+    assert.match(viewSource, /ensureFolderPreview\(categoryId: string\)[\s\S]*categoryId === FAVORITES_NODE_ID[\s\S]*folderPreviews\.value\.set\(categoryId, \[\]\)/);
   });
 
   test('folder delete asks again when nested assets are still referenced', () => {

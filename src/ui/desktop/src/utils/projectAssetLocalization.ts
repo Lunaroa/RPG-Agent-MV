@@ -10,9 +10,9 @@ export function projectAssetCategoryLabel(
   try {
     return sharedLabel(categoryId, language);
   } catch {
-    // MZ picture subfolders use disk directory names as labels (e.g. pictures/ui → ui).
+    // Image subfolders use their disk directory names as labels.
     const { categoryId: baseId, subpath } = parseProjectAssetBrowserNodeId(categoryId);
-    if (baseId === 'pictures' && subpath) {
+    if ((baseId === 'img' || IMAGE_CATEGORY_IDS.has(baseId)) && subpath) {
       const segments = subpath.split('/').filter(Boolean);
       return segments[segments.length - 1] || subpath;
     }
@@ -21,6 +21,7 @@ export function projectAssetCategoryLabel(
 }
 
 const IMAGE_CATEGORY_IDS = new Set([
+  'img',
   'animations',
   'battlebacks1',
   'battlebacks2',

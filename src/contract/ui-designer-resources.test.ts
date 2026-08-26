@@ -32,6 +32,7 @@ describe('UI Designer managed resource contract', () => {
 
   test('maps project asset categories to every Inspector resource kind', () => {
     assert.equal(projectAssetCategoryMatchesUiDesignerResourceKind('pictures/ui', 'image'), true);
+    assert.equal(projectAssetCategoryMatchesUiDesignerResourceKind('img/custom_ui/hud', 'image'), true);
     assert.equal(projectAssetCategoryMatchesUiDesignerResourceKind('se', 'audio'), true);
     assert.equal(projectAssetCategoryMatchesUiDesignerResourceKind('movies', 'video'), true);
     assert.equal(projectAssetCategoryMatchesUiDesignerResourceKind('fonts', 'font'), true);

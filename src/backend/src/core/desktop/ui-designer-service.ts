@@ -4,6 +4,8 @@ import path from 'node:path';
 
 import type {
   UiDesignerDocument,
+  UiDesignerGlobalDataReadResult,
+  UiDesignerGlobalDataValue,
   UiDesignerSceneFileRecord,
   UiFileResult,
 } from '../../../../contract/ui-designer.ts';
@@ -37,6 +39,47 @@ export function projectUiDesignerThumbnailDirectory(projectRoot: string): string
 export function projectUiDesignerScenePath(projectRoot: string, sceneName: string): string {
   if (!UI_SCENE_NAME_PATTERN.test(sceneName)) throw new Error(`UI designer scene name is invalid: ${sceneName}`);
   return path.join(projectUiDesignerSceneDirectory(projectRoot), `${sceneName}${UI_DESIGNER_FILE_EXTENSION}`);
+}
+
+export const UI_DESIGNER_GLOBAL_DATA_FILENAME = 'global-ui.json';
+
+export function projectUiDesignerGlobalDataPath(projectRoot: string): string {
+  return path.join(lunaRpgDirPath(projectRoot), UI_DESIGNER_PROJECT_DIRECTORY, UI_DESIGNER_GLOBAL_DATA_FILENAME);
+}
+
+function assertUiDesignerGlobalData(value: unknown): UiDesignerGlobalDataValue {
+  if (Array.isArray(value)) return value as UiDesignerGlobalDataValue;
+  if (value !== null && typeof value === 'object') return value as UiDesignerGlobalDataValue;
+  throw new Error('UI designer global data must be a JSON object or array.');
+}
+
+/** Reads the project-wide global UI data; a missing file means "no data yet". */
+export function readProjectUiDesignerGlobalData(projectRoot: string): UiDesignerGlobalDataReadResult {
+  const resolved = projectUiDesignerGlobalDataPath(projectRoot);
+  const metadata = readMetadataIfExists(resolved);
+  if (!metadata) return { data: {}, metadata: null };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(resolved, 'utf8').replace(/^\uFEFF/, ''));
+  } catch (error) {
+    throw new Error(`UI designer global data is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);}
+  return { data: assertUiDesignerGlobalData(parsed), metadata };
+}
+
+export function saveProjectUiDesignerGlobalData(
+  projectRoot: string,
+  data: UiDesignerGlobalDataValue,
+  options: UiDesignerSaveOptions = {},
+): UiDesignerFileMetadata {
+  const resolved = projectUiDesignerGlobalDataPath(projectRoot);
+  const valid = assertUiDesignerGlobalData(data);
+  const existing = readMetadataIfExists(resolved);
+  if (!options.force && options.expected && !matchesExpected(existing, options.expected)) {
+    throw new UiDesignerFileConflictError(resolved, options.expected, existing);
+  }
+  const body = Buffer.from(`${JSON.stringify(valid, null, 2)}\n`, 'utf8');
+  writeFileAtomically(resolved, body);
+  return metadataForBytes(resolved, body);
 }
 
 function decodePngDataUrl(dataUrl: string): Buffer {

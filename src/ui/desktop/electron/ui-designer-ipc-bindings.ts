@@ -6,6 +6,10 @@ import type {
   UiDesignerFileMetadata,
   UiDesignerFileRequest,
   UiDesignerFrameFolderRequest,
+  UiDesignerGlobalDataReadResult,
+  UiDesignerGlobalDataRequest,
+  UiDesignerGlobalDataStageRequest,
+  UiDesignerGlobalDataValue,
   UiDesignerProjectProfileRequest,
   UiDesignerProjectProfileResult,
   UiDesignerProjectRequest,
@@ -38,6 +42,8 @@ export interface UiDesignerIpcDependencies {
     readUiDesignerFile(filePath: string): { document: UiDesignerDocument; metadata: UiDesignerFileMetadata }
     saveUiDesignerFile(filePath: string, document: UiDesignerDocument, options?: UiDesignerFileRequest): UiDesignerFileMetadata
     projectUiDesignerScenePath(project: string, sceneName: string): string
+    readProjectUiDesignerGlobalData(project: string): UiDesignerGlobalDataReadResult
+    saveProjectUiDesignerGlobalData(project: string, data: UiDesignerGlobalDataValue, options?: UiDesignerGlobalDataRequest): UiDesignerFileMetadata
     writeProjectUiDesignerThumbnail(project: string, sceneName: string, dataUrl: string): string
     revealSource(filePath: string): void
     UiDesignerUserDataStore: new (root: string) => UiDesignerUserDataStoreLike
@@ -56,6 +62,7 @@ export interface UiDesignerIpcDependencies {
     inspectUiDesignerRuntime(workflowRoot: string, project: string): UiRuntimeStatus
     stageUiDesignerRuntimeInstall(workflowRoot: string, project: string, options?: UiDesignerRuntimeInstallRequest): UiDesignerRuntimeStageResult
     stageUiDesignerSceneExport(workflowRoot: string, project: string, scene: UiRuntimeSceneExport, options?: Pick<UiDesignerSceneStageRequest, 'targetPath' | 'overwrite'>): UiDesignerRuntimeStageResult
+    stageUiDesignerGlobalDataExport(workflowRoot: string, project: string, data: UiDesignerGlobalDataValue): UiDesignerRuntimeStageResult
     writeUiDesignerRuntimeExport(filePath: string, scene: UiRuntimeSceneExport, options?: { overwrite?: boolean }): { path: string; digest: string; mtimeMs: number; size: number }
   }
   rendererHost?: {
@@ -264,6 +271,34 @@ export function registerUiDesignerIpcHandlers(
     try { return { status: 'success', value: dependencies.runtime.stageUiDesignerSceneExport(dependencies.workflowRoot, dependencies.resolveProject(request.project), request.scene, { sceneRelativePath: request.targetPath, overwrite: request.overwrite }), message: 'Scene staged.' } }
     catch (error) { return uiDesignerOperationError('scene:stage', error) }
   })
+  ipcMain.handle('ui-designer:global-data:read', (_event, request: UiDesignerGlobalDataRequest = {}) => {
+    try {
+      if (typeof request?.project !== 'string' || !request.project.trim()) {
+        throw Object.assign(new Error('A selected RPG Maker project is required.'), { code: 'UI_DESIGNER_PROJECT_REQUIRED' })
+      }
+      return { status: 'success', operation: 'global-data:read', value: dependencies.file.readProjectUiDesignerGlobalData(dependencies.resolveProject(request.project)), message: 'Ready.' }
+    } catch (error) { return uiDesignerOperationError('global-data:read', error) }
+  })
+  ipcMain.handle('ui-designer:global-data:save', (_event, request: UiDesignerGlobalDataRequest = {}, data?: UiDesignerGlobalDataValue) => {
+    try {
+      if (typeof request?.project !== 'string' || !request.project.trim()) {
+        throw Object.assign(new Error('A selected RPG Maker project is required.'), { code: 'UI_DESIGNER_PROJECT_REQUIRED' })
+      }
+      const metadata = dependencies.file.saveProjectUiDesignerGlobalData(dependencies.resolveProject(request.project), data as UiDesignerGlobalDataValue, {
+        expected: request.expected,
+        force: request.force,
+      })
+      return { status: 'success', operation: 'global-data:save', metadata, message: 'Saved.' }
+    } catch (error) { return uiDesignerOperationError('global-data:save', error) }
+  })
+  ipcMain.handle('ui-designer:global-data:stage', (_event, request: UiDesignerGlobalDataStageRequest) => {
+    try {
+      if (typeof request?.project !== 'string' || !request.project.trim()) {
+        throw Object.assign(new Error('A selected RPG Maker project is required.'), { code: 'UI_DESIGNER_PROJECT_REQUIRED' })
+      }
+      return { status: 'success', value: dependencies.runtime.stageUiDesignerGlobalDataExport(dependencies.workflowRoot, dependencies.resolveProject(request.project), request.data), message: 'Global data staged.' }
+    } catch (error) { return uiDesignerOperationError('global-data:stage', error) }
+  })
   ipcMain.handle('ui-designer:runtime:export', async (event, request: UiDesignerRuntimeExportRequest) => {
     const defaultName = `Scene_${request.scene.meta.sceneName.replace(/^Scene_/, '')}.json`
     const filePath = request?.path || await selectedPath(dialog, dependencies.dialogParent?.(event.sender), 'save', 'json', defaultName)
@@ -348,7 +383,7 @@ export function cleanupUiDesignerIpcHandlers(ipcMain: Pick<IpcMain, 'removeHandl
     'ui-designer:file:open', 'ui-designer:file:save', 'ui-designer:file:save-as', 'ui-designer:file:reveal-source',
     'ui-designer:project:profile', 'ui-designer:scenes:list',
     'ui-designer:resources:list', 'ui-designer:resources:references', 'ui-designer:resources:read-scene-data', 'ui-designer:file:select-frame-folder', 'ui-designer:runtime:check', 'ui-designer:runtime:install',
-    'ui-designer:scene:stage', 'ui-designer:runtime:export', 'ui-designer:recovery:list', 'ui-designer:recovery:write', 'ui-designer:recovery:read',
+    'ui-designer:scene:stage', 'ui-designer:global-data:read', 'ui-designer:global-data:save', 'ui-designer:global-data:stage', 'ui-designer:runtime:export', 'ui-designer:recovery:list', 'ui-designer:recovery:write', 'ui-designer:recovery:read',
     'ui-designer:renderer:start', 'ui-designer:renderer:confirm', 'ui-designer:renderer:stop', 'ui-designer:renderer:sync-resources',
     'ui-designer:recovery:clear', 'ui-designer:recent:list', 'ui-designer:recent:remove', 'ui-designer:preferences:read',
     'ui-designer:preferences:write',

@@ -846,6 +846,25 @@ export interface UiDesignerProjectRequest {
   project?: string
 }
 
+/** Project-wide UI data published to the game as data/GlobalUI.json and read
+ * in scripts through $global / $dataGlobalUI. Roots are plain JSON values. */
+export type UiDesignerGlobalDataValue = Record<string, unknown> | unknown[]
+
+export interface UiDesignerGlobalDataRequest extends UiDesignerProjectRequest {
+  expected?: Pick<UiDesignerFileMetadata, 'digest' | 'mtimeMs'>
+  force?: boolean
+}
+
+export interface UiDesignerGlobalDataReadResult {
+  data: UiDesignerGlobalDataValue
+  metadata: UiDesignerFileMetadata | null
+}
+
+export interface UiDesignerGlobalDataStageRequest extends UiDesignerProjectRequest {
+  data: UiDesignerGlobalDataValue
+  overwrite?: boolean
+}
+
 /** A profile request requires a selected project at runtime; the optional
  * field keeps the IPC API able to report a deterministic fail-fast error. */
 export interface UiDesignerProjectProfileRequest extends UiDesignerProjectRequest {}
@@ -930,6 +949,8 @@ export interface UiDesignerPersistenceAdapter {
   readPreferences(): Promise<UiFileResult<Record<string, unknown>>>
   writePreferences(value: Record<string, unknown>): Promise<UiFileResult<Record<string, unknown>>>
   exportRuntime(scene: UiRuntimeSceneExport, request?: Pick<UiDesignerRuntimeExportRequest, 'path' | 'overwrite'>): Promise<UiFileResult<string>>
+  readGlobalData(request?: UiDesignerGlobalDataRequest): Promise<UiFileResult<UiDesignerGlobalDataReadResult>>
+  saveGlobalData(data: UiDesignerGlobalDataValue, request?: UiDesignerGlobalDataRequest): Promise<UiDesignerSaveResult<null>>
 }
 
 export interface UiDesignerRecentFileRecord {
@@ -983,6 +1004,7 @@ export interface UiDesignerRuntimeAdapter {
   checkRuntime(projectPath?: string): Promise<UiRuntimeStatus>
   installRuntime(projectPath: string, options: { enable: true; forceModifiedRuntime?: boolean }): Promise<UiFileResult<UiDesignerRuntimeStageResult>>
   stageScene(projectPath: string, scene: UiRuntimeSceneExport, options?: { targetPath?: string; overwrite?: boolean }): Promise<UiFileResult<UiDesignerRuntimeStageResult>>
+  stageGlobalData(projectPath: string, data: UiDesignerGlobalDataValue): Promise<UiFileResult<UiDesignerRuntimeStageResult>>
 }
 
 export type UiDesignerRendererHostStopReason = 'project-change' | 'unload' | 'shutdown' | 'protocol-error'

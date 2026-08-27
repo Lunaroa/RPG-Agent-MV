@@ -18,6 +18,7 @@ import UiDesignerToolbar from './UiDesignerToolbar.vue'
 import UiDesignerWelcome from './UiDesignerWelcome.vue'
 import UiDesignerSettingsSurface from './UiDesignerSettingsSurface.vue'
 import UiDesignerExportSurface from './UiDesignerExportSurface.vue'
+import UiDesignerGlobalDataSurface from './UiDesignerGlobalDataSurface.vue'
 import UiDesignerNewSceneSurface from './UiDesignerNewSceneSurface.vue'
 import UiDesignerHelpSurface from './UiDesignerHelpSurface.vue'
 
@@ -30,7 +31,7 @@ const props = withDefaults(defineProps<{
 }>(), { adapters: undefined, projectPath: undefined, lifecycleAdapter: undefined, manageProjectContext: true })
 const { t } = useUiDesignerI18n()
 let rawDesigner!: ReturnType<typeof useUiDesigner>
-const surface = ref<'settings' | 'help' | 'shortcuts' | 'tour' | 'export' | 'newScene' | null>(null)
+const surface = ref<'settings' | 'help' | 'shortcuts' | 'tour' | 'export' | 'newScene' | 'globalData' | null>(null)
 const tourStep = ref(0)
 const showWelcome = ref(true)
 const exportPath = ref('')
@@ -326,7 +327,7 @@ onBeforeUnmount(() => {
 
 <template>
     <section class="ui-designer-shell" :class="{ 'code-mode-active': designer.editingMode === 'code' || designer.editingMode === 'json' }" data-ui-id="ui-designer-shell">
-    <UiDesignerToolbar :designer="designer" @home="showWelcome = true" @editing-mode="showEditingMode" @settings="surface = 'settings'" @help="surface = 'help'" @shortcuts="surface = 'shortcuts'" @tour="openTour" @export="exportCompleted = false; surface = 'export'" />
+    <UiDesignerToolbar :designer="designer" @home="showWelcome = true" @editing-mode="showEditingMode" @settings="surface = 'settings'" @help="surface = 'help'" @shortcuts="surface = 'shortcuts'" @tour="openTour" @export="exportCompleted = false; surface = 'export'" @global-data="surface = 'globalData'" />
     <UiDesignerSceneTabs :designer="designer" @new-scene="openNewScene" />
     <div class="designer-workspace" :class="{ 'welcome-active': showWelcome }" :style="workspaceStyle">
       <aside v-if="!showWelcome" class="left-pane">
@@ -347,6 +348,7 @@ onBeforeUnmount(() => {
     <UiDesignerNewSceneSurface v-if="surface === 'newScene'" :model-value="true" :draft="newSceneDraft" :template="newSceneTemplate" :template-options="sceneTemplateOptions" :template-label="sceneTemplateLabel" @update:model-value="closeSurface" @update:template="selectNewSceneTemplate" @name-edited="newSceneNameAutomatic = false" @create="createNewScene" @cancel="surface = null" />
     <UiDesignerSettingsSurface v-if="surface === 'settings'" :model-value="true" :designer="designer" :left-pane-width="leftPaneWidth" :right-pane-width="rightPaneWidth" :clamp-pane="(side, value) => clampPane(side, value)" @update:model-value="closeSurface" />
     <UiDesignerExportSurface v-if="surface === 'export'" :model-value="true" :designer="designer" :export-path="exportPath" :export-completed="exportCompleted" :apply-project-changes="props.applyProjectChanges" @update:model-value="closeSurface" @update:export-path="exportPath = $event" @completed="exportCompleted = $event" />
+    <UiDesignerGlobalDataSurface v-if="surface === 'globalData'" :model-value="true" :designer="designer" @update:model-value="closeSurface" />
     <UiDesignerHelpSurface v-if="surface === 'help' || surface === 'shortcuts' || surface === 'tour'" :model-value="true" :surface="surface" :tour-step="tourStep" :shortcut-bindings="shortcutBindings" @update:model-value="closeSurface" @update:tour-step="tourStep = $event" @complete="void completeTour()" />
 
     <el-dialog v-model="runtimePromptVisible" :title="t('runtimeInstallPromptTitle')" width="min(470px, 92vw)" :close-on-click-modal="false" @closed="runtimePromptDismissedProject = props.projectPath ?? ''">

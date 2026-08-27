@@ -14,7 +14,9 @@ import {
   UiDesignerUserDataStore,
   listUiDesignerSceneFiles,
   projectUiDesignerScenePath,
+  readProjectUiDesignerGlobalData,
   readUiDesignerFile,
+  saveProjectUiDesignerGlobalData,
   saveUiDesignerFile,
   writeProjectUiDesignerThumbnail,
 } from './ui-designer-service.ts';
@@ -32,6 +34,32 @@ afterEach(() => {
 });
 
 describe('ui designer document service', () => {
+  test('reads and writes project global UI data with conflict protection', () => {
+    const missing = readProjectUiDesignerGlobalData(tempRoot);
+    assert.deepEqual(missing.data, {});
+    assert.equal(missing.metadata, null);
+
+    const data = { menuList: [{ text: 'Start' }] };
+    const saved = saveProjectUiDesignerGlobalData(tempRoot, data);
+    assert.ok(Number.isFinite(saved.mtimeMs));
+    const read = readProjectUiDesignerGlobalData(tempRoot);
+    assert.deepEqual(read.data, data);
+    assert.equal(read.metadata?.digest, saved.digest);
+
+    assert.throws(
+      () => saveProjectUiDesignerGlobalData(tempRoot, { other: true }, { expected: { digest: 'stale', mtimeMs: 1 } }),
+      (error) => error instanceof UiDesignerFileConflictError,
+    );
+    saveProjectUiDesignerGlobalData(tempRoot, { other: true }, { expected: { digest: saved.digest, mtimeMs: saved.mtimeMs } });
+    assert.deepEqual(readProjectUiDesignerGlobalData(tempRoot).data, { other: true });
+
+    assert.throws(() => saveProjectUiDesignerGlobalData(tempRoot, 5 as unknown as Record<string, unknown>), /object or array/);
+
+    const corruptPath = path.join(tempRoot, '.luna_rpg', 'ui-designer', 'global-ui.json');
+    fs.writeFileSync(corruptPath, '{', 'utf8');
+    assert.throws(() => readProjectUiDesignerGlobalData(tempRoot), /not valid JSON/);
+  });
+
   test('reads metadata and rejects invalid tree/code schemas', () => {
     const filePath = path.join(tempRoot, 'scene.mzui');
     const document = sampleDocument();

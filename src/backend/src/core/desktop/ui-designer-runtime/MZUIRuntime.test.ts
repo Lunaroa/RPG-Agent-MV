@@ -1505,6 +1505,93 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     instance.terminate();
   });
 
+  test('loads data/GlobalUI.json as $dataGlobalUI and exposes it to scripts as $global', () => {
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-runtime-global-data-'));
+    try {
+      fs.mkdirSync(path.join(project, 'js', 'plugins'), { recursive: true });
+      fs.mkdirSync(path.join(project, 'data'), { recursive: true });
+      fs.writeFileSync(path.join(project, 'data', 'GlobalUI.json'), JSON.stringify({ menuList: [{ text: 'Start' }] }), 'utf8');
+      const context = makeContext();
+      context.process = { cwd: () => project };
+      context.require = nodeRequire;
+      vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-global.js' });
+      assert.deepEqual(jsonValue(context.$dataGlobalUI), { menuList: [{ text: 'Start' }] });
+
+      const runtime = context.MZUIRuntime.create();
+      const scene = sceneDocument();
+      scene.sceneScript = sceneScript('this.__globalText = $global.menuList[0].text;', '');
+      runtime.mount(scene, { root: new context.PIXI.Container() });
+      assert.equal(runtime.__globalText, 'Start');
+      runtime.cleanup();
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  test('treats a missing GlobalUI.json as empty data and rejects a non-container root', () => {
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-runtime-global-data-missing-'));
+    try {
+      fs.mkdirSync(path.join(project, 'js', 'plugins'), { recursive: true });
+      fs.mkdirSync(path.join(project, 'data'), { recursive: true });
+      const missing = makeContext();
+      missing.process = { cwd: () => project };
+      missing.require = nodeRequire;
+      vm.runInNewContext(RUNTIME_SOURCE, missing, { filename: 'MZUIRuntime-global-missing.js' });
+      assert.deepEqual(jsonValue(missing.$dataGlobalUI), {});
+      assert.equal(missing.MZUIRuntime.errors.some((entry: { label?: string }) => entry.label === 'global-data'), false);
+
+      fs.writeFileSync(path.join(project, 'data', 'GlobalUI.json'), '"text"', 'utf8');
+      const invalid = makeContext();
+      invalid.process = { cwd: () => project };
+      invalid.require = nodeRequire;
+      vm.runInNewContext(RUNTIME_SOURCE, invalid, { filename: 'MZUIRuntime-global-invalid.js' });
+      assert.deepEqual(jsonValue(invalid.$dataGlobalUI), {});
+      assert.equal(invalid.MZUIRuntime.errors.some((entry: { label?: string }) => entry.label === 'global-data'), true);
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  test('persists $dataGlobalUI mutations as a save diff layered over the shipped file', () => {
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-runtime-global-data-save-'));
+    try {
+      fs.mkdirSync(path.join(project, 'js', 'plugins'), { recursive: true });
+      fs.mkdirSync(path.join(project, 'data'), { recursive: true });
+      const shipped = { keep: 1, nested: { a: 1, b: 2 }, list: [1, 2] };
+      fs.writeFileSync(path.join(project, 'data', 'GlobalUI.json'), JSON.stringify(shipped), 'utf8');
+      const context = makeContext();
+      context.process = { cwd: () => project };
+      context.require = nodeRequire;
+      context.DataManager = {
+        createGameObjects() {},
+        makeSaveContents() { return { system: 'base' }; },
+        extractSaveContents() {},
+      };
+      vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-global-save.js' });
+
+      context.$dataGlobalUI.nested.b = 3;
+      context.$dataGlobalUI.added = 'new';
+      delete context.$dataGlobalUI.keep;
+      const contents = context.DataManager.makeSaveContents();
+      assert.equal(contents.system, 'base');
+      assert.deepEqual(jsonValue(contents.mzuiGlobalUI), { o: { keep: { d: 1 }, nested: { o: { b: { v: 3 } } }, added: { v: 'new' } } });
+
+      context.DataManager.extractSaveContents(contents);
+      assert.deepEqual(jsonValue(context.$dataGlobalUI), { nested: { a: 1, b: 3 }, list: [1, 2], added: 'new' });
+
+      context.$dataGlobalUI.nested.b = 99;
+      context.DataManager.createGameObjects();
+      assert.deepEqual(jsonValue(context.$dataGlobalUI), shipped);
+      assert.equal(context.DataManager.makeSaveContents().mzuiGlobalUI, null);
+
+      context.$dataGlobalUI.keep = 5;
+      context.DataManager.extractSaveContents({ system: 'legacy' });
+      assert.deepEqual(jsonValue(context.$dataGlobalUI), shipped);
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true });
+    }
+  });
+
   test('dispatches visibility events only on effective visibility edges per node', () => {
     const context = makeContext();
     vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
@@ -2096,6 +2183,11 @@ function sceneDocument(): any {
 
 function sceneScript(ready = '', update = ''): { version: '1.1.0'; source: string } {
   return { version: '1.1.0', source: migrateLegacyUiSourceCode({ ready, update }) };
+}
+
+/** vm-context objects carry a foreign Object prototype; normalize before deepEqual. */
+function jsonValue(value: unknown): unknown {
+  return JSON.parse(JSON.stringify(value));
 }
 
 function assertEngineWindowTextSignature(engine: 'MV' | 'MZ'): void {

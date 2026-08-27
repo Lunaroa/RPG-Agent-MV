@@ -3,6 +3,7 @@ import { computed, isRef, nextTick, onBeforeUnmount, ref, watch, type Ref } from
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import type { UiNode, UiRuntimeDiagnostic, UiValidationIssue } from '@contract/ui-designer'
 import type { UiDesignerManagedAssetKind } from '@contract/ui-designer-resources'
+import { UI_DESIGNER_NODE_SCRIPT_COMPLETIONS } from '@contract/ui-designer-script'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 import UiPropertyField from './UiPropertyField.vue'
 import UiDesignerConditions from './UiDesignerConditions.vue'
@@ -483,7 +484,7 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
             :draft-coordinator="designer.draftCoordinator"
             :scene-id="designer.activeSceneId"
             :node-id="selectedNode.id"
-            :completion-items="designer.document.nodes.flatMap((node) => [node.id, node.name])"
+            :completion-items="[...UI_DESIGNER_NODE_SCRIPT_COMPLETIONS, ...designer.document.nodes.flatMap((node) => [node.id, node.name])]"
             @value="(value, _sceneId, nodeId) => updateProperty(field.key, value, nodeId)"
             @preview="(value, _sceneId, nodeId) => previewProperty(field.key, value, nodeId)"
             @commit="(_sceneId, nodeId) => commitProperty(field.key, nodeId)"

@@ -51,6 +51,8 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
       readUiDesignerFile: (filePath) => ({ document: { meta: { sceneName: 'Scene_Sample' } }, metadata: { path: path.resolve(filePath), digest: 'digest', mtimeMs: 1, size: 2 } }),
       saveUiDesignerFile: (filePath) => { saved += 1; return { path: path.resolve(filePath), digest: `digest-${saved}`, mtimeMs: saved, size: 2 } },
       projectUiDesignerScenePath: (project, sceneName) => path.join(project, '.luna_rpg', 'ui-designer', 'scenes', `${sceneName}.mzui`),
+      readProjectUiDesignerGlobalData: () => ({ data: { menuList: [{ text: 'Start' }] }, metadata: { path: 'global-ui.json', digest: 'digest', mtimeMs: 1, size: 2 } }),
+      saveProjectUiDesignerGlobalData: (_project: string, data: unknown) => ({ path: 'global-ui.json', digest: `digest-${JSON.stringify(data)}`, mtimeMs: 2, size: 2 }),
       writeProjectUiDesignerThumbnail: (project, sceneName, dataUrl) => { thumbnails.push({ project, sceneName, dataUrl }); return path.join(project, '.luna_rpg', 'ui-designer', 'thumbnails', `${sceneName}.png`) },
       revealSource: (filePath: string) => { revealed.push(filePath) },
       UiDesignerUserDataStore: class { constructor() { return userDataStore as any } } as any,
@@ -78,6 +80,7 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
       inspectUiDesignerRuntime: () => ({ state: 'missing' }),
       stageUiDesignerRuntimeInstall: () => ({ status: 'staged' }),
       stageUiDesignerSceneExport: () => ({ status: 'staged' }),
+      stageUiDesignerGlobalDataExport: (_workflowRoot: string, _project: string, data: unknown) => ({ status: 'staged', affectedFiles: ['data/GlobalUI.json'], stagedData: data }),
       writeUiDesignerRuntimeExport: () => ({ path: 'Scene_Sample.json', digest: 'digest', mtimeMs: 2, size: 2 }),
     },
     rendererHost: {
@@ -150,6 +153,18 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
   const missingEnable = await handlers.get('ui-designer:runtime:install')!(null, { project: 'project' })
   assert.equal(missingEnable.status, 'error')
   assert.equal(missingEnable.code, 'UI_DESIGNER_RUNTIME_ENABLE_REQUIRED')
+  const globalData = await handlers.get('ui-designer:global-data:read')!(null, { project: 'project' })
+  assert.equal(globalData.status, 'success')
+  assert.deepEqual(globalData.value.data, { menuList: [{ text: 'Start' }] })
+  const globalDataMissingProject = await handlers.get('ui-designer:global-data:read')!(null, {})
+  assert.equal(globalDataMissingProject.status, 'error')
+  assert.equal(globalDataMissingProject.code, 'UI_DESIGNER_PROJECT_REQUIRED')
+  const globalDataSaved = await handlers.get('ui-designer:global-data:save')!(null, { project: 'project' }, { menuList: [{ text: 'Continue' }] })
+  assert.equal(globalDataSaved.status, 'success')
+  assert.equal(globalDataSaved.metadata.digest, 'digest-{"menuList":[{"text":"Continue"}]}')
+  const globalDataStaged = await handlers.get('ui-designer:global-data:stage')!(null, { project: 'project', data: { menuList: [] } })
+  assert.equal(globalDataStaged.status, 'success')
+  assert.deepEqual(globalDataStaged.value.affectedFiles, ['data/GlobalUI.json'])
   const runtimeExport = await handlers.get('ui-designer:runtime:export')!({ sender: {} }, {
     path: 'Scene_Sample.json',
     scene: { meta: { sceneName: 'Scene_Sample' } },
@@ -180,5 +195,8 @@ test('ui-designer IPC exposes structured file/resource/runtime boundaries', asyn
   cleanupUiDesignerIpcHandlers({ removeHandler: (name: string) => { removed.push(name) } })
   assert.equal(removed.includes('ui-designer:project:profile'), true)
   assert.equal(removed.includes('ui-designer:renderer:sync-resources'), true)
+  assert.equal(removed.includes('ui-designer:global-data:read'), true)
+  assert.equal(removed.includes('ui-designer:global-data:save'), true)
+  assert.equal(removed.includes('ui-designer:global-data:stage'), true)
   fs.rmSync(revealRoot, { recursive: true, force: true })
 })

@@ -85,6 +85,12 @@ export const unavailableFileAdapter: UiDesignerPersistenceAdapter = {
   async exportRuntime() {
     return unavailable('Runtime export adapter is not connected; no file was written.')
   },
+  async readGlobalData() {
+    return unavailable('Global data adapter is not connected; no project data was loaded.')
+  },
+  async saveGlobalData() {
+    return unavailable('Global data adapter is not connected; no project data was written.')
+  },
 }
 
 export const unavailableResourceAdapter: UiDesignerResourceAdapter = {
@@ -119,6 +125,9 @@ export const unavailableRuntimeAdapter: UiDesignerRuntimeAdapter = {
     return unavailable('Runtime install adapter is not connected; no plugin files changed.')
   },
   async stageScene() {
+    return unavailable('Runtime staging adapter is not connected; no project files changed.')
+  },
+  async stageGlobalData() {
     return unavailable('Runtime staging adapter is not connected; no project files changed.')
   },
 }
@@ -206,6 +215,8 @@ export function createDesktopUiDesignerAdapters(projectPath?: string, lifecycle?
     async readPreferences() { return asResult(await api.uiDesigner.readPreferences(), 'Designer preferences are unavailable.') },
     async writePreferences(value) { return asResult(await api.uiDesigner.writePreferences(value), 'Designer preferences could not be saved.') },
     async exportRuntime(scene, request) { return asResult(await api.uiDesigner.exportRuntime({ scene, ...request }), 'The runtime JSON could not be exported.') },
+    async readGlobalData(request) { return asResult(await api.uiDesigner.readGlobalData({ ...request, project: projectPath }), 'The project global UI data could not be loaded.') },
+    async saveGlobalData(data, request) { return asSaveResult(await api.uiDesigner.saveGlobalData({ ...request, project: projectPath }, data), 'The project global UI data could not be saved.') },
   }
   const resource: UiDesignerResourceAdapter = {
     async loadProject(request?: UiDesignerResourceRequest) { return asResult(await api.uiDesigner.listResources({ ...request, project: projectPath }), 'Project resources are unavailable.') as UiFileResult<UiProjectResourceCatalog> },
@@ -226,6 +237,7 @@ export function createDesktopUiDesignerAdapters(projectPath?: string, lifecycle?
     async checkRuntime() { const result = asResult<UiRuntimeStatus>(await api.uiDesigner.checkRuntime({ project: projectPath }), 'Runtime inspection failed.'); return result.value ?? { state: 'error', message: result.message } },
     async installRuntime(_project, options) { return unwrapRuntimeResult(asResult(await api.uiDesigner.installRuntime({ project: projectPath, ...options }), 'Runtime installation could not be staged.')) },
     async stageScene(_project, scene, options) { return unwrapRuntimeResult(asResult(await api.uiDesigner.stageScene({ project: projectPath, scene, ...options }), 'Runtime scene staging failed.')) },
+    async stageGlobalData(_project, data) { return unwrapRuntimeResult(asResult(await api.uiDesigner.stageGlobalData({ project: projectPath, data }), 'Global UI data staging failed.')) },
   }
   const rendererHost: UiDesignerRendererHostAdapter = {
     async start(generation) {
@@ -275,7 +287,7 @@ export const codeMirrorAdapter: UiCodeEditorAdapter = {
     const textarea = document.createElement('textarea')
     textarea.value = options.value
     element.appendChild(textarea)
-    const vocabulary = ['$gameVariables', '$gameSwitches', '$gameParty', '$gameActors', '$gamePlayer', 'SceneManager', 'Graphics', 'Input', 'AudioManager', ...(options.completionItems ?? [])]
+    const vocabulary = ['$gameVariables', '$gameSwitches', '$gameParty', '$gameActors', '$gamePlayer', '$dataGlobalUI', 'SceneManager', 'Graphics', 'Input', 'AudioManager', ...(options.completionItems ?? [])]
     const hint = (instance: CodeMirror.Editor) => {
       const cursor = instance.getCursor()
       const line = instance.getLine(cursor.line)

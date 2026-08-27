@@ -24,6 +24,7 @@ export const UI_DESIGNER_SCRIPT_ARGUMENTS = [
   '$var',
   '$setSw',
   '$setVar',
+  '$global',
 ] as const
 
 export const UI_DESIGNER_NODE_SCRIPT_COMPLETIONS = [

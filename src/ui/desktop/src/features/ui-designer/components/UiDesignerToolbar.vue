@@ -10,6 +10,7 @@ const emit = defineEmits<{
   shortcuts: []
   tour: []
   export: []
+  'global-data': []
   home: []
   'editing-mode': [mode: 'design' | 'code' | 'json']
 }>()
@@ -84,6 +85,7 @@ const selectEditingMode = (mode: 'design' | 'code' | 'json') => {
         {{ t(designer.isPreviewing ? 'exitGamePreview' : 'gamePreview') }}
       </el-button>
 
+      <el-button data-testid="ui-designer-global-data" size="small" text :disabled="!designer.hasProject" @click="emit('global-data')">{{ t('globalData') }}</el-button>
       <el-button size="small" text @click="emit('settings')">{{ t('settings') }}</el-button>
       <el-button size="small" text @click="emit('help')">{{ t('help') }}</el-button>
       <el-button size="small" text @click="emit('shortcuts')">{{ t('shortcuts') }}</el-button>

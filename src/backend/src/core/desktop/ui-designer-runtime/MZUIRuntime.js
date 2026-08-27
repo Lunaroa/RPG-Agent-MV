@@ -13,6 +13,7 @@
 
   var VERSION = '1.1.0';
   var SCENE_DIRECTORY_DEFAULT = 'js/plugins/mzui-data';
+  var GLOBAL_DATA_FILE = 'data/GlobalUI.json';
   var BUILTIN_SCENE_NAMES = {
     Scene_Title: true,
     Scene_Map: true,
@@ -48,7 +49,7 @@
   // All trusted Runtime callbacks use one stable ABI.  The named helpers are
   // injected once per invocation; the Function objects themselves are still
   // compiled once when the scene is mounted.
-  var CODE_ARGUMENTS = ['runtime', 'context', 'node', 'props', 'event', 'self', 'scene', '$sw', '$var', '$setSw', '$setVar', '$item', '$index'];
+  var CODE_ARGUMENTS = ['runtime', 'context', 'node', 'props', 'event', 'self', 'scene', '$sw', '$var', '$setSw', '$setVar', '$item', '$index', '$global'];
 
   function object(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
   function finite(value, fallback) { return typeof value === 'number' && isFinite(value) ? value : fallback; }
@@ -238,7 +239,10 @@
           values[id] = value;
           return value;
         };
-        return [runtime, context, node || null, props || (node && node.props) || {}, event || null, selfView, sceneApi, readSwitch, readVariable, writeSwitch, writeVariable, node && node.__mzuiListItem, node && node.__mzuiListIndex];
+        var readGlobalData = function readGlobalData() {
+          return typeof global.$dataGlobalUI !== 'undefined' ? global.$dataGlobalUI : null;
+        };
+        return [runtime, context, node || null, props || (node && node.props) || {}, event || null, selfView, sceneApi, readSwitch, readVariable, writeSwitch, writeVariable, node && node.__mzuiListItem, node && node.__mzuiListIndex, readGlobalData()];
       },
       mount: function mount(scene, options) {
         this.cleanup();
@@ -3027,6 +3031,113 @@
     return null;
   }
 
+  var globalDataBase = {};
+
+  function cloneGlobalData(value) {
+    if (value === undefined) return undefined;
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function jsonDataEqual(left, right) {
+    if (left === right) return true;
+    if (Array.isArray(left) && Array.isArray(right)) {
+      if (left.length !== right.length) return false;
+      for (var index = 0; index < left.length; index += 1) {
+        if (!jsonDataEqual(left[index], right[index])) return false;
+      }
+      return true;
+    }
+    if (object(left) && object(right)) {
+      var leftKeys = Object.keys(left);
+      var rightKeys = Object.keys(right);
+      if (leftKeys.length !== rightKeys.length) return false;
+      for (var keyIndex = 0; keyIndex < leftKeys.length; keyIndex += 1) {
+        var key = leftKeys[keyIndex];
+        if (!Object.prototype.hasOwnProperty.call(right, key)) return false;
+        if (!jsonDataEqual(left[key], right[key])) return false;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  // Save files carry only the difference between the shipped GlobalUI.json and
+  // its live value, so updating the file for a new build cannot leave old
+  // saves without newly introduced keys. {d:1} deletes a key, {v:value}
+  // replaces a subtree, {o:{...}} patches an object's children.
+  function diffGlobalData(base, current) {
+    if (object(base) && object(current)) {
+      var out = {};
+      var changed = false;
+      Object.keys(base).forEach(function (key) {
+        if (!Object.prototype.hasOwnProperty.call(current, key)) { out[key] = { d: 1 }; changed = true; return; }
+        var sub = diffGlobalData(base[key], current[key]);
+        if (sub !== undefined) { out[key] = sub; changed = true; }
+      });
+      Object.keys(current).forEach(function (key) {
+        if (!Object.prototype.hasOwnProperty.call(base, key)) { out[key] = { v: cloneGlobalData(current[key]) }; changed = true; }
+      });
+      return changed ? { o: out } : undefined;
+    }
+    return jsonDataEqual(base, current) ? undefined : { v: cloneGlobalData(current === undefined ? null : current) };
+  }
+
+  function applyGlobalDataPatch(base, patch) {
+    if (patch === undefined || patch === null) return cloneGlobalData(base === undefined ? {} : base);
+    if (Object.prototype.hasOwnProperty.call(patch, 'v')) return cloneGlobalData(patch.v);
+    if (object(patch.o)) {
+      var out = object(base) ? cloneGlobalData(base) : {};
+      Object.keys(patch.o).forEach(function (key) {
+        var child = patch.o[key];
+        if (child && child.d) { delete out[key]; return; }
+        out[key] = applyGlobalDataPatch(object(base) ? base[key] : undefined, child);
+      });
+      return out;
+    }
+    throw new Error('Global UI data save patch is malformed.');
+  }
+
+  function loadGlobalData() {
+    var data = {};
+    try {
+      if (typeof require === 'function') {
+        var fs = require('fs');
+        var path = require('path');
+        var file = path.join(resolveEngineRoot(), GLOBAL_DATA_FILE);
+        if (fs.existsSync(file)) {
+          var parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+          if (!object(parsed) && !Array.isArray(parsed)) throw new Error('Global UI data root must be a JSON object or array: ' + GLOBAL_DATA_FILE);
+          data = parsed;
+        }
+      }
+    } catch (error) {
+      reportApiError({ file: GLOBAL_DATA_FILE, label: 'global-data', message: errorText(error) });
+    }
+    globalDataBase = cloneGlobalData(data);
+    global.$dataGlobalUI = data;
+  }
+
+  function installGlobalDataSaveHooks() {
+    var manager = global.DataManager;
+    if (!manager || typeof manager.createGameObjects !== 'function' || typeof manager.makeSaveContents !== 'function' || typeof manager.extractSaveContents !== 'function') return;
+    var createGameObjects = manager.createGameObjects;
+    var makeSaveContents = manager.makeSaveContents;
+    var extractSaveContents = manager.extractSaveContents;
+    manager.createGameObjects = function createGameObjectsWithGlobalData() {
+      createGameObjects.call(this);
+      global.$dataGlobalUI = cloneGlobalData(globalDataBase);
+    };
+    manager.makeSaveContents = function makeSaveContentsWithGlobalData() {
+      var contents = makeSaveContents.call(this);
+      contents.mzuiGlobalUI = diffGlobalData(globalDataBase, global.$dataGlobalUI) || null;
+      return contents;
+    };
+    manager.extractSaveContents = function extractSaveContentsWithGlobalData(contents) {
+      extractSaveContents.call(this, contents);
+      global.$dataGlobalUI = applyGlobalDataPatch(globalDataBase, contents && contents.mzuiGlobalUI);
+    };
+  }
+
   function registerScene(sceneName, sceneBase, scene) {
     if (registeredScenes[sceneName]) throw new Error('UI scene is already registered: ' + sceneName);
     var existingScene = global[sceneName];
@@ -3137,6 +3248,8 @@
   global.MZUIRuntime = api;
   var pluginParameters = global.PluginManager && typeof global.PluginManager.parameters === 'function' ? global.PluginManager.parameters('MZUIRuntime') || {} : {};
   api.configure({ sceneDirectory: pluginParameters.SceneDirectory || SCENE_DIRECTORY_DEFAULT });
+  loadGlobalData();
+  installGlobalDataSaveHooks();
   if (String(pluginParameters.AutoRegister || 'true').toLowerCase() !== 'false') {
     api.scanScenes();
   }

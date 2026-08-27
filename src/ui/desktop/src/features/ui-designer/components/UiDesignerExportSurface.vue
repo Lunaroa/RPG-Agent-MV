@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, isRef, ref, type Ref } from 'vue'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import { UI_DESIGNER_RUNTIME_VERSION, type UiRuntimeStatus, type UiValidationIssue } from '@contract/ui-designer'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
@@ -60,12 +60,23 @@ const installRuntime = async () => {
     busy.value = false
   }
 }
+const stageGlobalData = async () => {
+  const loaded = await props.designer.adapters.file.readGlobalData()
+  if (loaded.status !== 'success' || !loaded.value?.metadata) return true
+  const staged = await props.designer.adapters.runtime.stageGlobalData('', loaded.value.data)
+  if (staged.status !== 'success') {
+    ElMessage.error(staged.message || t('operationError'))
+    return false
+  }
+  return true
+}
 const stageExport = async () => {
   if (busy.value) return
   busy.value = true
   try {
     if (runtimeNeedsInstall.value && !(await prepareRuntime())) return
     const staged = await props.designer.stageRuntime({ targetPath: props.exportPath.trim() || undefined, overwrite: false })
+    if (staged && !(await stageGlobalData())) return
     emit('completed', staged)
     if (staged) await reviewStagedChanges()
   } finally {

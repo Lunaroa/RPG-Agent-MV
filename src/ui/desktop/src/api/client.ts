@@ -11,6 +11,10 @@ import type {
   UiDesignerDocument,
   UiDesignerFileRequest,
   UiDesignerFrameFolderRequest,
+  UiDesignerGlobalDataReadResult,
+  UiDesignerGlobalDataRequest,
+  UiDesignerGlobalDataStageRequest,
+  UiDesignerGlobalDataValue,
   UiDesignerProjectProfileRequest,
   UiDesignerProjectProfileResult,
   UiDesignerProjectRequest,
@@ -154,6 +158,9 @@ declare global {
         checkRuntime(request?: UiDesignerProjectRequest): Promise<UiFileResult<UiRuntimeStatus>>;
         installRuntime(request: UiDesignerRuntimeInstallRequest): Promise<UiFileResult<UiDesignerRuntimeStageResult>>;
         stageScene(request: UiDesignerSceneStageRequest): Promise<UiFileResult<UiDesignerRuntimeStageResult>>;
+        readGlobalData(request?: UiDesignerGlobalDataRequest): Promise<UiFileResult<UiDesignerGlobalDataReadResult>>;
+        saveGlobalData(request: UiDesignerGlobalDataRequest, data: UiDesignerGlobalDataValue): Promise<UiDesignerSaveResult<null>>;
+        stageGlobalData(request: UiDesignerGlobalDataStageRequest): Promise<UiFileResult<UiDesignerRuntimeStageResult>>;
         exportRuntime(request: UiDesignerRuntimeExportRequest): Promise<UiFileResult<string>>;
         startRenderer(request: UiDesignerProjectRequest & { generation: number }): Promise<UiFileResult<UiDesignerRendererHostSession>>;
         confirmRenderer(sessionId: string): Promise<UiFileResult<UiDesignerRendererHostSession>>;
@@ -560,6 +567,9 @@ export const uiDesigner = {
   checkRuntime(request?: UiDesignerProjectRequest) { return desktopApi().uiDesigner.checkRuntime(toPlain(request)) },
   installRuntime(request: UiDesignerRuntimeInstallRequest) { return desktopApi().uiDesigner.installRuntime(toPlain(request)) },
   stageScene(request: UiDesignerSceneStageRequest) { return desktopApi().uiDesigner.stageScene(toPlain(request)) },
+  readGlobalData(request?: UiDesignerGlobalDataRequest) { return desktopApi().uiDesigner.readGlobalData(toPlain(request ?? {})) },
+  saveGlobalData(request: UiDesignerGlobalDataRequest, data: UiDesignerGlobalDataValue) { return desktopApi().uiDesigner.saveGlobalData(toPlain(request), toPlain(data)) },
+  stageGlobalData(request: UiDesignerGlobalDataStageRequest) { return desktopApi().uiDesigner.stageGlobalData(toPlain(request)) },
   exportRuntime(request: UiDesignerRuntimeExportRequest) { return desktopApi().uiDesigner.exportRuntime(toPlain(request)) },
   startRenderer(request: UiDesignerProjectRequest & { generation: number }) { return desktopApi().uiDesigner.startRenderer(toPlain(request)) },
   confirmRenderer(sessionId: string) { return desktopApi().uiDesigner.confirmRenderer(sessionId) },

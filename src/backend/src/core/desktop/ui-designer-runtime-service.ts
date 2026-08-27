@@ -4,12 +4,14 @@ import path from 'node:path';
 
 import type {
   UiDesignerRuntimeStageResult as ContractUiDesignerRuntimeStageResult,
+  UiDesignerGlobalDataValue,
   UiRuntimeSceneExport,
   UiRuntimeStatus,
 } from '../../../../contract/ui-designer.ts';
 import { canonicalUiRuntimeSceneExport } from '../../../../contract/ui-designer-script.ts';
 import { normalizeUiRuntimeSceneGeometry } from '../../../../contract/ui-designer-geometry.ts';
 import {
+  dataRelativePath,
   inspectRmmvProject,
   resourceRelativePath,
   resolveRmmvLayout,
@@ -27,6 +29,7 @@ export const UI_DESIGNER_RUNTIME_PLUGIN_NAME = 'MZUIRuntime';
 export const UI_DESIGNER_RUNTIME_VERSION = '1.1.0';
 export const UI_DESIGNER_RUNTIME_RELATIVE_PATH = 'js/plugins/MZUIRuntime.js';
 export const UI_DESIGNER_SCENE_DIRECTORY = 'js/plugins/mzui-data';
+export const UI_DESIGNER_GLOBAL_DATA_FILENAME = 'GlobalUI.json';
 
 export type UiDesignerRuntimeInspectionState =
   | 'missing'
@@ -305,6 +308,33 @@ export function stageUiDesignerRuntime(
   options: UiDesignerRuntimeStageOptions = {},
 ): UiDesignerRuntimeStageResult {
   return stageUiDesignerRuntimeInstall(workflowRootInput, projectInput, options);
+}
+
+/** Stage the project-wide global UI data as data/GlobalUI.json (www/data on MV). */
+export function stageUiDesignerGlobalDataExport(
+  workflowRootInput: string,
+  projectInput: string,
+  data: UiDesignerGlobalDataValue,
+): UiDesignerRuntimeStageResult {
+  const workflowRoot = path.resolve(workflowRootInput);
+  const project = path.resolve(projectInput);
+  if (!data || typeof data !== 'object') throw new Error('UI designer global data must be a JSON object or array.');
+  const layout = resolveRmmvLayout(project);
+  const globalDataRelativePath = dataRelativePath(layout, UI_DESIGNER_GLOBAL_DATA_FILENAME);
+  const sourceBefore = snapshotSourceFiles(project, [globalDataRelativePath]);
+  const content = Buffer.from(`${JSON.stringify(data, null, 2)}\n`, 'utf8');
+  stageProjectFilesAtomically(workflowRoot, project, [
+    { relativePath: globalDataRelativePath, content },
+  ]);
+  const runtime = inspectUiDesignerRuntime(workflowRoot, project);
+  return {
+    status: 'staged',
+    affectedFiles: [globalDataRelativePath],
+    runtime,
+    digest: crypto.createHash('sha256').update(content).digest('hex'),
+    transaction: stageTransactionProof(project, [globalDataRelativePath], sourceBefore),
+    projectCompatibility: runtime.projectCompatibility,
+  };
 }
 
 export function runtimeSourceDigest(): string {

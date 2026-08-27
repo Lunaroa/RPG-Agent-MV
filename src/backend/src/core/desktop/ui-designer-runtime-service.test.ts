@@ -13,6 +13,7 @@ import {
   UiDesignerRuntimeExportOverwriteRequiredError,
   UiDesignerSceneOverwriteRequiredError,
   inspectUiDesignerRuntime,
+  stageUiDesignerGlobalDataExport,
   stageUiDesignerRuntimeInstall,
   stageUiDesignerSceneExport,
   writeUiDesignerRuntimeExport,
@@ -61,6 +62,20 @@ describe('ui designer runtime staging', () => {
     assert.equal(plugins.find((entry: { name: string }) => entry.name === 'OtherPlugin').status, true);
     assert.equal(plugins.find((entry: { name: string }) => entry.name === 'MZUIRuntime').status, true);
     assert.equal(inspectUiDesignerRuntime(tempRoot, project).state, 'staged-pending');
+  });
+
+  test('stages project global UI data into data/GlobalUI.json without touching the source', () => {
+    const project = makeProject();
+    const data = { menuList: [{ text: 'Start' }] };
+    const result = stageUiDesignerGlobalDataExport(tempRoot, project, data);
+    assert.equal(result.status, 'staged');
+    assert.equal(result.affectedFiles.length, 1);
+    assert.ok(result.affectedFiles[0].endsWith('data/GlobalUI.json'));
+    const staged = getProjectFileForRead(tempRoot, project, 'data/GlobalUI.json');
+    assert.ok(staged);
+    assert.deepEqual(JSON.parse(fs.readFileSync(staged!, 'utf8')), data);
+    assert.equal(fs.existsSync(path.join(project, 'data', 'GlobalUI.json')), false);
+    assert.throws(() => stageUiDesignerGlobalDataExport(tempRoot, project, 5 as never), /object or array/);
   });
 
   test('requires explicit overwrite for an existing source or staged scene', () => {

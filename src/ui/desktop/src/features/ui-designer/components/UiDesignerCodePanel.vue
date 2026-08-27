@@ -78,7 +78,7 @@ onBeforeUnmount(() => window.removeEventListener('agent-rpg:ui-designer-format',
       </ul>
     </el-alert>
     <UiScriptContextHint kind="scene" :issues="codeIssues" />
-    <UiCodeMirrorEditor ref="editorRef" :adapter="designer.adapters.code" :model-value="code" :rows="18" :debounce-ms="1000" :format-on-blur="Boolean(designer.preferences.autoFormat)" :font-family="designer.preferences.codeFontFamily" :font-size="designer.preferences.codeFontSize" :scene-id="designer.activeSceneId" :completion-items="completionItems" :draft-coordinator="designer.draftCoordinator" @update:model-value="updateCode" />
+    <UiCodeMirrorEditor ref="editorRef" :adapter="designer.adapters.code" :model-value="code" :rows="18" resizable :debounce-ms="1000" :format-on-blur="Boolean(designer.preferences.autoFormat)" :font-family="designer.preferences.codeFontFamily" :font-size="designer.preferences.codeFontSize" :scene-id="designer.activeSceneId" :completion-items="completionItems" :draft-coordinator="designer.draftCoordinator" @update:model-value="updateCode" />
   </section>
 </template>
 

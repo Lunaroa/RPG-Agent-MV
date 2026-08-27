@@ -179,7 +179,7 @@ const sceneTargetKnown = (action: UiEventAction) => {
         </div>
         <el-input v-else-if="action.type === 'url'" :model-value="actionField(action, 'url')" size="small" :placeholder="t('urlPlaceholder')" @update:model-value="updateAction(index, { url: $event })" />
         <template v-else-if="action.type === 'script'">
-          <UiCodeMirrorEditor :data-ui-id="`ui-designer-event-${activeEvent}-${index}-script`" :adapter="designer.adapters.code" :model-value="String(actionField(action, 'code'))" :rows="4" :debounce-ms="1000" :format-on-blur="Boolean(designer.preferences.autoFormat)" :font-family="designer.preferences.codeFontFamily" :font-size="designer.preferences.codeFontSize" :completion-items="scriptCompletionItems" :scene-id="designer.activeSceneId" :draft-coordinator="designer.draftCoordinator" @update:model-value="updateAction(index, { code: $event })" />
+          <UiCodeMirrorEditor :data-ui-id="`ui-designer-event-${activeEvent}-${index}-script`" :adapter="designer.adapters.code" :model-value="String(actionField(action, 'code'))" :rows="4" resizable :debounce-ms="1000" :format-on-blur="Boolean(designer.preferences.autoFormat)" :font-family="designer.preferences.codeFontFamily" :font-size="designer.preferences.codeFontSize" :completion-items="scriptCompletionItems" :scene-id="designer.activeSceneId" :draft-coordinator="designer.draftCoordinator" @update:model-value="updateAction(index, { code: $event })" />
           <UiScriptContextHint kind="action" :issues="codeIssuesFor(index)" />
         </template>
         <el-input v-else-if="action.type === 'showMessage'" :model-value="actionField(action, 'message')" size="small" @update:model-value="updateAction(index, { message: $event })" />
@@ -223,7 +223,7 @@ const sceneTargetKnown = (action: UiEventAction) => {
             <el-input-number :model-value="action.condition.value ?? 0" size="small" @update:model-value="updateCondition(index, { value: $event ?? 0 })" />
           </div>
           <template v-else>
-            <UiCodeMirrorEditor :data-ui-id="`ui-designer-event-${activeEvent}-${index}-condition-script`" :adapter="designer.adapters.code" :model-value="action.condition.code ?? ''" :rows="3" :debounce-ms="1000" :format-on-blur="Boolean(designer.preferences.autoFormat)" :font-family="designer.preferences.codeFontFamily" :font-size="designer.preferences.codeFontSize" :completion-items="scriptCompletionItems" :scene-id="designer.activeSceneId" :draft-coordinator="designer.draftCoordinator" @update:model-value="updateCondition(index, { code: $event })" />
+            <UiCodeMirrorEditor :data-ui-id="`ui-designer-event-${activeEvent}-${index}-condition-script`" :adapter="designer.adapters.code" :model-value="action.condition.code ?? ''" :rows="3" resizable :debounce-ms="1000" :format-on-blur="Boolean(designer.preferences.autoFormat)" :font-family="designer.preferences.codeFontFamily" :font-size="designer.preferences.codeFontSize" :completion-items="scriptCompletionItems" :scene-id="designer.activeSceneId" :draft-coordinator="designer.draftCoordinator" @update:model-value="updateCondition(index, { code: $event })" />
             <UiScriptContextHint kind="condition" :issues="codeIssuesFor(index, true)" />
           </template>
         </div>

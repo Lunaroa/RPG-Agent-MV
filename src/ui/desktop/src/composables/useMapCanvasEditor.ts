@@ -20,6 +20,7 @@ import {
   type MvEvent,
   type MvEventImage,
   type MvMap,
+  type UldsDrawLayer,
 } from './useMapRenderer';
 import {
   MV_PALETTE_COLS,
@@ -237,6 +238,8 @@ function sampleMapTile(tileId: number, preserveAutotileShape: boolean): LayerBru
 interface CanvasEditorOptions {
   tileSize: Ref<number>;
   parallaxImage: Ref<HTMLImageElement | null>;
+  /** Pre-resolved ULDS layers drawn into the map canvas when non-empty. */
+  uldsLayers?: Readonly<Ref<UldsDrawLayer[]>>;
   engine: Ref<RpgMakerEngine>;
   tilesetMode: Ref<number | null>;
   mode: Ref<EditorMode>;
@@ -362,6 +365,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     options.placementFlash,
     options.tileSize,
     options.parallaxImage,
+    options.uldsLayers,
     tileTab,
     productLanguage,
   ], () => {
@@ -522,6 +526,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     drawMapContent(context, map, {
       tilesetImages,
       parallaxImage: options.parallaxImage.value,
+      uldsLayers: options.uldsLayers?.value,
       tileSize: tileSize.value,
       tilesetFlags: options.tileFlags.value,
       showGrid: eventMode || options.showGrid.value,

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Aim, Download, Refresh, Search, Setting } from '@element-plus/icons-vue'
-import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import type { ComponentPublicInstance } from 'vue'
 import { useRouter } from 'vue-router'
 import type {
@@ -23,14 +23,15 @@ import {
   formatMapOverviewConditionDetails,
 } from '../utils/mapOverviewConditionLabels'
 import { mergeBidirectionalMapOverviewEdges } from '../utils/mapOverviewEdgeMerge'
-import { maps, workspaceSurfaces } from '../api/client'
-import MapOverviewSvgCanvas from '../components/map-overview/MapOverviewSvgCanvas.vue'
+import { maps, projectAssets, workspaceSurfaces } from '../api/client'
+import MapOverviewSvgCanvas, { type MapOverviewUldsImageEntry } from '../components/map-overview/MapOverviewSvgCanvas.vue'
 import type { MapOverviewSvgCanvasApi } from '../components/map-overview/mapOverviewSvgCanvasApi'
 import { useI18n } from '../i18n'
 import { useProjectStore } from '../stores/project'
 import { useMapOverviewExportStore } from '../stores/mapOverviewExport'
 import { useWorkspaceStore } from '../stores/workspace'
 import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
+import { loadImageElement } from '../utils/imageLoading.ts'
 import { formatMapOverviewExportError } from '../utils/mapOverviewExportError'
 import { findMapOverviewMatches } from '../utils/mapOverviewSearch'
 import { MapOverviewMoveHistory, type MapOverviewNodePosition } from '../utils/mapOverviewMoveHistory'
@@ -114,6 +115,11 @@ const layoutTaskRequested = ref(false)
 const layoutParametersOpen = ref(false)
 const layoutParameterDraft = ref<Record<string, unknown>>({})
 const layoutParameterErrors = ref<Partial<Record<MapOverviewLayoutParameterField, string>>>({})
+
+// ULDS overlay: toggle + preloaded layer bitmaps keyed by `${path}/${name}`.
+const showUldsLayers = ref(false)
+const uldsImages = shallowRef(new Map<string, MapOverviewUldsImageEntry | null>())
+let uldsLoadGeneration = 0
 
 let graph: MapOverviewSvgCanvasApi | null = null
 let graphBoundContainer: HTMLElement | null = null
@@ -284,6 +290,8 @@ watch(currentProject, (next, previous) => {
   resetGraphState()
   moveHistory.clear()
   surfaceVersion = ''
+  uldsLoadGeneration += 1
+  uldsImages.value = new Map()
   if (next) {
     restoreStoredLayoutPreference(next)
     const persisted = workspaceStore.readMapOverviewSelection(next)
@@ -292,6 +300,46 @@ watch(currentProject, (next, previous) => {
     if (surfaceActive) void activateOverview()
   }
 })
+
+// Preload ULDS layer bitmaps for every node when the overlay is on. Names that
+// the catalog cannot resolve stay null so the canvas skips them without retrying.
+watch([showUldsLayers, snapshot], ([enabled]) => {
+  if (!enabled) return
+  void preloadUldsImages()
+})
+
+async function preloadUldsImages(): Promise<void> {
+  const generation = ++uldsLoadGeneration
+  const project = projectStore.currentProject
+  const layers = snapshot.value?.nodes.flatMap((node) => node.uldsLayers || []) || []
+  if (!project || !layers.length) return
+  const pending: Array<{ key: string; url: string }> = []
+  let catalog: Awaited<ReturnType<typeof projectAssets.editorCatalog>> | null = null
+  try {
+    catalog = await projectAssets.editorCatalog(project)
+  } catch {
+    catalog = null
+  }
+  if (generation !== uldsLoadGeneration) return
+  for (const layer of layers) {
+    const key = `${layer.path}/${layer.name}`
+    if (uldsImages.value.has(key)) continue
+    const bucket = (catalog?.assets as Record<string, Array<{ name: string; url: string }> | undefined>)?.[layer.path]
+    const entry = bucket?.find((candidate) => candidate.name === layer.name)
+    if (entry?.url) pending.push({ key, url: entry.url })
+    else uldsImages.value.set(key, null)
+  }
+  if (!pending.length) return
+  const loaded = new Map(uldsImages.value)
+  await Promise.all(pending.map(async ({ key, url }) => {
+    const image = await loadImageElement(url)
+    loaded.set(key, image && image.naturalWidth > 0 && image.naturalHeight > 0
+      ? { url, width: image.naturalWidth, height: image.naturalHeight }
+      : null)
+  }))
+  if (generation !== uldsLoadGeneration) return
+  uldsImages.value = loaded
+}
 
 async function activateOverview(): Promise<void> {
   const project = currentProject.value
@@ -1734,6 +1782,7 @@ async function cancelOverviewExport(): Promise<void> {
           <div ref="graphHost" class="overview-canvas">
             <MapOverviewSvgCanvas
               :ref="setGraphRef"
+              :ulds="{ enabled: showUldsLayers, images: uldsImages }"
               @node-click="selectNode"
               @node-dblclick="openMap"
               @edge-click="selectEdge"
@@ -1818,6 +1867,10 @@ async function cancelOverviewExport(): Promise<void> {
             :aria-label="t('mapOverview.zoom.in')"
             @click="zoomIn"
           >+</button>
+          <label class="overview-ulds-toggle" :title="t('mapOverview.ulds.showHint')" data-ui-id="map-overview-ulds-toggle">
+            <input v-model="showUldsLayers" type="checkbox">
+            {{ t('mapOverview.ulds.show') }}
+          </label>
         </div>
         <aside v-if="selectedNode || selectedEdge" class="overview-inspector" data-ui-id="map-overview-inspector">
           <template v-if="selectedNode">
@@ -2052,6 +2105,9 @@ async function cancelOverviewExport(): Promise<void> {
 .overview-zoom button:hover:not(:disabled) { background:var(--app-bg-soft); color:var(--app-ink); }
 .overview-zoom button:focus-visible,.overview-zoom label:focus-within { outline:2px solid var(--app-accent); outline-offset:1px; }
 .overview-zoom button:disabled { opacity:.4; cursor:default; }
+.overview-ulds-toggle { display:flex; align-items:center; gap:4px; margin-left:6px; padding:0 7px 0 5px; height:28px; border-left:1px solid var(--app-border); color:var(--app-ink-soft); font:500 11px var(--app-font); cursor:pointer; user-select:none; white-space:nowrap; }
+.overview-ulds-toggle:hover { color:var(--app-ink); }
+.overview-ulds-toggle input { margin:0; accent-color: var(--app-accent); }
 .overview-zoom label { height:28px; min-width:54px; display:flex; align-items:center; justify-content:center; gap:1px; border-radius:var(--app-radius-sm); color:var(--app-ink); font:600 11px var(--app-font-mono); }
 .overview-zoom input { width:34px; padding:0; border:0; outline:0; background:transparent; color:inherit; font:inherit; text-align:right; font-variant-numeric:tabular-nums; }
 .overview-zoom label span { padding-right:4px; color:var(--app-ink-muted); }

@@ -7,6 +7,7 @@
 
 import { flagSummaryTokens, summarizeTileStackFlags, type MvTileFlagStackSummary } from '../utils/mvTileFlags.ts';
 import { drawMvRegionFill, drawMvRegionMarker } from '../utils/mvRegionPalette.ts';
+import { ULDS_TILE_Z_THRESHOLD } from '@contract/ulds';
 
 export const TILE_SIZE = 48;
 export const TILE_ID_A5 = 1536;
@@ -57,6 +58,28 @@ export interface MvMap {
   parallaxShow?: boolean;
 }
 
+/**
+ * One ULDS layer pre-resolved for static preview (t = 0): geometry in map
+ * pixels, image already loaded. Screen-fixed layers are approximated at the
+ * canvas origin — the editor canvas has no game camera.
+ */
+export interface UldsDrawLayer {
+  image: HTMLImageElement | null;
+  x: number;
+  y: number;
+  z: number;
+  scaleX: number;
+  scaleY: number;
+  blendMode: number;
+  /** 0–255, matching the plugin field. */
+  opacity: number;
+  loop: boolean;
+  /** Radians, matching the plugin field. */
+  rotation: number;
+  anchorX: number;
+  anchorY: number;
+}
+
 export interface DrawOptions {
   tilesetImages: (HTMLImageElement | null)[];
   parallaxImage?: HTMLImageElement | null;
@@ -73,6 +96,7 @@ export interface DrawOptions {
   activePageIndex?: (event: MvEvent) => number;
   defaultPage?: () => MvEventPage;
   getCharacterImage?: (name: string) => HTMLImageElement | null;
+  uldsLayers?: UldsDrawLayer[];
 }
 
 const FLOOR_AUTOTILE_TABLE: ShapeTable = [
@@ -107,9 +131,12 @@ export const AUTOTILE_KINDS: number[] = (() => {
 
 export function drawMapContent(context: CanvasRenderingContext2D, map: MvMap, options: DrawOptions): void {
   const tileSize = normalizedTileSize(options.tileSize);
-  context.clearRect(0, 0, map.width * tileSize, map.height * tileSize);
-  drawCheckerboard(context, map.width * tileSize, map.height * tileSize);
+  const canvasWidth = map.width * tileSize;
+  const canvasHeight = map.height * tileSize;
+  context.clearRect(0, 0, canvasWidth, canvasHeight);
+  drawCheckerboard(context, canvasWidth, canvasHeight);
   drawParallax(context, map, options.parallaxImage || null, tileSize);
+  drawUldsLayers(context, options.uldsLayers, canvasWidth, canvasHeight, (z) => z < ULDS_TILE_Z_THRESHOLD);
   for (let z = 0; z < PAINT_LAYERS; z += 1) {
     context.save();
     if (Number.isInteger(options.activeLayer) && z !== options.activeLayer) context.globalAlpha = 0.24;
@@ -122,10 +149,67 @@ export function drawMapContent(context: CanvasRenderingContext2D, map: MvMap, op
     context.restore();
   }
   drawShadowLayer(context, map, tileSize);
+  drawUldsLayers(context, options.uldsLayers, canvasWidth, canvasHeight, (z) => z >= ULDS_TILE_Z_THRESHOLD);
   if (options.showRegions) drawRegionLayer(context, map, tileSize, options.showRegionLabels !== false);
   if (options.showTileFlags) drawTileFlagLayer(context, map, options.tilesetFlags || [], tileSize);
   if (options.showGrid) drawGrid(context, map.width, map.height, tileSize);
   drawEvents(context, map.events || [], options, tileSize);
+}
+
+function drawUldsLayers(
+  context: CanvasRenderingContext2D,
+  layers: UldsDrawLayer[] | undefined,
+  canvasWidth: number,
+  canvasHeight: number,
+  zGroup: (z: number) => boolean,
+): void {
+  if (!layers || !layers.length) return;
+  const drawable = layers.filter((layer) => layer.image && zGroup(layer.z)).sort((left, right) => left.z - right.z);
+  for (const layer of drawable) drawUldsLayer(context, layer, layer.image!, canvasWidth, canvasHeight);
+}
+
+function drawUldsLayer(context: CanvasRenderingContext2D, layer: UldsDrawLayer, image: HTMLImageElement, canvasWidth: number, canvasHeight: number): void {
+  const width = Number(image.naturalWidth);
+  const height = Number(image.naturalHeight);
+  if (width <= 0 || height <= 0) return;
+  context.save();
+  context.globalAlpha *= Math.max(0, Math.min(1, layer.opacity / 255));
+  context.globalCompositeOperation = uldsBlendOperation(layer.blendMode);
+  const tileWidth = width * Math.abs(layer.scaleX);
+  const tileHeight = height * Math.abs(layer.scaleY);
+  if (layer.loop && tileWidth > 0 && tileHeight > 0) {
+    const offsetX = ((layer.x % tileWidth) + tileWidth) % tileWidth;
+    const offsetY = ((layer.y % tileHeight) + tileHeight) % tileHeight;
+    for (let y = offsetY - tileHeight; y < canvasHeight; y += tileHeight) {
+      for (let x = offsetX - tileWidth; x < canvasWidth; x += tileWidth) {
+        drawUldsSprite(context, layer, image, x, y, width, height);
+      }
+    }
+  } else {
+    drawUldsSprite(context, layer, image, layer.x, layer.y, width, height);
+  }
+  context.restore();
+}
+
+function drawUldsSprite(context: CanvasRenderingContext2D, layer: UldsDrawLayer, image: HTMLImageElement, x: number, y: number, width: number, height: number): void {
+  const drawWidth = width * layer.scaleX;
+  const drawHeight = height * layer.scaleY;
+  if (!layer.rotation) {
+    context.drawImage(image, x - layer.anchorX * drawWidth, y - layer.anchorY * drawHeight, drawWidth, drawHeight);
+    return;
+  }
+  context.save();
+  context.translate(x, y);
+  context.rotate(layer.rotation);
+  context.drawImage(image, -layer.anchorX * drawWidth, -layer.anchorY * drawHeight, drawWidth, drawHeight);
+  context.restore();
+}
+
+function uldsBlendOperation(mode: number): GlobalCompositeOperation {
+  if (mode === 1) return 'lighter';
+  if (mode === 2) return 'multiply';
+  if (mode === 3) return 'screen';
+  return 'source-over';
 }
 
 export function drawCheckerboard(

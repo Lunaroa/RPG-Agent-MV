@@ -46,6 +46,19 @@ import { placeMapOverviewTooltip } from '../../utils/mapOverviewTooltipPosition'
 import { mergeBidirectionalMapOverviewEdges } from '../../utils/mapOverviewEdgeMerge'
 import { useI18n } from '../../i18n'
 import type { MapOverviewSvgCanvasApi } from './mapOverviewSvgCanvasApi'
+import { ULDS_TILE_Z_THRESHOLD } from '@contract/ulds'
+
+/** Preloaded ULDS layer bitmap keyed by `${path}/${name}`. */
+export interface MapOverviewUldsImageEntry {
+  url: string
+  width: number
+  height: number
+}
+
+const props = defineProps<{
+  /** When enabled, above-tile map-space ULDS layers overlay each node thumbnail. */
+  ulds?: { enabled: boolean; images: Map<string, MapOverviewUldsImageEntry | null> }
+}>()
 
 const emit = defineEmits<{
   nodeClick: [mapId: number]
@@ -104,6 +117,56 @@ const geometryNodes = computed(() => {
 })
 
 const geometryNodeMap = computed(() => new Map(geometryNodes.value.map(node => [node.id, node])))
+
+/** Overview thumbnails bake the map at 1/4 scale; ULDS map px map onto them the same way. */
+const ULDS_OVERVIEW_SCALE = 1 / 4
+
+interface UldsOverlayShape {
+  key: string
+  url: string
+  x: number
+  y: number
+  width: number
+  height: number
+  opacity: number
+  blend: 'normal' | 'plus-lighter' | 'multiply' | 'screen'
+  loop: boolean
+}
+
+const snapshotUldsByNode = computed(() => new Map(
+  (snapshot.value?.nodes || []).map(node => [node.id, node.uldsLayers || []]),
+))
+
+function nodeUldsOverlays(node: { id: number; width: number; imageHeight: number }): UldsOverlayShape[] {
+  if (!props.ulds?.enabled) return []
+  const layers = snapshotUldsByNode.value.get(node.id)
+  if (!layers?.length) return []
+  const originX = -node.width / 2
+  const originY = -node.imageHeight / 2
+  const shapes: UldsOverlayShape[] = []
+  for (const [index, layer] of [...layers].sort((left, right) => left.z - right.z).entries()) {
+    // Below-tile layers are baked under the thumbnail and cannot be re-sandwiched.
+    if (layer.z < ULDS_TILE_Z_THRESHOLD) continue
+    const entry = props.ulds.images.get(`${layer.path}/${layer.name}`)
+    if (!entry) continue
+    const width = entry.width * Math.abs(layer.scaleX) * ULDS_OVERVIEW_SCALE
+    const height = entry.height * Math.abs(layer.scaleY) * ULDS_OVERVIEW_SCALE
+    if (width <= 0 || height <= 0) continue
+    shapes.push({
+      key: `ulds-pat-${node.id}-${index}`,
+      url: entry.url,
+      x: originX + layer.x * ULDS_OVERVIEW_SCALE,
+      y: originY + layer.y * ULDS_OVERVIEW_SCALE,
+      width,
+      height,
+      opacity: Math.max(0, Math.min(1, layer.opacity / 255)),
+      blend: layer.blendMode === 1 ? 'plus-lighter' : layer.blendMode === 2 ? 'multiply' : layer.blendMode === 3 ? 'screen' : 'normal',
+      loop: layer.loop,
+    })
+  }
+  return shapes
+}
+
 const mergedEdges = computed(() => mergeBidirectionalMapOverviewEdges(snapshot.value?.edges || []))
 const mergedByRepresentativeId = computed(() => new Map(mergedEdges.value.map(item => [item.edge.id, item])))
 const routes = computed(() => buildMapOverviewSvgEdgeRoutes(mergedEdges.value.map(item => item.edge)))
@@ -908,6 +971,46 @@ defineExpose<MapOverviewSvgCanvasApi>({
               preserveAspectRatio="none"
               draggable="false"
             />
+            <template v-if="ulds?.enabled && nodeUldsOverlays(node).length">
+              <defs>
+                <pattern
+                  v-for="shape in nodeUldsOverlays(node)"
+                  :key="`def-${shape.key}`"
+                  :id="shape.key"
+                  patternUnits="userSpaceOnUse"
+                  :x="shape.x"
+                  :y="shape.y"
+                  :width="shape.width"
+                  :height="shape.height"
+                >
+                  <image :href="shape.url" x="0" y="0" :width="shape.width" :height="shape.height" preserveAspectRatio="none" />
+                </pattern>
+              </defs>
+              <rect
+                v-for="shape in nodeUldsOverlays(node).filter((entry) => entry.loop)"
+                :key="`loop-${shape.key}`"
+                :x="-node.width / 2"
+                :y="-node.imageHeight / 2"
+                :width="node.width"
+                :height="node.imageHeight"
+                :fill="`url(#${shape.key})`"
+                :opacity="shape.opacity"
+                :style="{ mixBlendMode: shape.blend }"
+              />
+              <image
+                v-for="shape in nodeUldsOverlays(node).filter((entry) => !entry.loop)"
+                :key="`one-${shape.key}`"
+                :href="shape.url"
+                :x="shape.x"
+                :y="shape.y"
+                :width="shape.width"
+                :height="shape.height"
+                preserveAspectRatio="none"
+                draggable="false"
+                :opacity="shape.opacity"
+                :style="{ mixBlendMode: shape.blend }"
+              />
+            </template>
             <g v-if="thumbnailError(node.id)" class="map-overview-svg-node-error-mark" aria-hidden="true">
               <circle cx="0" cy="0" r="14" />
               <text x="0" y="5">!</text>

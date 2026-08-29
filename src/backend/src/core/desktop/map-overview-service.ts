@@ -12,8 +12,17 @@ import type {
   MapOverviewSnapshot,
   MapOverviewThumbnail,
   MapOverviewTransferSource,
+  MapOverviewUldsLayer,
   NamedCatalogEntry,
 } from '../../../../contract/types.ts';
+import {
+  ULDS_DEFAULT_Z,
+  parseUldsNote,
+  staticUldsBlendMode,
+  staticUldsBoolean,
+  staticUldsCoordinate,
+  staticUldsNumber,
+} from '../../../../contract/ulds.ts';
 import { readJson, writeJsonAtomic } from '../rmmv/json.ts';
 import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import { getConfiguredDatabasePath } from '../db/pool.ts';
@@ -50,6 +59,7 @@ interface SnapshotCacheDocument {
 interface MapDocument {
   width?: unknown;
   height?: unknown;
+  note?: unknown;
   tilesetId?: unknown;
   data?: unknown;
   parallaxName?: unknown;
@@ -378,6 +388,7 @@ function buildMapOverviewSnapshotFresh(
       readState: loaded.readState,
       width: loaded.map ? nullablePositiveInteger(loaded.map.width) : null,
       height: loaded.map ? nullablePositiveInteger(loaded.map.height) : null,
+      uldsLayers: loaded.map ? summarizeMapOverviewUlds(loaded.map) : undefined,
       thumbnailVersion,
       incomingCount: 0,
       outgoingCount: 0,
@@ -411,6 +422,9 @@ function buildMapOverviewSnapshotFresh(
       parentId: node.parentId,
       readState: node.readState,
       thumbnailVersion: node.thumbnailVersion,
+      // Included so pre-ULDS cached snapshots of layer maps rescan once;
+      // JSON.stringify omits it when undefined, keeping other digests stable.
+      uldsLayers: node.uldsLayers,
       issues: node.issues,
     }))),
     JSON.stringify(edges),
@@ -641,6 +655,33 @@ function usedTilesetSlots(map: MapDocument): number[] {
     else if (tileId < 8192) slots.add(3);
   }
   return [...slots].sort((left, right) => left - right);
+}
+
+/** Map-space, statically resolvable ULDS layers for the overview overlay. */
+function summarizeMapOverviewUlds(map: MapDocument): MapOverviewUldsLayer[] | undefined {
+  const note = typeof map.note === 'string' ? map.note : '';
+  if (!/<ulds>/i.test(note)) return undefined;
+  const resolved: MapOverviewUldsLayer[] = [];
+  for (const layer of parseUldsNote(note).layers) {
+    const name = String(layer.name || '').trim();
+    if (!name) continue;
+    const x = staticUldsCoordinate(layer.x);
+    const y = staticUldsCoordinate(layer.y);
+    if (!x || !y || x.space !== 'map' || y.space !== 'map') continue;
+    resolved.push({
+      path: typeof layer.path === 'string' && layer.path.trim() ? layer.path.trim() : 'parallaxes',
+      name,
+      x: x.value,
+      y: y.value,
+      z: staticUldsNumber(layer.z, ULDS_DEFAULT_Z),
+      scaleX: staticUldsNumber(layer['scale.x'], 1),
+      scaleY: staticUldsNumber(layer['scale.y'], 1),
+      opacity: staticUldsNumber(layer.opacity, 255),
+      blendMode: staticUldsBlendMode(layer.blendMode),
+      loop: staticUldsBoolean(layer.loop, false),
+    });
+  }
+  return resolved.length ? resolved : undefined;
 }
 
 function collectResourceWarnings(context: OverviewBuildContext, mapId: number, map: MapDocument): string[] {

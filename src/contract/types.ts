@@ -117,6 +117,27 @@ export interface MapOverviewIssue {
   targetY?: number;
 }
 
+/**
+ * Statically resolved ULDS layer from the map note, for overview overlays.
+ * Only map-space layers are included: screen-fixed layers have no whole-map
+ * position, and dynamic expressions collapse to their t = 0 value.
+ */
+export interface MapOverviewUldsLayer {
+  /** Folder under img/ (plugin default: parallaxes). */
+  path: string;
+  /** Image file name without extension. */
+  name: string;
+  x: number;
+  y: number;
+  z: number;
+  scaleX: number;
+  scaleY: number;
+  /** 0–255, matching the plugin field. */
+  opacity: number;
+  blendMode: number;
+  loop: boolean;
+}
+
 export interface MapOverviewNode {
   id: number;
   name: string;
@@ -125,6 +146,8 @@ export interface MapOverviewNode {
   readState: MapOverviewReadState;
   width: number | null;
   height: number | null;
+  /** Parsed from the map's <ulds> note blocks; absent when the map has none. */
+  uldsLayers?: MapOverviewUldsLayer[];
   /** Content version for thumbnail cache invalidation (map JSON + tileset metadata + used tileset images). */
   thumbnailVersion: string | null;
   incomingCount: number;

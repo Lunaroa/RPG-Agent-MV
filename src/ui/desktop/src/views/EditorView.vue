@@ -8,6 +8,8 @@
       v-model:layer="layer"
       v-model:show-regions="showRegions"
       v-model:show-tile-flags="showTileFlags"
+      v-model:show-ulds="showUldsLayers"
+      :ulds-available="selectedMapId != null"
       :tile-flags-available="tileFlagsAvailable"
       :supports-layer-selection="Boolean(editorCatalog)"
       :zoom="zoom"
@@ -29,6 +31,7 @@
       @reset-zoom="resetZoom"
       @apply="applyStaging"
       @discard="discardStaging"
+      @open-ulds="openUldsPanel"
       @refresh-preview="refreshPreview"
       @update:preview-execution="setPreviewEventExecution"
     />
@@ -212,6 +215,18 @@
       @close="closePropertiesDialog"
       @save="saveProperties"
     />
+    <UldsPanel
+      :visible="uldsPanelOpen"
+      :map-name="currentMapName"
+      :layers="savedUldsLayers"
+      :dirty="uldsDirty"
+      :saving="uldsSaving"
+      :catalog="editorCatalog"
+      :load-image="loadImage"
+      @update:layers="onUldsLayersInput"
+      @save="saveUldsLayers"
+      @close="requestCloseUldsPanel"
+    />
     <EventEditorDialog
       ref="eventDialogRef"
       :visible="eventDialogOpen"
@@ -329,6 +344,7 @@ import EventEditorDialog from '../components/editor/EventEditorDialog.vue';
 import EventTextPasteDialog from '../components/editor/EventTextPasteDialog.vue';
 import QuickObtainEventDialog from '../components/editor/QuickObtainEventDialog.vue';
 import MapPropertiesDialog from '../components/editor/MapPropertiesDialog.vue';
+import UldsPanel from '../components/editor/UldsPanel.vue';
 import ExternalMapImportDialog from '../components/editor/ExternalMapImportDialog.vue';
 import BottomPanel from '../components/editor/BottomPanel.vue';
 import MapRuntimePreview from '../components/editor/MapRuntimePreview.vue';
@@ -354,7 +370,8 @@ import { useWorkbenchUiStore } from '../stores/workbenchUi';
 import { useProjectStore } from '../stores/project';
 import { useShortcutsStore } from '../stores/shortcuts';
 import { placeContractAtCell } from '../composables/usePlacementAtCell';
-import type { MvEvent, MvMap } from '../composables/useMapRenderer';
+import type { MvEvent, MvMap, UldsDrawLayer } from '../composables/useMapRenderer';
+import { ULDS_DEFAULT_Z, orderUldsLayerKeys, parseUldsNote, staticUldsBlendMode, staticUldsBoolean, staticUldsCoordinate, staticUldsNumber, writeUldsNote, type UldsLayerRecord } from '@contract/ulds';
 import { isPlacedStatus } from '../utils/placementStatus';
 import { canActivatePlacementOnMap } from '../utils/placementMapPolicy';
 import { placementValidityHint, validatePlacementCell } from '../utils/placementCellValidity';
@@ -487,6 +504,79 @@ const systemData = ref<{ switches: string[]; variables: string[] } | null>(null)
 const editorCatalog = ref<EditorProjectCatalog | null>(null);
 const currentTilesetImages = shallowRef<(HTMLImageElement | null)[]>([]);
 const currentParallaxImage = shallowRef<HTMLImageElement | null>(null);
+// --- ULDS (unlimited layers) panel + canvas preview state ---
+const showUldsLayers = ref(false);
+const uldsPanelOpen = ref(false);
+const uldsSaving = ref(false);
+// Panel draft while editing; null means the map note is the live source.
+const uldsDraftLayers = shallowRef<UldsLayerRecord[] | null>(null);
+const savedUlds = computed(() => parseUldsNote(currentMapNote.value));
+// Stable identity between note changes so the panel only re-seeds on real saves.
+const savedUldsLayers = computed(() => savedUlds.value.layers);
+const effectiveUldsLayers = computed(() => uldsDraftLayers.value ?? savedUldsLayers.value);
+const canonicalUldsJson = (layers: UldsLayerRecord[]) => JSON.stringify(layers.map(orderUldsLayerKeys));
+const uldsDirty = computed(() => (
+  uldsDraftLayers.value != null
+  && canonicalUldsJson(uldsDraftLayers.value) !== canonicalUldsJson(savedUldsLayers.value)
+));
+const uldsDrawLayers = shallowRef<UldsDrawLayer[]>([]);
+const canvasUldsLayers = computed<UldsDrawLayer[]>(() => (
+  showUldsLayers.value && mode.value !== 'preview' ? uldsDrawLayers.value : []
+));
+const uldsImageCache = new Map<string, HTMLImageElement | null>();
+let uldsImageLoadSequence = 0;
+
+watch(effectiveUldsLayers, rebuildUldsDrawLayers);
+watch([effectiveUldsLayers, editorCatalog], () => { void ensureUldsImages(); }, { immediate: true });
+watch(selectedMapId, () => { uldsDraftLayers.value = null; });
+
+function uldsLayerImageKey(record: UldsLayerRecord): { key: string; path: string; name: string } | null {
+  const name = String(record.name || '').trim();
+  if (!name) return null;
+  const path = typeof record.path === 'string' && record.path.trim() ? record.path.trim() : 'parallaxes';
+  return { key: `${path}/${name}`, path, name };
+}
+
+function rebuildUldsDrawLayers(): void {
+  uldsDrawLayers.value = effectiveUldsLayers.value.map((record) => {
+    const asset = uldsLayerImageKey(record);
+    return {
+      image: asset ? uldsImageCache.get(asset.key) ?? null : null,
+      x: staticUldsCoordinate(record.x)?.value ?? 0,
+      y: staticUldsCoordinate(record.y)?.value ?? 0,
+      z: staticUldsNumber(record.z, ULDS_DEFAULT_Z),
+      scaleX: staticUldsNumber(record['scale.x'], 1),
+      scaleY: staticUldsNumber(record['scale.y'], 1),
+      blendMode: staticUldsBlendMode(record.blendMode),
+      opacity: staticUldsNumber(record.opacity, 255),
+      loop: staticUldsBoolean(record.loop, false),
+      rotation: staticUldsNumber(record.rotation, 0),
+      anchorX: staticUldsNumber(record['anchor.x'], 0),
+      anchorY: staticUldsNumber(record['anchor.y'], 0),
+    };
+  });
+}
+
+async function ensureUldsImages(): Promise<void> {
+  const sequence = ++uldsImageLoadSequence;
+  const pending: Array<{ key: string; url: string }> = [];
+  for (const record of effectiveUldsLayers.value) {
+    const asset = uldsLayerImageKey(record);
+    if (!asset || uldsImageCache.has(asset.key)) continue;
+    const bucket = (editorCatalog.value?.assets as Record<string, { name: string; url: string }[] | undefined> | undefined)?.[asset.path];
+    const entry = bucket?.find((candidate) => candidate.name === asset.name);
+    if (entry?.url) pending.push({ key: asset.key, url: entry.url });
+      // Before the catalog resolves, leave the key uncached so a later retry can find it.
+    else if (editorCatalog.value) uldsImageCache.set(asset.key, null);
+  }
+  if (!pending.length) { rebuildUldsDrawLayers(); return; }
+  await Promise.all(pending.map(async ({ key, url }) => {
+    uldsImageCache.set(key, await loadImage(url));
+  }));
+  if (sequence !== uldsImageLoadSequence) return;
+  rebuildUldsDrawLayers();
+}
+
 const currentMapRevision = ref('');
 const previewSession = ref<MapPreviewSession | null>(null);
 const previewStatus = ref<MapPreviewStatus>('stopped');
@@ -559,6 +649,7 @@ function rotatePlacementDirection(deltaY: number) {
 const canvasEditor = useMapCanvasEditor({
   tileSize: currentTileSize,
   parallaxImage: currentParallaxImage,
+  uldsLayers: canvasUldsLayers,
   engine: currentEngine,
   tilesetMode: currentTilesetMode,
   mode,
@@ -1484,6 +1575,8 @@ watch(() => projectStore.currentProject, async (project) => {
   mapTreeError.value = '';
   tilesets.value = [];
   editorCatalog.value = null;
+  uldsImageCache.clear();
+  uldsImageLoadSequence += 1;
   surfaceVersion = '';
   surfaceVersionMapId = undefined;
   if (!project) {
@@ -1551,6 +1644,7 @@ function findTreeNode(mapId: number): TreeNode | undefined {
   return visit(mapTree.value);
 }
 async function handleNodeClick(node: TreeNode) {
+  if (node.id !== selectedMapId.value && !(await confirmDiscardUldsDraft())) return;
   await loadMap(node.id);
 }
 async function moveMapFromTree(source: TreeNode, target: TreeNode, position: 'before' | 'after' | 'inside') {
@@ -2182,6 +2276,7 @@ function openCreateProperties(parentId: number) {
 function closePropertiesDialog() { propertiesDialogOpen.value = false; }
 async function openEditProperties(mapId = selectedMapId.value) {
   if (mapId == null) return;
+  if (selectedMapId.value !== mapId && !(await confirmDiscardUldsDraft())) return;
   if (selectedMapId.value !== mapId && await loadMap(mapId) !== 'committed') return;
   if (currentMap) setPropertiesFromMap(currentMapName.value, currentMap, Number(findTreeNode(mapId)?.parentId || 0));
   propertiesDialogMode.value = 'edit';
@@ -2208,7 +2303,7 @@ async function saveProperties() {
   finally { busy.value = false; }
 }
 
-async function saveMapNote(mapId: number, note: string) {
+async function saveMapNote(mapId: number, note: string): Promise<boolean> {
   try {
     await mapsApi.updateProperties(mapId, { note }, projectStore.currentProject);
     if (selectedMapId.value === mapId) {
@@ -2217,9 +2312,47 @@ async function saveMapNote(mapId: number, note: string) {
     }
     await refreshStagingStatus();
     setStatus(t('editor.map.propertiesSavedStaged'), 'saved');
+    return true;
   } catch (error) {
     ElMessage.error(t('editor.map.savePropertiesFailed', { message: (error as Error).message }));
+    return false;
   }
+}
+
+function openUldsPanel() {
+  if (selectedMapId.value == null) return;
+  uldsPanelOpen.value = true;
+  showUldsLayers.value = true;
+}
+
+function onUldsLayersInput(layers: UldsLayerRecord[]) {
+  uldsDraftLayers.value = layers;
+}
+
+async function saveUldsLayers() {
+  const mapId = selectedMapId.value;
+  const layers = uldsDraftLayers.value;
+  if (mapId == null || layers == null) return;
+  uldsSaving.value = true;
+  try {
+    const saved = await saveMapNote(mapId, writeUldsNote(currentMapNote.value, layers, savedUlds.value.invalidBlocks));
+    if (saved) uldsDraftLayers.value = null;
+  } finally {
+    uldsSaving.value = false;
+  }
+}
+
+async function confirmDiscardUldsDraft(): Promise<boolean> {
+  if (!uldsDirty.value) return true;
+  try { await ElMessageBox.confirm(t('editor.ulds.discardConfirm'), t('editor.ulds.discardTitle'), { type: 'warning' }); }
+  catch { return false; }
+  uldsDraftLayers.value = null;
+  return true;
+}
+
+async function requestCloseUldsPanel() {
+  if (!(await confirmDiscardUldsDraft())) return;
+  uldsPanelOpen.value = false;
 }
 
 let editorNoteSaveSeq = 0;
@@ -2328,6 +2461,7 @@ async function clampContextMenu(context: { x: number; y: number }, menuEl: { val
 async function ctxOpenNotes() {
   const id = treeContext.mapId;
   closeTreeContext();
+  if (selectedMapId.value !== id && !(await confirmDiscardUldsDraft())) return;
   if (selectedMapId.value !== id && await loadMap(id) !== 'committed') return;
   Object.assign(notesDialog, {
     open: true,

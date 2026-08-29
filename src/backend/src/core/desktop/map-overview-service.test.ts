@@ -461,6 +461,43 @@ describe('map overview snapshot', () => {
       events: [null, ...events],
     });
   }
+
+  test('exposes map-space ULDS layers from the map note on snapshot nodes', () => {
+    writeInfos(2);
+    writeJson(path.join(dataDir, 'Map001.json'), {
+      width: 2,
+      height: 2,
+      tilesetId: 0,
+      data: Array(2 * 2 * 6).fill(0),
+      events: [null],
+      note: [
+        'map description',
+        '<ulds> {"name":"Fog","x":"this.rx(t)","y":"this.ry(40)","z":6,"loop":true,"opacity":180} </ulds>',
+        '<ulds> {"name":"ScreenGlow","x":10,"y":10,"blendMode":3} </ulds>',
+        '<ulds> {broken json </ulds>',
+      ].join('\n'),
+    });
+    writeMap(2, []);
+
+    const snapshot = buildMapOverviewSnapshot(root, project);
+    const withLayers = snapshot.nodes.find((node) => node.id === 1);
+
+    assert.ok(withLayers?.uldsLayers);
+    assert.equal(withLayers.uldsLayers.length, 1, 'screen-fixed layers and malformed blocks are dropped');
+    assert.deepEqual(withLayers.uldsLayers[0], {
+      path: 'parallaxes',
+      name: 'Fog',
+      x: 0,
+      y: 40,
+      z: 6,
+      scaleX: 1,
+      scaleY: 1,
+      opacity: 180,
+      blendMode: 0,
+      loop: true,
+    });
+    assert.equal(snapshot.nodes.find((node) => node.id === 2)?.uldsLayers, undefined, 'no note means no field');
+  });
 });
 
 function projectCacheKeyForTest(project: string): string {

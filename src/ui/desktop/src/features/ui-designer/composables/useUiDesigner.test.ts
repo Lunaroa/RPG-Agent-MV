@@ -10,6 +10,7 @@ vi.mock('../adapters', () => ({
 }))
 
 import { useUiDesigner } from './useUiDesigner'
+import { UI_DESIGNER_DEFAULT_CODE_FONT_FAMILY } from './persistenceOperations'
 
 const success = <T>(value?: T) => ({ status: 'success' as const, message: 'ok', value })
 
@@ -990,4 +991,25 @@ test('undo redo and leaving code mode synchronously resolve the pending scene sc
   assert.match(designer.document.value.sceneScript.source, /__pendingDraft = 2/)
   assert.equal(designer.draftCoordinator.hasPending(sceneId), false)
   unregister()
+})
+
+test('loading preferences migrates the legacy bare ui-monospace code font to the bundled monospace stack', async () => {
+  const file: UiDesignerPersistenceAdapter = {
+    async open() { return { status: 'unavailable', message: 'unused' } },
+    async save() { return { status: 'unavailable', message: 'unused' } },
+    async saveAs() { return { status: 'unavailable', message: 'unused' } },
+    async revealSource() { return { status: 'unavailable', message: 'unused' } },
+    async listRecentFiles() { return success([]) },
+    async removeRecentFile() { return success() },
+    async listRecovery() { return success([]) },
+    async readRecovery() { return { status: 'unavailable', message: 'unused' } },
+    async clearRecovery() { return success() },
+    async readPreferences() { return success({ codeFontFamily: 'ui-monospace' }) },
+    async writePreferences() { return success() },
+    async writeRecovery() { return success({ id: 'recovery' }) },
+    async exportRuntime() { return success('runtime.json') },
+  }
+  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { file } })
+  assert.equal(await designer.loadPreferences(), true)
+  assert.equal(designer.preferences.value.codeFontFamily, UI_DESIGNER_DEFAULT_CODE_FONT_FAMILY)
 })

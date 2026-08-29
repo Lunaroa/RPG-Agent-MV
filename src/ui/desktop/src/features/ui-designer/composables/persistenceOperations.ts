@@ -87,6 +87,9 @@ export function createUiDesignerPersistenceOperations(context: UiDesignerPersist
         next.snapSensitivity = finiteOr(next.snapSensitivity, 8, 0, 64)
         next.defaultCanvasWidth = finiteOr(next.defaultCanvasWidth, 816, 1, 8192)
         next.defaultCanvasHeight = finiteOr(next.defaultCanvasHeight, 624, 1, 8192)
+        // Migrate the legacy bare ui-monospace default; Windows has no such
+        // family, so it silently rendered as the proportional browser default.
+        if (typeof next.codeFontFamily === 'string' && next.codeFontFamily.trim() === 'ui-monospace') next.codeFontFamily = UI_DESIGNER_DEFAULT_CODE_FONT_FAMILY
         next.codeFontFamily = typeof next.codeFontFamily === 'string' && next.codeFontFamily.trim() ? next.codeFontFamily : UI_DESIGNER_DEFAULT_CODE_FONT_FAMILY
         next.codeFontSize = finiteOr(next.codeFontSize, 12, 8, 32)
         next.codeTabSize = finiteOr(next.codeTabSize, 2, 1, 8)

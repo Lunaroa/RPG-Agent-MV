@@ -1112,8 +1112,6 @@ const zhCN = {
     'editor.ulds.title': '无限图层',
     'editor.ulds.closeTitle': '关闭无限图层面板',
     'editor.ulds.name': '图片',
-    'editor.ulds.path': '目录',
-    'editor.ulds.pathParallaxes': 'parallaxes（默认）',
     'editor.ulds.scaleX': '缩放X',
     'editor.ulds.scaleY': '缩放Y',
     'editor.ulds.blend': '合成',

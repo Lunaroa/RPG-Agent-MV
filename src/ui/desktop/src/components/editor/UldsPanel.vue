@@ -16,7 +16,6 @@
           <div class="ulds-table" role="table" :aria-label="t('editor.ulds.title')">
             <div class="ulds-row ulds-head" role="row">
               <span class="c-name">{{ t('editor.ulds.name') }}</span>
-              <span class="c-path">{{ t('editor.ulds.path') }}</span>
               <span class="c-num">X</span>
               <span class="c-num">Y</span>
               <span class="c-num">Z</span>
@@ -36,13 +35,8 @@
                   :title="row.name"
                   @change="commitRow"
                 />
+                <span v-if="row.path" class="ulds-path-suffix" :title="`img/${row.path}`">{{ row.path }}</span>
                 <button type="button" class="ulds-mini-btn" :title="t('editor.ulds.pickImage')" @click="openPicker(index)">…</button>
-              </span>
-              <span class="c-path">
-                <select v-model="row.path" :class="{ placeholder: !row.path }" @change="commitRow">
-                  <option value="">{{ t('editor.ulds.pathParallaxes') }}</option>
-                  <option v-for="bucket in pathBuckets" :key="bucket" :value="bucket">img/{{ bucket }}</option>
-                </select>
               </span>
               <span class="c-num"><input v-model="row.x" :placeholder="t('editor.ulds.coordPlaceholder')" @change="commitCell(row, 'x')" /></span>
               <span class="c-num"><input v-model="row.y" :placeholder="t('editor.ulds.coordPlaceholder')" @change="commitCell(row, 'y')" /></span>
@@ -127,9 +121,8 @@ const picker = ref<InstanceType<typeof ImageAssetPickerDialog>>();
 let pickingIndex = -1;
 type UldsAssetKind = keyof EditorProjectCatalog['assets'];
 
-/** img/ buckets offered for `path`; default parallaxes is the empty option. */
+/** img/ buckets offered by the picker; parallaxes is the plugin default (no `path` key). */
 const ULDS_PATH_BUCKETS = ['parallaxes', 'pictures', 'tilesets', 'battlebacks1', 'battlebacks2', 'characters', 'faces'] as const;
-const pathBuckets = computed(() => ULDS_PATH_BUCKETS.filter((bucket) => bucket !== 'parallaxes' && (props.catalog?.assets as Record<string, { length: number }> | undefined)?.[bucket]?.length));
 
 watch(() => [props.visible, props.mapName, props.layers] as const, ([visible], previous) => {
   if (!visible) return;
@@ -262,7 +255,7 @@ function onDragEnd() { dragOffset = null; }
 .ulds-table { display: flex; flex-direction: column; font-size: 11px; }
 .ulds-row {
   display: grid;
-  grid-template-columns: minmax(120px, 1.6fr) 110px 72px 72px 52px 56px 56px 76px 52px 34px 76px;
+  grid-template-columns: minmax(120px, 1.6fr) 72px 72px 52px 56px 56px 76px 52px 34px 76px;
   gap: 2px;
   align-items: center;
   padding: 1px 0;
@@ -281,8 +274,8 @@ function onDragEnd() { dragOffset = null; }
 .c-name input { flex: 1 1 auto; min-width: 0; }
 .c-ops { display: flex; gap: 2px; justify-content: flex-end; }
 .c-num input, .c-name input { width: 100%; box-sizing: border-box; }
-.c-path select, .c-blend select, .c-blend input, .c-loop input.ulds-expr { width: 100%; box-sizing: border-box; }
-.c-path select.placeholder { color: var(--app-ink-soft); }
+.c-blend select, .c-blend input, .c-loop input.ulds-expr { width: 100%; box-sizing: border-box; }
+.ulds-path-suffix { flex: 0 0 auto; color: var(--app-ink-soft); font-size: 10px; }
 .c-loop { text-align: center; }
 .ulds-row input, .ulds-row select {
   height: 22px;

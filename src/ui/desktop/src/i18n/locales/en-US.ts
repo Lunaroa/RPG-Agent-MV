@@ -1112,8 +1112,6 @@ const enUS = {
     'editor.ulds.title': 'Unlimited Layers',
     'editor.ulds.closeTitle': 'Close the unlimited layers panel',
     'editor.ulds.name': 'Image',
-    'editor.ulds.path': 'Folder',
-    'editor.ulds.pathParallaxes': 'parallaxes (default)',
     'editor.ulds.scaleX': 'Scale X',
     'editor.ulds.scaleY': 'Scale Y',
     'editor.ulds.blend': 'Blend',

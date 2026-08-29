@@ -23,10 +23,10 @@ test('drag snapping draws transient alignment lines while resize stays continuou
   assert.match(canvas, /class="canvas-snap-line"/)
   assert.match(canvas, /snapFeedback\?\.lines \?\? \[\]/)
   assert.match(canvas, /snapFeedback\?\.guideIds\.includes\(guide\.id\)/)
-  assert.match(canvas, /canvas-snap-line[^}]*border-color: #ff0000;/)
+  assert.match(canvas, /canvas-snap-line \{[^}]*box-shadow: 0 0 0 1px #fff;/)
   assert.doesNotMatch(canvas, /canvas-snap-line \{[^}]*drop-shadow/)
-  assert.match(canvas, /canvas-snap-line\.vertical[^}]*margin-left: -0\.5px;[^}]*border-left: 1px dashed/)
-  assert.match(canvas, /canvas-snap-line\.horizontal[^}]*margin-top: -0\.5px;[^}]*border-top: 1px dashed/)
+  assert.match(canvas, /canvas-snap-line\.vertical[^}]*width: 1px;[^}]*margin-left: -1px;[^}]*repeating-linear-gradient\(to bottom, #ff2d2d/)
+  assert.match(canvas, /canvas-snap-line\.horizontal[^}]*height: 1px;[^}]*margin-top: -1px;[^}]*repeating-linear-gradient\(to right, #ff2d2d/)
   assert.match(canvas, /canvas-guide\.snapped \{ opacity: 1/)
 
   assert.match(factory, /borderColor: '#d06b42'/)

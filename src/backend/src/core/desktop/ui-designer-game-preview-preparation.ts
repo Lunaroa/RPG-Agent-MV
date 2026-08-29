@@ -17,7 +17,6 @@ import {
 import { RPG_MAKER_MZ_PROJECT_RUNTIME_COPY_EXCLUSIONS } from './rpg-maker-mz-runtime.ts';
 import {
   bundledUiDesignerRuntime,
-  UI_DESIGNER_GLOBAL_DATA_FILENAME,
   UI_DESIGNER_RUNTIME_PLUGIN_NAME,
   UI_DESIGNER_RUNTIME_RELATIVE_PATH,
   UI_DESIGNER_SCENE_DIRECTORY,
@@ -91,16 +90,13 @@ export function prepareUiDesignerGamePreviewProject(
     fs.writeFileSync(runtimePath, bundledUiDesignerRuntime().source, { encoding: 'utf8' });
     writeUiDesignerRuntimeExport(scenePath, scene, { overwrite: true });
     const canonicalScene = JSON.parse(fs.readFileSync(scenePath, 'utf8')) as UiRuntimeSceneExport;
-    fs.writeFileSync(launcherPath, previewLauncherSource(canonicalScene), { encoding: 'utf8' });
-    fs.writeFileSync(pluginsPath, serializePluginEntries(entries), { encoding: 'utf8' });
     // Preview reads $global from the designer's saved global data even before
-    // it is published as data/GlobalUI.json in the source project.
+    // it is published as data/GlobalUI.json in the source project. Embed it in
+    // the launcher instead of writing a file: packaged game runtimes may lack
+    // Node integration, so the runtime's fs-based load would silently fail.
     const globalData = readProjectUiDesignerGlobalData(project);
-    if (globalData.metadata) {
-      const globalDataPath = path.join(layout.resourceRoot, 'data', UI_DESIGNER_GLOBAL_DATA_FILENAME);
-      fs.mkdirSync(path.dirname(globalDataPath), { recursive: true });
-      fs.writeFileSync(globalDataPath, `${JSON.stringify(globalData.data, null, 2)}\n`, { encoding: 'utf8' });
-    }
+    fs.writeFileSync(launcherPath, previewLauncherSource(canonicalScene, globalData.metadata ? globalData.data : null), { encoding: 'utf8' });
+    fs.writeFileSync(pluginsPath, serializePluginEntries(entries), { encoding: 'utf8' });
     assertOwnership();
 
     const stable = verifyIsolatedSourceState(workflowRoot, isolated);
@@ -156,20 +152,24 @@ function serializePluginEntries(entries: readonly PluginEntry[]): string {
   return `var $plugins =\n${JSON.stringify(entries, null, 2)};\n`;
 }
 
-function previewLauncherSource(scene: UiRuntimeSceneExport): string {
-  const encodedScene = JSON.stringify(scene)
-    .replace(/\u2028/g, '\\u2028')
-    .replace(/\u2029/g, '\\u2029');
+function previewLauncherSource(scene: UiRuntimeSceneExport, globalData: unknown): string {
+  const encodedScene = encodeInlineJson(scene);
+  const encodedGlobalData = globalData === null || globalData === undefined ? 'null' : encodeInlineJson(globalData);
   return [
     '/* Generated only inside an isolated UI designer preview project. */',
     '(function () {',
     "  'use strict';",
     `  var scene = ${encodedScene};`,
+    `  var globalData = ${encodedGlobalData};`,
     '  var sceneName = scene.meta.sceneName;',
     '  var start = Scene_Boot.prototype.start;',
     '  Scene_Boot.prototype.start = function () {',
     '    var runtime = window.MZUIRuntime;',
     "    if (!runtime || typeof runtime.registerScene !== 'function') throw new Error('UI preview runtime was not registered.');",
+    '    // Install before boot continues so DataManager.createGameObjects and the',
+    '    // mounted scene both see the embedded data; the runtime was bundled by',
+    '    // this same preparation, so installGlobalData is guaranteed to exist.',
+    '    if (globalData !== null) runtime.installGlobalData(globalData);',
     '    // Always register through the runtime so a scene named after a built-in',
     '    // (Scene_Menu, Scene_Title, ...) replaces the native class instead of',
     '    // booting straight into it.',
@@ -182,6 +182,12 @@ function previewLauncherSource(scene: UiRuntimeSceneExport): string {
     '})();',
     '',
   ].join('\n');
+}
+
+function encodeInlineJson(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
 }
 
 function isFile(filePath: string): boolean {

@@ -3131,7 +3131,7 @@
         var path = require('path');
         var file = path.join(resolveEngineRoot(), GLOBAL_DATA_FILE);
         if (fs.existsSync(file)) {
-          var parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+          var parsed = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
           if (!object(parsed) && !Array.isArray(parsed)) throw new Error('Global UI data root must be a JSON object or array: ' + GLOBAL_DATA_FILE);
           data = parsed;
         }
@@ -3141,6 +3141,12 @@
     }
     globalDataBase = cloneGlobalData(data);
     global.$dataGlobalUI = data;
+  }
+
+  function installGlobalData(data) {
+    if (!object(data) && !Array.isArray(data)) throw new Error('Global UI data root must be a JSON object or array.');
+    globalDataBase = cloneGlobalData(data);
+    global.$dataGlobalUI = cloneGlobalData(data);
   }
 
   function installGlobalDataSaveHooks() {
@@ -3208,6 +3214,7 @@
     create: makeRuntime,
     registerScene: registerScene,
     isRegistered: function isRegistered(sceneName) { return Boolean(registeredScenes[sceneName]); },
+    installGlobalData: installGlobalData,
     resolveEngineRoot: resolveEngineRoot,
     errors: [],
     onError: null,

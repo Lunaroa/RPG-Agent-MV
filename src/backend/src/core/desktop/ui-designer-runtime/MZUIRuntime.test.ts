@@ -1631,6 +1631,44 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     }
   });
 
+  test('installs embedded global data without fs and uses it as the save baseline', () => {
+    const context = makeContext();
+    context.DataManager = {
+      createGameObjects() {},
+      makeSaveContents() { return {}; },
+      extractSaveContents() {},
+    };
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-global-install.js' });
+    assert.deepEqual(jsonValue(context.$dataGlobalUI), {});
+
+    context.MZUIRuntime.installGlobalData({ menuList: [{ text: 'Start' }] });
+    assert.deepEqual(jsonValue(context.$dataGlobalUI), { menuList: [{ text: 'Start' }] });
+
+    context.$dataGlobalUI.menuList[0].text = 'Mutated';
+    context.DataManager.createGameObjects();
+    assert.deepEqual(jsonValue(context.$dataGlobalUI), { menuList: [{ text: 'Start' }] });
+    assert.equal(context.DataManager.makeSaveContents().mzuiGlobalUI, null);
+
+    assert.throws(() => context.MZUIRuntime.installGlobalData('text'), /Global UI data root/);
+  });
+
+  test('loads a BOM-prefixed GlobalUI.json', () => {
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-runtime-global-data-bom-'));
+    try {
+      fs.mkdirSync(path.join(project, 'js', 'plugins'), { recursive: true });
+      fs.mkdirSync(path.join(project, 'data'), { recursive: true });
+      fs.writeFileSync(path.join(project, 'data', 'GlobalUI.json'), '\uFEFF' + JSON.stringify({ menuList: [] }), 'utf8');
+      const context = makeContext();
+      context.process = { cwd: () => project };
+      context.require = nodeRequire;
+      vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-global-bom.js' });
+      assert.deepEqual(jsonValue(context.$dataGlobalUI), { menuList: [] });
+      assert.equal(context.MZUIRuntime.errors.some((entry: { label?: string }) => entry.label === 'global-data'), false);
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true });
+    }
+  });
+
   test('dispatches visibility events only on effective visibility edges per node', () => {
     const context = makeContext();
     vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });

@@ -133,7 +133,7 @@ test('the preview launcher replaces a same-name built-in scene instead of bootin
   }
 });
 
-test('copies the designer global data into the isolated preview project', () => {
+test('embeds the designer global data into the isolated preview launcher', () => {
   const project = path.join(root, 'project');
   fs.mkdirSync(path.join(project, 'data'), { recursive: true });
   fs.mkdirSync(path.join(project, 'js'), { recursive: true });
@@ -148,8 +148,28 @@ test('copies the designer global data into the isolated preview project', () => 
 
   const preparation = prepareUiDesignerGamePreviewProject(root, project, scene());
   try {
-    const previewGlobalData = JSON.parse(fs.readFileSync(path.join(preparation.temporaryProject, 'data', 'GlobalUI.json'), 'utf8'));
-    assert.deepEqual(previewGlobalData, { data: [{ text: 'sample entry' }] });
+    const launcher = fs.readFileSync(path.join(preparation.temporaryProject, 'js', 'plugins', `${UI_DESIGNER_GAME_PREVIEW_PLUGIN_NAME}.js`), 'utf8');
+    const installed: unknown[] = [];
+    function SceneBoot() {}
+    SceneBoot.prototype.start = () => {};
+    const windowObject: Record<string, unknown> = {};
+    windowObject.MZUIRuntime = {
+      isRegistered: () => false,
+      installGlobalData(data: unknown) { installed.push(data); },
+      registerScene(sceneName: string) {
+        windowObject[sceneName] = class {};
+        return windowObject[sceneName];
+      },
+    };
+    vm.runInNewContext(launcher, {
+      window: windowObject,
+      Scene_Boot: SceneBoot,
+      SceneManager: { goto: () => {} },
+    });
+    new (SceneBoot as unknown as new () => { start(): void })().start();
+
+    assert.deepEqual(JSON.parse(JSON.stringify(installed)), [{ data: [{ text: 'sample entry' }] }]);
+    assert.equal(fs.existsSync(path.join(preparation.temporaryProject, 'data', 'GlobalUI.json')), false);
     assert.equal(fs.readFileSync(globalDataSource, 'utf8'), '{ "data": [{ "text": "sample entry" }] }');
     assert.equal(fs.existsSync(path.join(project, 'data', 'GlobalUI.json')), false);
   } finally {

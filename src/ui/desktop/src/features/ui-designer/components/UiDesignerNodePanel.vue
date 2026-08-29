@@ -277,7 +277,7 @@ const handleKeydown = (event: KeyboardEvent) => {
       @node-click="handleNodeClick"
       @node-drop="handleDrop"
     >
-      <template #default="{ data }">
+      <template #default="{ data }: { data: NodeTreeEntry }">
         <el-dropdown trigger="contextmenu" @command="(command: string) => contextCommand(command, data.id)">
         <span class="node-tree-entry" :class="{ selected: selectedIds.includes(data.id), locked: document.nodes.find((node) => node.id === data.id)?.locked }" :data-node-id="data.id" :data-ui-id="`ui-designer-tree-row-${data.id}`" @mouseenter="designer.setHoveredNode(data.id)" @mouseleave="designer.setHoveredNode(undefined)" @contextmenu="designer.selectNodeActionTarget(data.id)" @dblclick.stop="emit('activateNode', data.id)">
           <component :is="UI_DESIGNER_NODE_TYPE_ICONS[data.type]" class="node-type-icon" aria-hidden="true" />

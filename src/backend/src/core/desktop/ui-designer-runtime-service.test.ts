@@ -8,6 +8,7 @@ import type { UiRuntimeSceneExport } from '../../../../contract/ui-designer.ts';
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import {
+  UI_DESIGNER_RUNTIME_VERSION,
   UiDesignerRuntimeModifiedError,
   UiDesignerRuntimeEnableRequiredError,
   UiDesignerRuntimeExportOverwriteRequiredError,
@@ -92,7 +93,7 @@ describe('ui designer runtime staging', () => {
   test('requires explicit force before replacing a modified runtime', () => {
     const project = makeProject();
     fs.mkdirSync(path.join(project, 'js', 'plugins'), { recursive: true });
-    fs.writeFileSync(path.join(project, 'js', 'plugins', 'MZUIRuntime.js'), 'var VERSION = "1.0.0"; // user edit', 'utf8');
+    fs.writeFileSync(path.join(project, 'js', 'plugins', 'MZUIRuntime.js'), `var VERSION = "${UI_DESIGNER_RUNTIME_VERSION}"; // user edit`, 'utf8');
     fs.writeFileSync(path.join(project, 'js', 'plugins.js'), 'var $plugins = [{"name":"MZUIRuntime","status":true,"description":"","parameters":{}}];', 'utf8');
     assert.equal(inspectUiDesignerRuntime(tempRoot, project).state, 'content-mismatch');
     assert.throws(() => stageUiDesignerRuntimeInstall(tempRoot, project), (error: unknown) => error instanceof UiDesignerRuntimeEnableRequiredError);
@@ -105,7 +106,7 @@ describe('ui designer runtime staging', () => {
     stageUiDesignerRuntimeInstall(tempRoot, project, { enable: true });
     const stagedRuntime = getProjectFileForRead(tempRoot, project, 'js/plugins/MZUIRuntime.js');
     assert.ok(stagedRuntime);
-    fs.writeFileSync(stagedRuntime!, 'var VERSION = "1.1.0"; // staged user edit', 'utf8');
+    fs.writeFileSync(stagedRuntime!, `var VERSION = "${UI_DESIGNER_RUNTIME_VERSION}"; // staged user edit`, 'utf8');
     const inspected = inspectUiDesignerRuntime(tempRoot, project);
     assert.equal(inspected.state, 'content-mismatch');
     assert.equal(inspected.staging.pending, true);

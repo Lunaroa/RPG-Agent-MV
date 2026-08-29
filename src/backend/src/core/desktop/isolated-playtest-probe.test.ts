@@ -191,7 +191,7 @@ describe('isolated staged-project playtest probe', { concurrency: false }, () =>
         leakedTemporaryProjects.push(temporaryProject);
         return strictWorkerResponse(request, { mapId: 1, x: 1, y: 1 });
       },
-      removeTemporaryProject: () => {
+      cleanupIsolated: () => {
         throw new Error('injected cleanup failure');
       },
     });

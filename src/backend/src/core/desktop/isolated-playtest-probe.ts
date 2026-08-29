@@ -62,6 +62,7 @@ export interface IsolatedProbeWorkerResponse {
 
 export interface IsolatedPlaytestProbeDependencies {
   executeWorker: (request: IsolatedProbeWorkerRequest) => Promise<IsolatedProbeWorkerResponse>;
+  cleanupIsolated: (preparation: IsolatedProjectPreparation, expected?: { sourceProject?: string; temporaryProject?: string }) => void;
   temporaryProjectPath: string;
   now: () => Date;
   randomUUID: () => string;
@@ -174,7 +175,7 @@ export async function runIsolatedRmmvPlaytestProbe(
         cleanupError = errorMessage(error);
       }
       try {
-        cleanupIsolatedProject(preparation, {
+        (dependencies.cleanupIsolated || cleanupIsolatedProject)(preparation, {
           sourceProject: project,
           temporaryProject: preparation.temporaryProject,
         });

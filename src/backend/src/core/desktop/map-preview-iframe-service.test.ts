@@ -251,7 +251,11 @@ test('serves the project directly and only generates the app shell and staged ov
     const appDir = captured.resourceRoot!;
 
     // No project copy: only the generated shell plus the staged draft overlay.
-    assert.deepEqual(listRelativeFiles(appDir), [
+    // The ownership marker sits in the isolated root alongside the app files.
+    const appFiles = listRelativeFiles(appDir);
+    const markers = appFiles.filter((entry) => /^\.rpg-agent-isolation-[a-f0-9]{20}\.json$/.test(entry));
+    assert.equal(markers.length, 1);
+    assert.deepEqual(appFiles.filter((entry) => !markers.includes(entry)), [
       'data/Map001.json',
       'index.html',
       'js/main.js',

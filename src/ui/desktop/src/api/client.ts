@@ -554,7 +554,7 @@ export const productPlugin = {
 };
 
 export const uiDesigner = {
-  open(request?: Pick<UiDesignerFileRequest, 'path'>) { return desktopApi().uiDesigner.open(request) },
+  open(request?: Pick<UiDesignerFileRequest, 'path' | 'project'>) { return desktopApi().uiDesigner.open(request) },
   save(request: UiDesignerFileRequest, document: UiDesignerDocument) { return desktopApi().uiDesigner.save(toPlain(request), toPlain(document)) },
   saveAs(request: UiDesignerFileRequest, document: UiDesignerDocument) { return desktopApi().uiDesigner.saveAs(toPlain(request), toPlain(document)) },
   revealSource(sourcePath: string) { return desktopApi().uiDesigner.revealSource(sourcePath) },

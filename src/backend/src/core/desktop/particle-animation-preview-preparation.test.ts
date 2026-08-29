@@ -154,7 +154,11 @@ describe('isolated MZ particle animation preview preparation', { concurrency: fa
       'img/sv_enemies/',
     ]);
     // No per-session copies: runtime scripts, effect, SE and battlebacks stay in the project.
-    assert.deepEqual(listRelativeFiles(appPreparation.appDirectory), [
+    // The ownership marker sits in the isolated root alongside the app files.
+    const appFiles = listRelativeFiles(appPreparation.appDirectory);
+    const markers = appFiles.filter((entry) => /^\.rpg-agent-isolation-[a-f0-9]{20}\.json$/.test(entry));
+    assert.equal(markers.length, 1);
+    assert.deepEqual(appFiles.filter((entry) => !markers.includes(entry)), [
       'index.html',
       'js/main.js',
       'js/particle-preview.js',

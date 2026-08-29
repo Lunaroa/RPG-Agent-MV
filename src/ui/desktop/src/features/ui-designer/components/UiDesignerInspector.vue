@@ -252,6 +252,11 @@ const ADVANCED_FIELDS = new Set([
   'gravityX', 'gravityY', 'rotationSpeed', 'lifetime', 'lifetimeRandom', 'startScale', 'endScale', 'startOpacity', 'endOpacity', 'glow',
   'columns', 'rows', 'autoFlow', 'columnGap', 'rowGap', 'justifyItems', 'alignItems', 'maxItems', 'columnWidths', 'rowHeights', 'maxWidth', 'maxHeight',
 ])
+const FIELD_HELP_KEYS: Record<string, UiDesignerMessageKey> = {
+  focusWidth: 'helpFocusWidth',
+  wrapWidth: 'helpWrapWidth',
+  pressedScale: 'helpPressedScale',
+}
 const purposeForField = (field: FieldDescriptor): InspectorPurpose => {
   if (field.purpose) return field.purpose
   if (field.kind === 'resource') return 'contentResources'
@@ -287,7 +292,7 @@ const fields = computed<FieldDescriptor[]>(() => {
   }
   const known = new Set([...baseFields, ...special[node.type]].map((field) => field.key))
   const inferred = Object.entries(node.props as unknown as Record<string, unknown>).filter(([key, value]) => !known.has(key) && (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string')).map(([key, value]): FieldDescriptor => ({ key, kind: typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : key.toLowerCase().includes('color') ? 'color' : 'text', purpose: 'advanced' }))
-  return [...baseFields, ...special[node.type], ...inferred].map((field) => ({ ...field, purpose: purposeForField(field), help: field.help ?? t('propertyHelpGeneric') }))
+  return [...baseFields, ...special[node.type], ...inferred].map((field) => ({ ...field, purpose: purposeForField(field), help: field.help ?? (FIELD_HELP_KEYS[field.key] ? t(FIELD_HELP_KEYS[field.key]) : t('propertyHelpGeneric')) }))
 })
 
 const PURPOSE_ORDER: InspectorPurpose[] = ['advanced', 'identity', 'contentResources', 'geometry', 'appearance', 'behavior']

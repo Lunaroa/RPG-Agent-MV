@@ -17,11 +17,13 @@ import {
 import { RPG_MAKER_MZ_PROJECT_RUNTIME_COPY_EXCLUSIONS } from './rpg-maker-mz-runtime.ts';
 import {
   bundledUiDesignerRuntime,
+  UI_DESIGNER_GLOBAL_DATA_FILENAME,
   UI_DESIGNER_RUNTIME_PLUGIN_NAME,
   UI_DESIGNER_RUNTIME_RELATIVE_PATH,
   UI_DESIGNER_SCENE_DIRECTORY,
   writeUiDesignerRuntimeExport,
 } from './ui-designer-runtime-service.ts';
+import { readProjectUiDesignerGlobalData } from './ui-designer-service.ts';
 
 export const UI_DESIGNER_GAME_PREVIEW_PLUGIN_NAME = 'RpgAgentUiDesignerPreview';
 
@@ -91,6 +93,14 @@ export function prepareUiDesignerGamePreviewProject(
     const canonicalScene = JSON.parse(fs.readFileSync(scenePath, 'utf8')) as UiRuntimeSceneExport;
     fs.writeFileSync(launcherPath, previewLauncherSource(canonicalScene), { encoding: 'utf8' });
     fs.writeFileSync(pluginsPath, serializePluginEntries(entries), { encoding: 'utf8' });
+    // Preview reads $global from the designer's saved global data even before
+    // it is published as data/GlobalUI.json in the source project.
+    const globalData = readProjectUiDesignerGlobalData(project);
+    if (globalData.metadata) {
+      const globalDataPath = path.join(layout.resourceRoot, 'data', UI_DESIGNER_GLOBAL_DATA_FILENAME);
+      fs.mkdirSync(path.dirname(globalDataPath), { recursive: true });
+      fs.writeFileSync(globalDataPath, `${JSON.stringify(globalData.data, null, 2)}\n`, { encoding: 'utf8' });
+    }
     assertOwnership();
 
     const stable = verifyIsolatedSourceState(workflowRoot, isolated);
@@ -150,7 +160,28 @@ function previewLauncherSource(scene: UiRuntimeSceneExport): string {
   const encodedScene = JSON.stringify(scene)
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029');
-  return `/* Generated only inside an isolated UI designer preview project. */\n(function () {\n  'use strict';\n  var scene = ${encodedScene};\n  var sceneName = scene.meta.sceneName;\n  var start = Scene_Boot.prototype.start;\n  Scene_Boot.prototype.start = function () {\n    var SceneClass = window[sceneName];\n    if (typeof SceneClass !== 'function') {\n      var runtime = window.MZUIRuntime;\n      if (!runtime || typeof runtime.registerScene !== 'function') throw new Error('UI preview runtime was not registered.');\n      SceneClass = runtime.registerScene(sceneName, scene.meta.sceneBase, scene);\n    }\n    start.apply(this, arguments);\n    SceneManager.goto(SceneClass);\n  };\n})();\n`;
+  return [
+    '/* Generated only inside an isolated UI designer preview project. */',
+    '(function () {',
+    "  'use strict';",
+    `  var scene = ${encodedScene};`,
+    '  var sceneName = scene.meta.sceneName;',
+    '  var start = Scene_Boot.prototype.start;',
+    '  Scene_Boot.prototype.start = function () {',
+    '    var runtime = window.MZUIRuntime;',
+    "    if (!runtime || typeof runtime.registerScene !== 'function') throw new Error('UI preview runtime was not registered.');",
+    '    // Always register through the runtime so a scene named after a built-in',
+    '    // (Scene_Menu, Scene_Title, ...) replaces the native class instead of',
+    '    // booting straight into it.',
+    "    var SceneClass = typeof runtime.isRegistered === 'function' && runtime.isRegistered(sceneName)",
+    '      ? window[sceneName]',
+    '      : runtime.registerScene(sceneName, scene.meta.sceneBase, scene);',
+    '    start.apply(this, arguments);',
+    '    SceneManager.goto(SceneClass);',
+    '  };',
+    '})();',
+    '',
+  ].join('\n');
 }
 
 function isFile(filePath: string): boolean {

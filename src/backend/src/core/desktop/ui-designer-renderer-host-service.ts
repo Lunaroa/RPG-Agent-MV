@@ -33,6 +33,7 @@ import {
 import { PreparationWorkerError } from './playtest-preparation.ts'
 import { bundledUiDesignerRuntime } from './ui-designer-runtime-service.ts'
 import { syncUiDesignerRendererResources } from './ui-designer-renderer-resource-sync.ts'
+import { readProjectUiDesignerGlobalData } from './ui-designer-service.ts'
 
 const HOST_PLUGIN_NAME = 'MZUIDesignerCanvasHost'
 const HOST_STORAGE_PLUGIN_NAME = 'MZUIDesignerSessionStorage'
@@ -311,7 +312,11 @@ export function stageUiDesignerRendererHost(
   ownedWrite(() => fs.writeFileSync(path.join(resourceRoot, ...HOST_STORAGE_PLUGIN_RELATIVE_PATH.split('/')), rendererSessionStoragePluginSource(session), 'utf8'))
   ownedWrite(() => stageUiDesignerSessionStorageBootstrap(resourceRoot, manifest.engine))
   ownedWrite(() => fs.writeFileSync(path.join(resourceRoot, ...HOST_RUNTIME_RELATIVE_PATH.split('/')), runtimeBundle.source, 'utf8'))
-  ownedWrite(() => fs.writeFileSync(path.join(resourceRoot, ...HOST_PLUGIN_RELATIVE_PATH.split('/')), rendererHostPluginSource(session, runtimeBundle.version), 'utf8'))
+  // The isolated iframe cannot read data/GlobalUI.json (no Node, custom
+  // protocol), so the designer's saved global data travels inside the host
+  // plugin and becomes $global at scene mount time.
+  const globalData = readProjectUiDesignerGlobalData(expectedSourceProject).data
+  ownedWrite(() => fs.writeFileSync(path.join(resourceRoot, ...HOST_PLUGIN_RELATIVE_PATH.split('/')), rendererHostPluginSource(session, runtimeBundle.version, globalData), 'utf8'))
   const plugins = parsePluginsJs(fs.readFileSync(pluginsPath, 'utf8'))
     .filter((entry) => {
       const configuredName = typeof entry.name === 'string' ? entry.name.replace(/\\/g, '/').split('/').at(-1)?.replace(/\.js$/i, '') : ''
@@ -588,7 +593,7 @@ function rendererSessionStoragePluginSource(session: Pick<UiDesignerRendererHost
 `
 }
 
-function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, 'sessionId' | 'generation'>, runtimeVersion: string): string {
+function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, 'sessionId' | 'generation'>, runtimeVersion: string, globalData: unknown): string {
   const config = JSON.stringify({
     version: UI_DESIGNER_RENDERER_BRIDGE_VERSION,
     sessionId: session.sessionId,
@@ -600,7 +605,8 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
     runtimeVersion,
     runtimeCompatibility: UI_DESIGNER_RUNTIME_VERSION,
     sceneScriptVersion: UI_DESIGNER_SCENE_SCRIPT_VERSION,
-  })
+    globalData: globalData && typeof globalData === 'object' ? globalData : {},
+  }).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029')
   return String.raw`/*:
  * @target MV MZ
  * @plugindesc Isolated UI designer canvas host
@@ -639,6 +645,12 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
   var mvGameFontPreload = null;
 
   function object(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
+  // Every mount starts from a fresh copy of the designer's global data so
+  // $global reads in expressions and list data sources see saved values.
+  function installPreviewGlobalData() {
+    if (!object(config.globalData) && !Array.isArray(config.globalData)) return;
+    try { global.$dataGlobalUI = JSON.parse(JSON.stringify(config.globalData)); } catch (_) { /* Keep the runtime default. */ }
+  }
   function exact(value, keys, label) {
     if (!object(value)) throw new Error(label + ' must be an object.');
     var allowed = {};
@@ -1164,6 +1176,7 @@ function rendererHostPluginSource(session: Pick<UiDesignerRendererHostSession, '
     resizeCanvas(message.payload.scene);
     configurePreviewDomInput();
     requireSessionStorage(activeExecutionMode !== 'full-preview');
+    installPreviewGlobalData();
     runtime = global.MZUIRuntime.create();
     runtime.mount(message.payload.scene, { root: hostScene._mzuiUiRoot, context: { sceneApi: hostScene }, sceneApi: hostScene, executionMode: activeExecutionMode });
     hostScene._mzuiCanvasRuntime = runtime;

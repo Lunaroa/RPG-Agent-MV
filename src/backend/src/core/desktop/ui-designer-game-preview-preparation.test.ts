@@ -90,6 +90,73 @@ test('prepares an isolated game project that boots the current in-memory UI scen
   }
 });
 
+test('the preview launcher replaces a same-name built-in scene instead of booting into it', () => {
+  const project = path.join(root, 'project');
+  fs.mkdirSync(path.join(project, 'data'), { recursive: true });
+  fs.mkdirSync(path.join(project, 'js'), { recursive: true });
+  fs.writeFileSync(path.join(project, 'Game.exe'), 'runner', 'utf8');
+  fs.writeFileSync(path.join(project, 'Game.rpgproject'), 'RPGMV', 'utf8');
+  fs.writeFileSync(path.join(project, 'data', 'System.json'), '{}', 'utf8');
+  fs.writeFileSync(path.join(project, 'data', 'MapInfos.json'), '[null]', 'utf8');
+  fs.writeFileSync(path.join(project, 'js', 'plugins.js'), 'var $plugins = [];', 'utf8');
+
+  const menuScene = { ...scene(), meta: { ...scene().meta, sceneName: 'Scene_Menu' } };
+  const preparation = prepareUiDesignerGamePreviewProject(root, project, menuScene);
+  try {
+    const launcher = fs.readFileSync(path.join(preparation.temporaryProject, 'js', 'plugins', `${UI_DESIGNER_GAME_PREVIEW_PLUGIN_NAME}.js`), 'utf8');
+    class NativeMenuScene {}
+    class DesignerMenuScene {}
+    const registered: string[] = [];
+    const transitions: unknown[] = [];
+    function SceneBoot() {}
+    SceneBoot.prototype.start = () => {};
+    const windowObject: Record<string, unknown> = { Scene_Menu: NativeMenuScene };
+    windowObject.MZUIRuntime = {
+      isRegistered: () => false,
+      registerScene(sceneName: string) {
+        registered.push(sceneName);
+        windowObject[sceneName] = DesignerMenuScene;
+        return DesignerMenuScene;
+      },
+    };
+    vm.runInNewContext(launcher, {
+      window: windowObject,
+      Scene_Boot: SceneBoot,
+      SceneManager: { goto: (target: unknown) => transitions.push(target) },
+    });
+    new (SceneBoot as unknown as new () => { start(): void })().start();
+
+    assert.deepEqual(registered, ['Scene_Menu']);
+    assert.deepEqual(transitions, [DesignerMenuScene]);
+  } finally {
+    cleanupIsolatedProject(preparation);
+  }
+});
+
+test('copies the designer global data into the isolated preview project', () => {
+  const project = path.join(root, 'project');
+  fs.mkdirSync(path.join(project, 'data'), { recursive: true });
+  fs.mkdirSync(path.join(project, 'js'), { recursive: true });
+  fs.mkdirSync(path.join(project, '.luna_rpg', 'ui-designer'), { recursive: true });
+  fs.writeFileSync(path.join(project, 'Game.exe'), 'runner', 'utf8');
+  fs.writeFileSync(path.join(project, 'Game.rpgproject'), 'RPGMV', 'utf8');
+  fs.writeFileSync(path.join(project, 'data', 'System.json'), '{}', 'utf8');
+  fs.writeFileSync(path.join(project, 'data', 'MapInfos.json'), '[null]', 'utf8');
+  fs.writeFileSync(path.join(project, 'js', 'plugins.js'), 'var $plugins = [];', 'utf8');
+  const globalDataSource = path.join(project, '.luna_rpg', 'ui-designer', 'global-ui.json');
+  fs.writeFileSync(globalDataSource, '{ "data": [{ "text": "sample entry" }] }', 'utf8');
+
+  const preparation = prepareUiDesignerGamePreviewProject(root, project, scene());
+  try {
+    const previewGlobalData = JSON.parse(fs.readFileSync(path.join(preparation.temporaryProject, 'data', 'GlobalUI.json'), 'utf8'));
+    assert.deepEqual(previewGlobalData, { data: [{ text: 'sample entry' }] });
+    assert.equal(fs.readFileSync(globalDataSource, 'utf8'), '{ "data": [{ "text": "sample entry" }] }');
+    assert.equal(fs.existsSync(path.join(project, 'data', 'GlobalUI.json')), false);
+  } finally {
+    cleanupIsolatedProject(preparation);
+  }
+});
+
 function scene(): UiRuntimeSceneExport {
   return {
     version: '1.1.0',

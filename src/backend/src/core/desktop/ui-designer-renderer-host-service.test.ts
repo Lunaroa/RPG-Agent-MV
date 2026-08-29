@@ -73,6 +73,36 @@ test('isolated UI canvas host stages and cleans physical MV and MZ projects', as
   }
 })
 
+test('staged canvas host embeds the designer global data for $global preview', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-renderer-global-data-'))
+  const project = path.join(root, 'projects', 'sample-mv')
+  writeProject(project, 'MV')
+  fs.mkdirSync(path.join(project, '.luna_rpg', 'ui-designer'), { recursive: true })
+  fs.writeFileSync(path.join(project, '.luna_rpg', 'ui-designer', 'global-ui.json'), '{ "markerKey": "markerValue" }', 'utf8')
+  let isolated = ''
+  const service = new UiDesignerRendererHostService(root, {
+    prepareIsolated: (_workflowRoot, source) => {
+      const prepared = preparation(source, 'ui-renderer-global-data-copy-')
+      isolated = prepared.temporaryProject
+      return prepared
+    },
+    registerPreviewRoot: (key) => `rpg-agent-preview://${key}/index.html`,
+    unregisterPreviewRoot: () => undefined,
+    verifyFrameIsolation: () => true,
+    verifySourceState: () => ({ sourceUnchanged: true, savesUnchanged: true, stagingUnchanged: true }),
+  })
+  try {
+    await service.start(project, 5)
+    const source = fs.readFileSync(path.join(resourceRoot(isolated, 'MV'), 'js', 'plugins', 'MZUIDesignerCanvasHost.js'), 'utf8')
+    assert.match(source, /"globalData":\{"markerKey":"markerValue"\}/)
+    assert.match(source, /global\.\$dataGlobalUI = JSON\.parse\(JSON\.stringify\(config\.globalData\)\)/)
+  } finally {
+    try { service.shutdownSync() } catch { /* asserted through staged cleanup */ }
+    fs.rmSync(root, { recursive: true, force: true })
+    if (isolated) fs.rmSync(isolated, { recursive: true, force: true })
+  }
+})
+
 test('UI canvas host uses a sparse MV www or MZ root overlay with read-only source fallback', async (t) => {
   for (const engine of ['MV', 'MZ'] as const) {
     await t.test(engine, async () => {

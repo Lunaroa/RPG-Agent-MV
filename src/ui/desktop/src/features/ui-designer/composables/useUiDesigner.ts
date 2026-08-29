@@ -14,6 +14,7 @@ import type {
   UiDesignerResourceRequest,
   UiEventMap,
   UiFileStatus,
+  UiNode,
   UiPreviewState,
   UiProjectResourceCatalog,
   UiPropertyMode,
@@ -77,7 +78,7 @@ import { isValidUiDesignerSceneName, validateDocument } from '../models/validati
 import { UI_DESIGNER_BUILT_IN_TEMPLATES, createBuiltInUiDesignerTemplate, isBuiltInUiDesignerTemplate } from '../models/templates'
 import { createUiDesignerDraftCoordinator, type UiDesignerDraftCoordinator } from './draftCoordinator'
 import { createUiDesignerSceneHistoryOperations } from './sceneHistoryOperations'
-import { createUiDesignerPersistenceOperations } from './persistenceOperations'
+import { createUiDesignerPersistenceOperations, UI_DESIGNER_DEFAULT_CODE_FONT_FAMILY } from './persistenceOperations'
 import { createUiDesignerRuntimeOperations } from './runtimeOperations'
 import { clearRecoverySnapshot } from './recoveryLifecycle'
 import {
@@ -225,7 +226,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const recoveryRecords = ref<UiDesignerRecoveryRecord[]>([])
   const recoveryCleanupPending = ref(false)
   const templates = ref<string[]>([...UI_DESIGNER_BUILT_IN_TEMPLATES])
-  const preferences = ref<UiDesignerPreferences>({ historyLimit: DEFAULT_HISTORY_LIMIT, gridEnabled: true, snapEnabled: true, tourCompleted: false, autoSaveIntervalMinutes: 1, gridSize: 16, gridColor: '#394150', snapSensitivity: 8, defaultCanvasWidth: 816, defaultCanvasHeight: 624, codeFontFamily: 'ui-monospace', codeFontSize: 12, codeTabSize: 2, theme: 'system', defaultAuthor: '', autoFormat: false, leftPaneWidth: 260, centerPaneWidth: 640, rightPaneWidth: 320 })
+  const preferences = ref<UiDesignerPreferences>({ historyLimit: DEFAULT_HISTORY_LIMIT, gridEnabled: true, snapEnabled: true, tourCompleted: false, autoSaveIntervalMinutes: 1, gridSize: 16, gridColor: '#394150', snapSensitivity: 8, defaultCanvasWidth: 816, defaultCanvasHeight: 624, codeFontFamily: UI_DESIGNER_DEFAULT_CODE_FONT_FAMILY, codeFontSize: 12, codeTabSize: 2, theme: 'system', defaultAuthor: '', autoFormat: false, leftPaneWidth: 260, centerPaneWidth: 640, rightPaneWidth: 320 })
   const recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const projectGeneration = ref(0)
   const draftCoordinator: UiDesignerDraftCoordinator = createUiDesignerDraftCoordinator()

@@ -8,6 +8,9 @@ import type {
 import { normalizeUiDesignerPaneSize } from '@contract/ui-designer-geometry'
 
 type ValueRef<T> = Pick<Ref<T>, 'value'>
+
+/** Bundled JetBrains Mono first; generic monospace families guarantee a monospaced fallback. */
+export const UI_DESIGNER_DEFAULT_CODE_FONT_FAMILY = '"JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, Menlo, monospace'
 export interface UiDesignerPersistencePreferences {
   historyLimit: number
   gridEnabled: boolean
@@ -84,7 +87,7 @@ export function createUiDesignerPersistenceOperations(context: UiDesignerPersist
         next.snapSensitivity = finiteOr(next.snapSensitivity, 8, 0, 64)
         next.defaultCanvasWidth = finiteOr(next.defaultCanvasWidth, 816, 1, 8192)
         next.defaultCanvasHeight = finiteOr(next.defaultCanvasHeight, 624, 1, 8192)
-        next.codeFontFamily = typeof next.codeFontFamily === 'string' && next.codeFontFamily.trim() ? next.codeFontFamily : 'ui-monospace'
+        next.codeFontFamily = typeof next.codeFontFamily === 'string' && next.codeFontFamily.trim() ? next.codeFontFamily : UI_DESIGNER_DEFAULT_CODE_FONT_FAMILY
         next.codeFontSize = finiteOr(next.codeFontSize, 12, 8, 32)
         next.codeTabSize = finiteOr(next.codeTabSize, 2, 1, 8)
         next.theme = next.theme === 'light' || next.theme === 'dark' ? next.theme : 'system'

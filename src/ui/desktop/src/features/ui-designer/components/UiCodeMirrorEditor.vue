@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { UiCodeEditorAdapter, UiCodeEditorHandle } from '@contract/ui-designer'
 import type { UiDesignerDraftCoordinator } from '../composables/draftCoordinator'
 import { createUiDesignerCodeMirrorBlurHandler } from '../codeMirrorLifecycle'
@@ -105,11 +105,20 @@ onBeforeUnmount(() => { flushPendingChange(); unregisterDraft?.(); resizeObserve
 const format = () => editor?.format?.()
 const refreshLayout = () => editor?.refreshLayout?.()
 defineExpose({ format, refreshLayout })
+
+const CODE_FONT_FALLBACK = 'ui-monospace, SFMono-Regular, Consolas, monospace'
+// A stored custom family may name a single font that is missing on this
+// machine; always end the stack on generic monospace so code stays aligned.
+const resolvedFontFamily = computed(() => {
+  const custom = props.fontFamily.trim()
+  if (!custom) return CODE_FONT_FALLBACK
+  return /monospace/i.test(custom) ? custom : `${custom}, ${CODE_FONT_FALLBACK}`
+})
 </script>
 
 <template>
   <div class="code-mirror-editor">
-    <div ref="host" class="editor-host" :class="{ resizable: props.resizable }" :style="{ height: `calc(${Math.max(1, props.rows) * 1.5}em + 8px)`, fontFamily: props.fontFamily || 'ui-monospace, SFMono-Regular, Consolas, monospace', fontSize: `${props.fontSize > 0 ? props.fontSize : 12}px` }" />
+    <div ref="host" class="editor-host" :class="{ resizable: props.resizable }" :style="{ height: `calc(${Math.max(1, props.rows) * 1.5}em + 8px)`, fontFamily: resolvedFontFamily, fontSize: `${props.fontSize > 0 ? props.fontSize : 12}px` }" />
     <el-alert v-if="error" type="error" :closable="false" :title="t('operationError')">
       <details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ error }}</span></details>
     </el-alert>

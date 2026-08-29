@@ -1098,6 +1098,10 @@
   }
 
   function materializeRuntimeLists(runtime, sourceScene) {
+    // No list nodes: keep the caller's scene object identity so runtime writes
+    // (scripts, property codes) stay visible on the source document.
+    var sourceNodes = Array.isArray(sourceScene && sourceScene.nodes) ? sourceScene.nodes : [];
+    if (!sourceNodes.some(function (node) { return node && node.type === 'list'; })) return sourceScene;
     var scene = cloneRuntimeValue(sourceScene);
     var expanded = 0;
     while (expanded < 10000) {
@@ -1250,8 +1254,11 @@
       stroke: stroke.color,
       strokeThickness: stroke.width,
       letterSpacing: finite(props.letterSpacing, 0),
-      wordWrap: false,
-      wordWrapWidth: 0,
+      // wrapWidth > 0 enables PIXI word wrap at that pixel width; CJK text has
+      // no spaces, so breaking long "words" is required for wrapping to show.
+      wordWrap: finite(props.wrapWidth, 0) > 0,
+      wordWrapWidth: Math.max(0, finite(props.wrapWidth, 0)),
+      breakWords: finite(props.wrapWidth, 0) > 0,
       align: props.align || 'left',
     });
     view.style.dropShadow = finite(props.shadowBlur, 0) > 0 || Boolean(props.shadowColor);
@@ -2151,6 +2158,21 @@
     view.scale = view.scale || { x: 1, y: 1 };
     view.scale.x = decomposed.scaleX;
     view.scale.y = decomposed.scaleY;
+    // A pressed button scales around its own center; the center is kept fixed
+    // by translating the view by the scaled center offset.
+    var pressedScale = node.type === 'button' && !view.__mzuiDisabled && view.__mzuiButtonState === 'pressed'
+      ? Math.max(0, finite(props.pressedScale, 1))
+      : 1;
+    if (pressedScale !== 1) {
+      var pressCenterX = decomposed.scaleX * finite(props.width, 0) / 2;
+      var pressCenterY = decomposed.scaleY * finite(props.height, 0) / 2;
+      var pressCos = Math.cos(decomposed.rotation);
+      var pressSin = Math.sin(decomposed.rotation);
+      view.x += (pressCos * pressCenterX - pressSin * pressCenterY) * (1 - pressedScale);
+      view.y += (pressSin * pressCenterX + pressCos * pressCenterY) * (1 - pressedScale);
+      view.scale.x = decomposed.scaleX * pressedScale;
+      view.scale.y = decomposed.scaleY * pressedScale;
+    }
     view.skew = view.skew || { x: 0, y: 0 };
     view.skew.x = decomposed.skewX;
     view.skew.y = decomposed.skewY;
@@ -2365,7 +2387,11 @@
   }
 
   function renderButtonState(view, props) {
-    if (!view || typeof view.addChild !== 'function' || typeof global.Sprite !== 'function') return;
+    if (!view) return;
+    // Pressed scale lives in the node transform, so every state transition
+    // re-applies the transform even when no state image is involved.
+    if (view.__mzuiNode && view.__mzuiRuntime && view.__mzuiRuntime.scene) applyNodeTransform(view.__mzuiNode, view, view.__mzuiRuntime.scene);
+    if (typeof view.addChild !== 'function' || typeof global.Sprite !== 'function') return;
     var states = view.__mzuiButtonStates || {};
     var state = view.__mzuiDisabled ? 'disabled' : (view.__mzuiButtonState || 'normal');
     var path = states[state] || states.normal || '';

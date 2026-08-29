@@ -50,6 +50,10 @@ test('wires shortcuts only into the normal desktop window without a global accel
   );
   assert.doesNotMatch(mainSource, /toggleMapPreviewDevTools/);
   assert.doesNotMatch(mainSource, /globalShortcut/);
+  assert.match(
+    mainSource,
+    /did-create-window[\s\S]{0,300}registerDesktopDevToolsShortcuts\(childWindow\.webContents/,
+  );
   assert.doesNotMatch(preloadSource, /toggleDevTools|openDevTools/);
 });
 

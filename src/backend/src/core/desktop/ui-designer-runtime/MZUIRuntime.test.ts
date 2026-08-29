@@ -685,6 +685,45 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     runtime.cleanup();
   });
 
+  test('pressed button scales around its center and restores on release', () => {
+    const context = makeContext();
+    const input = { x: 50, y: 40, triggered: false, released: false };
+    context.TouchInput = {
+      get x() { return input.x; },
+      get y() { return input.y; },
+      isTriggered: () => input.triggered,
+      isReleased: () => input.released,
+    };
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-pressed-scale.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    const button = scene.nodes.find((node: any) => node.id === 'button');
+    button.props.pressedScale = 0.5;
+    const hostRoot = new context.PIXI.Container();
+    runtime.mount(scene, { root: hostRoot });
+    context.Graphics = { app: { renderer: { plugins: { interaction: { hitTest: () => runtime.nodeViews.button } } } } };
+    const view = runtime.nodeViews.button;
+    assert.equal(view.scale.x, 1);
+    assert.equal(view.x, 0);
+
+    input.triggered = true;
+    runtime.update();
+    assert.equal(view.__mzuiButtonState, 'pressed');
+    assert.equal(view.scale.x, 0.5);
+    assert.equal(view.scale.y, 0.5);
+    assert.equal(view.x, 25);
+    assert.equal(view.y, 20);
+
+    input.triggered = false;
+    input.released = true;
+    runtime.update();
+    assert.equal(view.scale.x, 1);
+    assert.equal(view.scale.y, 1);
+    assert.equal(view.x, 0);
+    assert.equal(view.y, 0);
+    runtime.cleanup();
+  });
+
   test('tracks game hover through TouchInput when PIXI pointerover is unavailable', () => {
     const context = makeContext();
     const input = { x: 50, y: 40 };
@@ -2259,8 +2298,10 @@ function assertEngineWindowTextSignature(engine: 'MV' | 'MZ'): void {
   assert.equal(runtime.nodeViews.text.style.stroke, 'rgba(0, 0, 0, 0.5)');
   assert.equal(runtime.nodeViews.text.style.strokeThickness, expectedOutlineWidth);
   assert.equal(runtime.nodeViews.text.text, 'line one line two');
-  assert.equal(runtime.nodeViews.text.style.wordWrap, false);
-  assert.equal(runtime.nodeViews.text.style.wordWrapWidth, 0);
+  // wrapWidth enables PIXI word wrap at that width (with mid-word breaks for CJK).
+  assert.equal(runtime.nodeViews.text.style.wordWrap, true);
+  assert.equal(runtime.nodeViews.text.style.wordWrapWidth, 40);
+  assert.equal(runtime.nodeViews.text.style.breakWords, true);
   assert.equal(runtime.nodeViews.text.scale.x < 1, true);
   assert.equal(runtime.nodeViews.text.style.align, 'right');
   assert.equal(runtime.nodeViews.progressBar.__mzuiAnimatedRatio, 0.5);

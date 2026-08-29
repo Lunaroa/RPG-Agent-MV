@@ -173,6 +173,14 @@ async function createWindow() {
     };
   });
 
+  // The UI designer preview window has no preload of its own; give its
+  // webContents the same F12 DevTools toggle as the main editor window.
+  mainWindow.webContents.on('did-create-window', (childWindow, details) => {
+    if (backgroundUiControlMode) return;
+    if (details.frameName !== 'rpg-agent-ui-designer-preview') return;
+    registerDesktopDevToolsShortcuts(childWindow.webContents);
+  });
+
   if (backgroundUiControlMode) installUiDesignerRendererLoadDiagnostics(mainWindow.webContents);
 
   if (!backgroundUiControlMode) {

@@ -12,9 +12,11 @@ import type {
 import {
   createDefaultRmmvDatabaseEntry,
   getRmmvDatabaseSchema,
+  rmmvDatabaseCoreFieldsForEngine,
   rpgMakerDatabaseEntryLimit,
   type RmmvDatabaseTableSchema,
 } from '../rmmv/database-schema.ts';
+import { validateRmmvDatabaseEntryTransition } from '../rmmv/database-entry-transition.ts';
 import { exists, readJson } from '../rmmv/json.ts';
 import { dataRelativePath, inspectRmmvProject, resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
 import { scanProjectWithReader } from '../rmmv/project-scanner.ts';
@@ -23,7 +25,7 @@ import {
   preflightRmmvDatabaseProjectApply,
   type RmmvArrayDatabaseTableKey,
   type RmmvDatabaseChange,
-  validateEffectiveRmmvDatabaseState,
+  validateEffectiveRmmvDatabaseStagingTransition,
 } from '../rmmv/database-changes.ts';
 import { getCommonEvent, updateCommonEvent } from './common-event-service.ts';
 import {
@@ -146,7 +148,7 @@ export function updateProjectManagedEntry(
     if (!schema.isArrayTable) {
       assertDocumentMutationAllowed(workflowRoot, project, schema, current.value, next);
     }
-    const validation = schema.validate(next, engine);
+    const validation = validateRmmvDatabaseEntryTransition(schema, current.value, next, engine);
     if (!validation.ok) {
       throw new Error(projectManagedEntryInvalidWithIssues(validation.issues.map(issue => `${issue.path} ${issue.message}`).join('; ')));
     }
@@ -453,14 +455,16 @@ function withEntryInspection(
   const before = inspectionValue(request, sourceValue);
   const after = inspectionValue(request, entry.value);
   const diffs = collectFieldDiffs(before, after);
-  const validation = validateEffectiveRmmvDatabaseState(workflowRoot, project);
+  const validation = diffs.length > 0
+    ? validateEffectiveRmmvDatabaseStagingTransition(workflowRoot, project)
+    : null;
   const inspection: ProjectManagedEntryInspection = {
     staged: true,
     changed: diffs.length > 0,
     conflict: stagedFile.conflict,
     ...(stagedFile.operationId ? { operationId: stagedFile.operationId } : {}),
     diffs,
-    issues: validation.issues.map((issue) => ({
+    issues: (validation?.issues ?? []).map((issue) => ({
       code: issue.code,
       severity: issue.severity,
       table: issue.source.table,
@@ -468,7 +472,7 @@ function withEntryInspection(
       path: issue.source.path,
       message: issue.message,
     })),
-    limitations: [...validation.limitations],
+    limitations: [...(validation?.limitations ?? [])],
   };
   return { ...entry, inspection };
 }
@@ -650,26 +654,16 @@ function schemaPayload(
   schema: RmmvDatabaseTableSchema,
   engine: 'rpg-maker-mv' | 'rpg-maker-mz',
 ): NonNullable<ProjectManagedEntry['schema']> {
-  const mzOnlyFields = new Set([
-    'advanced', 'tileSize', 'faceSize', 'iconSize', 'battleSystem', 'itemCategories', 'titleCommandWindow',
-    'advanced.gameId', 'advanced.screenWidth', 'advanced.screenHeight',
-    'advanced.uiAreaWidth', 'advanced.uiAreaHeight', 'advanced.mainFontFilename',
-    'advanced.numberFontFilename', 'advanced.fallbackFonts', 'advanced.fontSize',
-    'advanced.picturesUpperLimit', 'advanced.screenScale', 'advanced.windowOpacity',
-    'optAutosave', 'optKeyItemsNumber', 'optSplashScreen', 'optMessageSkip',
-    'messageType', 'releaseByDamage',
-    'displayType', 'effectName', 'scale', 'speed', 'flashTimings', 'soundTimings',
-    'offsetX', 'offsetY', 'rotation', 'alignBottom',
-  ]);
+  const engineFields = rmmvDatabaseCoreFieldsForEngine(schema, engine);
   const coreFields = schema.group === 'System'
-    ? schema.coreFields.filter((field) => (
+    ? engineFields.filter((field) => (
       field.path !== 'terms'
       && !TYPE_LIST_KEYS.includes(field.path as typeof TYPE_LIST_KEYS[number])
     ))
-    : schema.coreFields;
+    : engineFields;
   const contextualFields = engine === 'rpg-maker-mz'
     ? coreFields.filter((field) => field.path !== 'advanced')
-    : coreFields.filter((field) => !mzOnlyFields.has(field.path));
+    : coreFields;
   return {
     group: schema.group,
     key: schema.key,

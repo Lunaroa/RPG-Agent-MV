@@ -178,6 +178,26 @@ describe("RMMV prospective database validation", () => {
     assert.ok(mv.issues.some((issue) => issue.code === "DB_USABLE_SCOPE"));
   });
 
+  test("preserves MZ speaker-name tails in MV event data with a compatibility warning", () => {
+    const commonEvent = createDefaultRmmvDatabaseEntry("CommonEvents", 1);
+    commonEvent.list = [
+      { code: 101, indent: 0, parameters: ["", 0, 0, 2, "Guide"] },
+      { code: 401, indent: 0, parameters: ["Welcome"] },
+      { code: 0, indent: 0, parameters: [] },
+    ];
+
+    const mv = validateRmmvDatabaseSnapshot({ commonEvents: [null, commonEvent] }, { engine: "rpg-maker-mv" });
+    assert.equal(mv.ok, true);
+    assert.ok(mv.issues.some((issue) => (
+      issue.code === "DB_MV_MZ_SHOW_TEXT_SPEAKER_NAME"
+      && issue.severity === "warning"
+      && issue.source.path === "commonEvents[1].list[0].parameters[4]"
+    )));
+
+    const mz = validateRmmvDatabaseSnapshot({ commonEvents: [null, commonEvent] }, { engine: "rpg-maker-mz" });
+    assert.equal(mz.issues.some((issue) => issue.code === "DB_MV_MZ_SHOW_TEXT_SPEAKER_NAME"), false);
+  });
+
   test("validates standard enemy action conditions and preserves unknown plugin conditions as warnings", () => {
     const snapshot = validSnapshot();
     const enemy = (snapshot.enemies as Array<Record<string, unknown> | null>)[1]!;
@@ -342,7 +362,7 @@ describe("RMMV prospective database validation", () => {
     assert.ok(paths.includes("system.attackMotions[0].weaponImageId"));
   });
 
-  test("accepts unused values on set traits, checks effect operands, and only warns for plugin codes", () => {
+  test("accepts unused trait and effect placeholders, checks used effect operands, and only warns for plugin codes", () => {
     const snapshot = validSnapshot();
     const state = (snapshot.states as Array<Record<string, unknown> | null>)[1]!;
     state.traits = [
@@ -354,14 +374,18 @@ describe("RMMV prospective database validation", () => {
     ];
     const item = (snapshot.items as Array<Record<string, unknown> | null>)[1]!;
     item.effects = [
-      { code: 43, dataId: 1, value1: 1, value2: 0 },
+      { code: 43, dataId: 1, value1: "legacy", value2: null },
+      { code: 33, dataId: 1, value1: { pluginOwned: true }, value2: "unused" },
+      { code: 13, dataId: 0, value1: 101, value2: "unused" },
       { code: 901, dataId: 999, value1: -999, value2: 999, pluginField: true },
     ];
 
     const result = validateRmmvDatabaseSnapshot(snapshot, { mapIds: [1] });
     assert.equal(result.ok, false);
     assert.equal(result.issues.some((issue) => issue.code === "DB_TRAIT_VALUE"), false);
-    assert.ok(result.issues.some((issue) => issue.code === "DB_EFFECT_VALUE" && issue.source.path === "items[1].effects[0].value1"));
+    assert.equal(result.issues.some((issue) => issue.source.path.startsWith("items[1].effects[0].value")), false);
+    assert.equal(result.issues.some((issue) => issue.source.path.startsWith("items[1].effects[1].value")), false);
+    assert.ok(result.issues.some((issue) => issue.code === "DB_EFFECT_VALUE" && issue.source.path === "items[1].effects[2].value1"));
     assert.ok(result.issues.some((issue) => issue.code === "DB_PLUGIN_TRAIT_CODE" && issue.severity === "warning"));
     assert.ok(result.issues.some((issue) => issue.code === "DB_PLUGIN_EFFECT_CODE" && issue.severity === "warning"));
   });

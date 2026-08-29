@@ -84,6 +84,33 @@ export interface RmmvDatabaseTableSchema {
   validate(value: unknown, engine?: RpgMakerEngine): RmmvDatabaseValidationResult;
 }
 
+const MZ_ONLY_DATABASE_FIELD_PATHS: Partial<Record<RmmvDatabaseGroup, ReadonlySet<string>>> = {
+  Skills: new Set(["messageType"]),
+  States: new Set(["messageType", "releaseByDamage"]),
+  Animations: new Set([
+    "displayType", "effectName", "scale", "speed", "flashTimings", "soundTimings",
+    "offsetX", "offsetY", "rotation", "alignBottom",
+  ]),
+  System: new Set([
+    "advanced", "tileSize", "faceSize", "iconSize", "battleSystem", "itemCategories", "titleCommandWindow",
+    "advanced.gameId", "advanced.screenWidth", "advanced.screenHeight",
+    "advanced.uiAreaWidth", "advanced.uiAreaHeight", "advanced.mainFontFilename",
+    "advanced.numberFontFilename", "advanced.fallbackFonts", "advanced.fontSize",
+    "advanced.picturesUpperLimit", "advanced.screenScale", "advanced.windowOpacity",
+    "optAutosave", "optKeyItemsNumber", "optSplashScreen", "optMessageSkip",
+  ]),
+};
+
+export function rmmvDatabaseCoreFieldsForEngine(
+  schema: Pick<RmmvDatabaseTableSchema, "group" | "coreFields">,
+  engine: RpgMakerEngine,
+): readonly RmmvDatabaseFieldSchema[] {
+  const mzOnlyFields = MZ_ONLY_DATABASE_FIELD_PATHS[schema.group];
+  return engine === "rpg-maker-mz" || !mzOnlyFields
+    ? schema.coreFields
+    : schema.coreFields.filter((field) => !mzOnlyFields.has(field.path));
+}
+
 interface RmmvDatabaseTableDefinition {
   group: RmmvDatabaseGroup;
   key: RmmvDatabaseTableKey;
@@ -410,7 +437,7 @@ const DATABASE_DEFINITIONS: readonly RmmvDatabaseTableDefinition[] = [
     integerField("battleSystem"),
     arrayField("itemCategories"),
     objectField("titleCommandWindow"),
-    stringField("advanced.gameId"),
+    integerField("advanced.gameId"),
     integerField("advanced.screenWidth"),
     integerField("advanced.screenHeight"),
     integerField("advanced.uiAreaWidth"),
@@ -640,7 +667,7 @@ function validateRecord(
   }
 
   const record = value as Record<string, unknown>;
-  for (const field of definition.coreFields) {
+  for (const field of rmmvDatabaseCoreFieldsForEngine(definition, engine)) {
     const actual = readPath(record, field.path);
     if (!actual.found) {
       if (field.required) {
@@ -1042,7 +1069,7 @@ function defaultMZSystem(): Record<string, unknown> {
   return {
     ...defaultSystem(),
     advanced: {
-      gameId: "",
+      gameId: 0,
       screenWidth: 816,
       screenHeight: 624,
       uiAreaWidth: 816,

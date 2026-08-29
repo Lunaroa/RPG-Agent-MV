@@ -235,6 +235,23 @@ export function validateEffectiveRmmvDatabaseState(
   return validateRmmvDatabaseSnapshot(loaded.snapshot, { maps: loaded.maps, engine: loaded.engine });
 }
 
+export function validateEffectiveRmmvDatabaseStagingTransition(
+  workflowRoot: string,
+  projectRoot: string,
+): RmmvDatabaseSemanticValidationResult {
+  const project = path.resolve(projectRoot);
+  const status = getProjectStagingStatus(workflowRoot, project);
+  const sourceOnlyRelativePaths = new Set(status.files.map((file) => file.relativePath));
+  const before = loadProjectInputs(workflowRoot, project, { sourceOnlyRelativePaths });
+  const after = loadProjectInputs(workflowRoot, project);
+  return validateRmmvDatabaseTransition(before.snapshot, after.snapshot, {
+    beforeMaps: before.maps,
+    maps: after.maps,
+    engine: after.engine,
+    excludeUnchangedWarnings: true,
+  });
+}
+
 export function captureEffectiveRmmvDatabaseValidationState(
   workflowRoot: string,
   project: string,

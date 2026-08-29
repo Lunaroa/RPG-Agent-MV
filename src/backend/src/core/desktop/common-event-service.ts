@@ -3,6 +3,8 @@ import {
   validateEventCommandList,
   type RawEventCommand,
 } from '../rmmv/event-command-registry.ts';
+import { validateRmmvDatabaseEntryTransition } from '../rmmv/database-entry-transition.ts';
+import { getRmmvDatabaseSchema } from '../rmmv/database-schema.ts';
 import {
   findEffectiveCommonEventReferences,
   type CommonEventReference,
@@ -112,13 +114,15 @@ export function createCommonEvent(
   assertCommonEventIdWithinLimit(id);
   if (isCommonEventRecord(commonEvents[id])) throw new Error(commonEventAlreadyExists(id));
   ensureArrayIndex(commonEvents, id);
-  commonEvents[id] = normalizeCommonEvent(workflowRoot, project, {
+  const next = normalizeCommonEvent(workflowRoot, project, {
     id,
     name: String(request.name || 'New Common Event'),
     trigger: Number(request.trigger || 0),
     switchId: request.switchId === undefined ? 0 : Number(request.switchId),
     list: request.list,
   });
+  validateCommonEventCommandList(project, next.list);
+  commonEvents[id] = next;
   const staging = writeStagedProjectJson(workflowRoot, project, relativePath, commonEvents);
   return { entry: getCommonEvent(workflowRoot, project, { id }), staging };
 }
@@ -131,11 +135,24 @@ export function updateCommonEvent(
   const id = validId(request.id);
   const relativePath = dataRelativePath(project, COMMON_EVENT_FILE);
   const commonEvents = readCommonEvents(workflowRoot, project);
-  if (!isCommonEventRecord(commonEvents[id])) throw new Error(commonEventMissing(id));
+  const current = commonEvents[id];
+  if (!isCommonEventRecord(current)) throw new Error(commonEventMissing(id));
   if (!request.value || typeof request.value !== 'object' || Array.isArray(request.value)) {
     throw new Error(commonEventInvalidData());
   }
-  commonEvents[id] = normalizeCommonEvent(workflowRoot, project, { ...(request.value as Record<string, unknown>), id });
+  const next = normalizeCommonEvent(workflowRoot, project, { ...(request.value as Record<string, unknown>), id });
+  const engine = inspectRmmvProject(project).engine;
+  const validation = validateRmmvDatabaseEntryTransition(
+    getRmmvDatabaseSchema('CommonEvents'),
+    current,
+    next,
+    engine,
+  );
+  if (!validation.ok) {
+    const details = validation.issues.map((issue) => `${issue.path} ${issue.message}`).join('; ');
+    throw new Error(`${commonEventInvalidData()}: ${details}`);
+  }
+  commonEvents[id] = next;
   const staging = writeStagedProjectJson(workflowRoot, project, relativePath, commonEvents);
   return { entry: getCommonEvent(workflowRoot, project, { id }), staging };
 }
@@ -191,11 +208,13 @@ export function duplicateCommonEvent(
   assertCommonEventIdWithinLimit(targetId);
   if (isCommonEventRecord(commonEvents[targetId])) throw new Error(commonEventAlreadyExists(targetId));
   ensureArrayIndex(commonEvents, targetId);
-  commonEvents[targetId] = normalizeCommonEvent(workflowRoot, project, {
+  const next = normalizeCommonEvent(workflowRoot, project, {
     ...clone(source),
     id: targetId,
     name: request.name || `${source.name || `Common Event ${source.id}`} Copy`,
   });
+  validateCommonEventCommandList(project, next.list);
+  commonEvents[targetId] = next;
   const relativePath = dataRelativePath(project, COMMON_EVENT_FILE);
   const staging = writeStagedProjectJson(workflowRoot, project, relativePath, commonEvents);
   return { entry: getCommonEvent(workflowRoot, project, { id: targetId }), staging };
@@ -282,7 +301,7 @@ function normalizeCommonEvent(
   const name = String(value.name || '');
   const trigger = validateTrigger(Number(value.trigger ?? 0));
   const switchId = validateTriggerSwitch(workflowRoot, project, trigger, Number(value.switchId ?? 0));
-  const list = normalizeCommandList(project, value.list);
+  const list = normalizeCommandList(value.list);
   return {
     ...clone(value),
     id,
@@ -293,14 +312,17 @@ function normalizeCommonEvent(
   };
 }
 
-function normalizeCommandList(project: string, value: unknown): RawEventCommand[] {
+function normalizeCommandList(value: unknown): RawEventCommand[] {
   const list = Array.isArray(value) ? clone(value) : [{ code: 0, indent: 0, parameters: [] }];
   if (!list.length) list.push({ code: 0, indent: 0, parameters: [] });
   if (!isRawCommand(list[list.length - 1]) || Number((list[list.length - 1] as RawEventCommand).code) !== 0) {
     list.push({ code: 0, indent: 0, parameters: [] });
   }
-  validateEventCommandList(list, 'commonEvent.list', inspectRmmvProject(project).engine);
   return list as RawEventCommand[];
+}
+
+function validateCommonEventCommandList(project: string, list: RawEventCommand[]): void {
+  validateEventCommandList(list, 'commonEvent.list', inspectRmmvProject(project).engine);
 }
 
 function validateTrigger(value: number): number {

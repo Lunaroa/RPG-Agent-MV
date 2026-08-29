@@ -156,7 +156,7 @@ const PAGE_2: { group: string; items: Def[] }[] = [
     { code: 201, kind: 'transfer', label: '场所移动', fields: transferPlayerFields() },
     { code: 202, kind: 'vehicleLocation', label: '设置交通工具位置', fields: vehicleLocationFields() },
     { code: 203, kind: 'eventLocation', label: '设置事件位置', fields: eventLocationFields() },
-    { code: 204, kind: 'scrollMap', label: '滚动地图', fields: [{ label: '方向', path: [0], kind: 'select', options: direction.filter(([value]) => value !== 0) }, { label: '距离', path: [1], kind: 'number', min: 1 }, { label: '速度', path: [2], kind: 'select', options: scrollSpeeds }, { label: '等待结束', path: [3], kind: 'boolean' }] },
+    { code: 204, kind: 'scrollMap', label: '滚动地图', fields: [{ label: '方向', path: [0], kind: 'select', options: direction.filter(([value]) => value !== 0) }, { label: '距离', path: [1], kind: 'number', min: 1 }, { label: '速度', path: [2], kind: 'select', options: scrollSpeeds }] },
     { code: 205, kind: 'moveRoute', label: '设置移动路线', fields: [{ label: '目标 ID', path: [0], kind: 'eventTarget', eventTarget: { allowThisEvent: true, allowPlayer: true, allowMapEvents: true } }] },
     { code: 206, kind: 'vehicle', label: '上下交通工具', fields: [] },
   ] },
@@ -448,7 +448,7 @@ export function commandTemplate(kind: string, mapId = 1, engine: RpgMakerEngine 
     311: [0, 1, 0, 0, 0, false], 312: [0, 1, 0, 0, 0], 326: [0, 1, 0, 0, 0], 313: [0, 1, 0, 1], 314: [0, 1],
     315: [0, 1, 0, 0, 0, false], 316: [0, 1, 0, 0, 0, false], 317: [0, 1, 0, 0, 0, 0], 318: [0, 1, 0, 1],
     319: [1, 1, 0], 320: [1, ''], 321: [1, 1, false], 324: [1, ''], 325: [1, ''],
-    201: [0, mapId, 0, 0, 2, 0], 202: [0, 0, mapId, 0, 0], 203: [0, 0, 0, 0, 0], 204: [2, 1, 4, false], 206: [],
+    201: [0, mapId, 0, 0, 2, 0], 202: [0, 0, mapId, 0, 0], 203: [0, 0, 0, 0, 0], 204: [2, 1, 4, ...(engine === 'rpg-maker-mz' ? [false] : [])], 206: [],
     211: [0], 216: [0], 217: [], 212: [0, 1, true], 213: [0, 1, true], 214: [],
     230: [60], 231: [1, '', 0, 0, 0, 0, 100, 100, 255, 0], 232: [1, 0, 0, 0, 0, 0, 100, 100, 255, 0, 60, true, ...(engine === 'rpg-maker-mz' ? [0] : [])],
     233: [1, 0], 234: [1, [0, 0, 0, 0], 60, true], 235: [1], 221: [], 222: [], 223: [[0, 0, 0, 0], 60, true],
@@ -502,6 +502,12 @@ function toMZCommandDefinition(definition: CommandDefinition): CommandDefinition
     return withFields(definition, [
       { label: '变量', path: [0], kind: 'database', catalog: 'variables' },
       { label: '物品类型', path: [1], kind: 'select', options: [[1, '普通物品'], [2, '重要物品'], [3, '隐藏物品 A'], [4, '隐藏物品 B']] },
+    ]);
+  }
+  if (definition.code === 204) {
+    return withFields(definition, [
+      ...definition.fields,
+      { label: '等待结束', path: [3], kind: 'boolean' },
     ]);
   }
   if (definition.code === 232) {

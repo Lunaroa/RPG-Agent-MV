@@ -84,6 +84,14 @@ describe('event command form coverage', () => {
   });
 
   test('uses MZ 1.10 parameter forms and structured plugin commands', () => {
+    const [mvScrollMap] = commandTemplate('scrollMap', 1, 'rpg-maker-mv');
+    assert.deepEqual(mvScrollMap?.parameters, [2, 1, 4]);
+    assert.equal(commandDefinition(204, 'rpg-maker-mv')?.fields.length, 3);
+
+    const [mzScrollMap] = commandTemplate('scrollMap', 1, 'rpg-maker-mz');
+    assert.deepEqual(mzScrollMap?.parameters, [2, 1, 4, false]);
+    assert.equal(commandDefinition(204, 'rpg-maker-mz')?.fields[3]?.kind, 'boolean');
+
     const [text] = commandTemplate('text', 1, 'rpg-maker-mz');
     assert.deepEqual(text?.parameters, ['', 0, 0, 2, '']);
 

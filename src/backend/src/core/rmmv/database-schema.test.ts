@@ -125,7 +125,26 @@ describe("RMMV database schema registry", () => {
     assert.equal(state.releaseByDamage, false);
     assert.equal(system.battleSystem, 0);
     assert.deepEqual(system.itemCategories, [true, true, true, true]);
+    assert.equal((system.advanced as Record<string, unknown>).gameId, 0);
     assert.equal((system.advanced as Record<string, unknown>).screenWidth, 816);
+  });
+
+  test("validates engine-specific System fields without treating MZ extensions as MV core data", () => {
+    const mvSystem = {
+      ...createDefaultRmmvDatabaseEntry("System"),
+      advanced: [],
+      itemCategories: { pluginOwned: true },
+    };
+    assert.equal(validateRmmvDatabaseEntry("System", mvSystem, "rpg-maker-mv").ok, true);
+
+    const mzSystem = createDefaultRmmvDatabaseEntry("System", undefined, "rpg-maker-mz");
+    (mzSystem.advanced as Record<string, unknown>).gameId = 12803481;
+    assert.equal(validateRmmvDatabaseEntry("System", mzSystem, "rpg-maker-mz").ok, true);
+
+    (mzSystem.advanced as Record<string, unknown>).gameId = "12803481";
+    const invalid = validateRmmvDatabaseEntry("System", mzSystem, "rpg-maker-mz");
+    assert.equal(invalid.ok, false);
+    assert.ok(invalid.issues.some((issue) => issue.path === "advanced.gameId"));
   });
 
   test("declares the conditional State and Switch targets used by enemy actions", () => {

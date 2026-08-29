@@ -146,6 +146,37 @@ describe('common event service', { concurrency: false }, () => {
     assert.equal((readJson(commonEventsFile) as RmmvCommonEventTest[])[1].name, 'Intro');
   });
 
+  test('preserves unchanged legacy command issues while rejecting changes to the invalid list', () => {
+    writeJson(commonEventsFile, [
+      null,
+      {
+        id: 1,
+        name: 'Legacy Event',
+        trigger: 0,
+        switchId: 0,
+        list: [
+          { code: 101, indent: 0, parameters: ['', 0, 0, 2, 'Guide'] },
+          { code: 401, indent: 0, parameters: ['Welcome'] },
+          { code: 213, indent: 0, parameters: [0, 11, true] },
+          { code: 0, indent: 0, parameters: [] },
+        ],
+      },
+    ]);
+
+    const renamed = renameCommonEvent(root, project, { id: 1, name: 'Legacy Event Updated' });
+    const value = renamed.entry.value as RmmvCommonEventTest;
+    assert.equal(value.name, 'Legacy Event Updated');
+    assert.deepEqual(value.list[0]!.parameters, ['', 0, 0, 2, 'Guide']);
+    assert.equal(value.list[2]!.parameters[1], 11);
+
+    const changedList = structuredClone(value.list);
+    changedList[2]!.parameters[1] = 12;
+    assert.throws(
+      () => withTestLanguage(() => editCommonEventCommandList(root, project, { id: 1, list: changedList })),
+      /balloonId.*<= 10/,
+    );
+  });
+
   test('duplicates to the next empty slot', () => {
     const duplicated = duplicateCommonEvent(root, project, { id: 1 });
     assert.equal(duplicated.entry.id, 2);

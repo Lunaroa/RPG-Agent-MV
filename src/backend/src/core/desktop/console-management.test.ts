@@ -9,6 +9,7 @@ import { closeDatabase } from '../db/pool.ts';
 import { createDefaultRmmvDatabaseEntry } from '../rmmv/database-schema.ts';
 import { readJson, writeJson } from '../rmmv/json.ts';
 import { deleteProjectAssets, getAssetDetail, renameAsset } from './asset-management-service.ts';
+import { createCommonEvent } from './common-event-service.ts';
 import {
   buildProjectManagementScan,
   createProjectManagedEntry,
@@ -293,6 +294,68 @@ describe('console management services', { concurrency: false }, () => {
     assert.equal(secondRevert.entry, undefined);
     assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as unknown[])[created.id], null);
     assert.equal(getProjectStagingStatus(root, project).staged, false);
+  });
+
+  test('does not attribute unchanged project issues to a newly staged common event', () => {
+    const dataDir = path.join(project, 'www', 'data');
+    const legacyItem = createDefaultRmmvDatabaseEntry('Items', 1);
+    legacyItem.price = -1;
+    legacyItem.effects = [{ code: 901, dataId: 0, value1: 0, value2: 0 }];
+    writeJson(path.join(dataDir, 'Items.json'), [null, legacyItem]);
+    writeJson(path.join(dataDir, 'CommonEvents.json'), [
+      null,
+      createDefaultRmmvDatabaseEntry('CommonEvents', 1),
+    ]);
+
+    const created = createCommonEvent(root, project, { name: 'New Common Event' });
+    const staged = getProjectManagedEntry(root, project, { kind: 'commonEvent', id: created.entry.id });
+    assert.equal(staged.inspection?.changed, true);
+    assert.equal(staged.inspection?.issues.some((issue) => issue.path === 'items[1].price'), false);
+    assert.equal(staged.inspection?.issues.some((issue) => issue.code === 'DB_PLUGIN_EFFECT_CODE'), false);
+    assert.equal(staged.inspection?.issues.some((issue) => issue.severity === 'error'), false);
+
+    const unchanged = getProjectManagedEntry(root, project, { kind: 'commonEvent', id: 1 });
+    assert.equal(unchanged.inspection?.staged, true);
+    assert.equal(unchanged.inspection?.changed, false);
+    assert.deepEqual(unchanged.inspection?.issues, []);
+    assert.equal(preflightProjectManagedStagingApply(root, project).ok, true);
+  });
+
+  test('preserves existing event-list issues during unrelated troop edits and blocks changed invalid commands', () => {
+    const troopPath = path.join(project, 'www', 'data', 'Troops.json');
+    const troop = createDefaultRmmvDatabaseEntry('Troops', 1);
+    (troop.pages as Record<string, unknown>[])[0].list = [
+      { code: 101, indent: 0, parameters: ['', 0, 0, 2, 'Guide'] },
+      { code: 401, indent: 0, parameters: ['Welcome'] },
+      { code: 213, indent: 0, parameters: [0, 11, true] },
+      { code: 0, indent: 0, parameters: [] },
+    ];
+    writeJson(troopPath, [null, troop]);
+
+    const current = getProjectManagedEntry(root, project, { kind: 'database', group: 'Troops', id: 1 });
+    const renamed = updateProjectManagedEntry(root, project, {
+      kind: 'database',
+      group: 'Troops',
+      id: 1,
+      value: { ...(current.value as Record<string, unknown>), name: 'Updated Troop' },
+    });
+    assert.equal((renamed.value as Record<string, unknown>).name, 'Updated Troop');
+    const preserved = (renamed.value as Record<string, unknown>).pages as Array<{ list: Array<{ parameters: unknown[] }> }>;
+    assert.deepEqual(preserved[0]!.list[0]!.parameters, ['', 0, 0, 2, 'Guide']);
+    assert.equal(renamed.inspection?.issues.some((issue) => issue.severity === 'error'), false);
+
+    const changed = structuredClone(renamed.value) as Record<string, unknown>;
+    const changedPages = changed.pages as Array<{ list: Array<{ parameters: unknown[] }> }>;
+    changedPages[0]!.list[2]!.parameters[1] = 12;
+    assert.throws(
+      () => withTestLanguage(() => updateProjectManagedEntry(root, project, {
+        kind: 'database',
+        group: 'Troops',
+        id: 1,
+        value: changed,
+      })),
+      /balloonId.*<= 10/,
+    );
   });
 
   test('reverts only the selected System-backed document group', () => {

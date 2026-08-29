@@ -70,7 +70,15 @@ const numberParam = (index: number, name: string, min?: number, max?: number): E
   ...(max === undefined ? {} : { max })
 });
 const string = (index: number, name: string): EventCommandParameterSchema => ({ index, name, type: "string" });
+const optionalString = (index: number, name: string): EventCommandParameterSchema => ({
+  ...string(index, name),
+  optional: true,
+});
 const boolean = (index: number, name: string): EventCommandParameterSchema => ({ index, name, type: "boolean" });
+const optionalBoolean = (index: number, name: string): EventCommandParameterSchema => ({
+  ...boolean(index, name),
+  optional: true,
+});
 const any = (index: number, name: string): EventCommandParameterSchema => ({ index, name, type: "any" });
 const optionalAny = (index: number, name: string): EventCommandParameterSchema => ({ index, name, type: "any", optional: true });
 const audio = (index: number, name: string): EventCommandParameterSchema => ({ index, name, type: "audio" });
@@ -183,7 +191,7 @@ export const STANDARD_EVENT_COMMAND_CODES: readonly number[] = Object.freeze([
 ]);
 
 export const STANDARD_EVENT_COMMAND_DEFINITIONS: readonly EventCommandDefinition[] = Object.freeze([
-  command(101, "Show Text", "Message", [string(0, "faceName"), integer(1, "faceIndex", 0, 7), choice(2, "background", [0, 1, 2]), choice(3, "positionType", [0, 1, 2])], ["", 0, 0, 2], { block: multiline([401]) }),
+  command(101, "Show Text", "Message", [string(0, "faceName"), integer(1, "faceIndex", 0, 7), choice(2, "background", [0, 1, 2]), choice(3, "positionType", [0, 1, 2]), optionalString(4, "speakerName")], ["", 0, 0, 2], { block: multiline([401]) }),
   command(102, "Show Choices", "Message", [stringArray(0, "choices"), integer(1, "cancelType", -2), integer(2, "defaultType", -1), choice(3, "positionType", [0, 1, 2]), choice(4, "background", [0, 1, 2])], [["Yes", "No"], 0, 0, 2, 0], { parameterMode: "min", block: structured([], [402, 403], 404) }),
   command(103, "Input Number", "Message", [integer(0, "variableId", 1), integer(1, "maxDigits", 1, 8)], [1, 1]),
   command(104, "Select Item", "Message", [integer(0, "variableId", 1), choice(1, "itemType", [1, 2, 3, 4])], [1, 2]),
@@ -208,8 +216,8 @@ export const STANDARD_EVENT_COMMAND_DEFINITIONS: readonly EventCommandDefinition
 
   command(125, "Change Gold", "Party", operandParameters(), [0, 0, 50]),
   command(126, "Change Items", "Party", [integer(0, "itemId", 1), ...operandParameters(1)], [1, 0, 0, 1]),
-  command(127, "Change Weapons", "Party", [integer(0, "weaponId", 1), ...operandParameters(1), boolean(4, "includeEquipment")], [1, 0, 0, 1, false]),
-  command(128, "Change Armors", "Party", [integer(0, "armorId", 1), ...operandParameters(1), boolean(4, "includeEquipment")], [1, 0, 0, 1, false]),
+  command(127, "Change Weapons", "Party", [integer(0, "weaponId", 1), ...operandParameters(1), optionalBoolean(4, "includeEquipment")], [1, 0, 0, 1, false]),
+  command(128, "Change Armors", "Party", [integer(0, "armorId", 1), ...operandParameters(1), optionalBoolean(4, "includeEquipment")], [1, 0, 0, 1, false]),
   command(129, "Change Party Member", "Party", [integer(0, "actorId", 1), choice(1, "operation", INCREASE_DECREASE), boolean(2, "initialize")], [1, 0, false]),
 
   command(311, "Change HP", "Actor", [...actorTargetParameters(), ...operandParameters(2), boolean(5, "allowDeath")], [0, 1, 0, 0, 0, false]),
@@ -230,7 +238,7 @@ export const STANDARD_EVENT_COMMAND_DEFINITIONS: readonly EventCommandDefinition
   command(201, "Transfer Player", "Movement", [choice(0, "locationType", LOCATION_OPERAND), integer(1, "mapIdOrVariableId", 0), integer(2, "xOrVariableId", 0), integer(3, "yOrVariableId", 0), choice(4, "direction", DIRECTION), choice(5, "fadeType", [0, 1, 2])], [0, 1, 0, 0, 2, 0]),
   command(202, "Set Vehicle Location", "Movement", [choice(0, "vehicleType", VEHICLE), choice(1, "locationType", LOCATION_OPERAND), integer(2, "mapIdOrVariableId", 0), integer(3, "xOrVariableId", 0), integer(4, "yOrVariableId", 0)], [0, 0, 1, 0, 0]),
   command(203, "Set Event Location", "Movement", [integer(0, "characterId", -1), choice(1, "locationType", [0, 1, 2]), integer(2, "xOrVariableIdOrCharacterId", 0), integer(3, "yOrVariableId", 0), choice(4, "direction", DIRECTION)], [0, 0, 0, 0, 0], { parameterMode: "min" }),
-  command(204, "Scroll Map", "Movement", [choice(0, "direction", [2, 4, 6, 8]), integer(1, "distance", 1), integer(2, "speed", 1, 6), boolean(3, "wait")], [2, 1, 4, false]),
+  command(204, "Scroll Map", "Movement", [choice(0, "direction", [2, 4, 6, 8]), integer(1, "distance", 1), integer(2, "speed", 1, 6), optionalBoolean(3, "wait")], [2, 1, 4]),
   command(205, "Set Movement Route", "Movement", [integer(0, "characterId", -1), moveRoute(1, "route")], [0, { list: [{ code: 0, parameters: [] }], repeat: true, skippable: false, wait: false }], { block: multiline([505]) }),
   command(206, "Get on/off Vehicle", "Movement"),
 
@@ -336,6 +344,9 @@ const MZ_STANDARD_OVERRIDES = new Map<number, EventCommandDefinition>([
     string(4, "speakerName")
   ], ["", 0, 0, 2, ""], { block: multiline([401]) })],
   [104, command(104, "Select Item", "Message", [integer(0, "variableId", 1), choice(1, "itemType", [1, 2, 3, 4])], [1, 2])],
+  [127, command(127, "Change Weapons", "Party", [integer(0, "weaponId", 1), ...operandParameters(1), boolean(4, "includeEquipment")], [1, 0, 0, 1, false])],
+  [128, command(128, "Change Armors", "Party", [integer(0, "armorId", 1), ...operandParameters(1), boolean(4, "includeEquipment")], [1, 0, 0, 1, false])],
+  [204, command(204, "Scroll Map", "Movement", [choice(0, "direction", [2, 4, 6, 8]), integer(1, "distance", 1), integer(2, "speed", 1, 6), boolean(3, "wait")], [2, 1, 4, false])],
   [232, command(232, "Move Picture", "Picture", [
     ...picturePlacementParameters(false),
     integer(10, "duration", 0),
@@ -619,14 +630,21 @@ export function validateEventCommandParameters(
   label = `eventCommand:${definition.code}`,
   engine: RpgMakerEngine = "rpg-maker-mv",
 ): void {
-  const expectedLength = definition.parameters.length
-    ? Math.max(...definition.parameters.filter((parameter) => !parameter.optional).map((parameter) => parameter.index)) + 1
+  const requiredParameters = definition.parameters.filter((parameter) => !parameter.optional);
+  const minimumLength = requiredParameters.length
+    ? Math.max(...requiredParameters.map((parameter) => parameter.index)) + 1
     : 0;
-  if (definition.parameterMode === "exact" && parameters.length !== expectedLength) {
-    throw new Error(`${label}.parameters for code ${definition.code} must have ${expectedLength} value(s); got ${parameters.length}`);
+  const maximumLength = definition.parameters.length
+    ? Math.max(...definition.parameters.map((parameter) => parameter.index)) + 1
+    : 0;
+  if (definition.parameterMode === "exact" && (parameters.length < minimumLength || parameters.length > maximumLength)) {
+    const expected = minimumLength === maximumLength
+      ? String(minimumLength)
+      : `${minimumLength} or ${maximumLength}`;
+    throw new Error(`${label}.parameters for code ${definition.code} must have ${expected} value(s); got ${parameters.length}`);
   }
-  if (definition.parameterMode === "min" && parameters.length < expectedLength) {
-    throw new Error(`${label}.parameters for code ${definition.code} must have at least ${expectedLength} value(s); got ${parameters.length}`);
+  if (definition.parameterMode === "min" && parameters.length < minimumLength) {
+    throw new Error(`${label}.parameters for code ${definition.code} must have at least ${minimumLength} value(s); got ${parameters.length}`);
   }
   for (const schema of definition.parameters) {
     if (schema.index >= parameters.length) {

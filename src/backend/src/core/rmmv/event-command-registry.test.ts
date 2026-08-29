@@ -83,6 +83,41 @@ describe("RPG Maker MV event command registry", () => {
     assert.doesNotThrow(() => validateEventCommandBasic({ code: 655, indent: 0, parameters: ["console.log('ok')"] }));
   });
 
+  test("preserves an MZ speaker-name tail on MV Show Text commands", () => {
+    assert.deepEqual(defaultEventCommandParameters(101, "rpg-maker-mv"), ["", 0, 0, 2]);
+    assert.doesNotThrow(() => validateEventCommandBasic({
+      code: 101,
+      indent: 0,
+      parameters: ["", 0, 0, 2, "Guide"],
+    }, "eventCommand", "rpg-maker-mv"));
+    assert.throws(
+      () => validateEventCommandBasic({ code: 101, indent: 0, parameters: ["", 0, 0, 2, 7] }, "eventCommand", "rpg-maker-mv"),
+      /speakerName.*string/,
+    );
+    assert.throws(
+      () => validateEventCommandBasic({ code: 101, indent: 0, parameters: ["", 0, 0, 2, "Guide", "extra"] }, "eventCommand", "rpg-maker-mv"),
+      /code 101 must have 4 or 5 value/,
+    );
+  });
+
+  test("accepts MV scroll-map and legacy equipment-change parameter shapes", () => {
+    assert.doesNotThrow(() => validateEventCommandBasic({ code: 204, indent: 0, parameters: [2, 10, 4] }));
+    // Legacy 4-parameter shape (with wait) written by older tool versions stays valid.
+    assert.doesNotThrow(() => validateEventCommandBasic({ code: 204, indent: 0, parameters: [2, 10, 4, false] }));
+    assert.throws(
+      () => validateEventCommandBasic({ code: 204, indent: 0, parameters: [2, 10, 4, false, "extra"] }),
+      /code 204 must have 3 or 4 value/,
+    );
+    for (const code of [127, 128]) {
+      assert.doesNotThrow(() => validateEventCommandBasic({ code, indent: 0, parameters: [1, 0, 0, 1] }));
+      assert.doesNotThrow(() => validateEventCommandBasic({ code, indent: 0, parameters: [1, 0, 0, 1, false] }));
+      assert.throws(
+        () => validateEventCommandBasic({ code, indent: 0, parameters: [1, 0, 0, 1, false, "extra"] }),
+        new RegExp(`code ${code} must have 4 or 5 value`),
+      );
+    }
+  });
+
   test("validates real conditional, timer, and actor-target parameter variants", () => {
     assert.doesNotThrow(() => validateEventCommandBasic({ code: 111, indent: 0, parameters: [8, 1] }));
     assert.doesNotThrow(() => validateEventCommandBasic({ code: 111, indent: 0, parameters: [12, "true"] }));
@@ -218,6 +253,17 @@ describe("RPG Maker MZ event command registry", () => {
     assert.deepEqual(defaultEventCommandParameters(104, "rpg-maker-mz"), [1, 2]);
     assert.deepEqual(defaultEventCommandParameters(232, "rpg-maker-mz"), [1, 0, 0, 0, 0, 0, 100, 100, 255, 0, 60, true, 0]);
     assert.doesNotThrow(() => validateEventCommandBasic({ code: 104, indent: 0, parameters: [1, 4] }, "eventCommand", "rpg-maker-mz"));
+    assert.doesNotThrow(() => validateEventCommandBasic({ code: 204, indent: 0, parameters: [2, 10, 4, false] }, "eventCommand", "rpg-maker-mz"));
+    assert.throws(
+      () => validateEventCommandBasic({ code: 204, indent: 0, parameters: [2, 10, 4] }, "eventCommand", "rpg-maker-mz"),
+      /code 204 must have 4 value/,
+    );
+    for (const code of [127, 128]) {
+      assert.throws(
+        () => validateEventCommandBasic({ code, indent: 0, parameters: [1, 0, 0, 1] }, "eventCommand", "rpg-maker-mz"),
+        new RegExp(`code ${code} must have 5 value`),
+      );
+    }
     assert.doesNotThrow(() => validateEventCommandBasic({ code: 101, indent: 0, parameters: ["", 12, 0, 2, ""] }, "eventCommand", "rpg-maker-mz"));
     assert.throws(
       () => validateEventCommandBasic({ code: 104, indent: 0, parameters: [1, 0] }, "eventCommand", "rpg-maker-mz"),

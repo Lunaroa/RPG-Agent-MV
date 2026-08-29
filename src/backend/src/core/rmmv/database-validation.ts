@@ -58,6 +58,7 @@ export interface RmmvDatabaseValidationOptions {
 
 export interface RmmvDatabaseTransitionValidationOptions extends RmmvDatabaseValidationOptions {
   beforeMaps?: readonly RmmvDatabaseMapDocument[];
+  excludeUnchangedWarnings?: boolean;
 }
 
 export interface RmmvDatabaseMapDocument {
@@ -106,6 +107,7 @@ export function validateRmmvDatabaseTransition(
     after,
     beforeOptions.maps ?? [],
     afterOptions.maps ?? [],
+    options.excludeUnchangedWarnings === true,
   );
 
   for (const table of ARRAY_TABLE_KEYS) {
@@ -704,7 +706,7 @@ class SnapshotValidator {
         this.fixedRange("DB_MZ_SCREEN_SIZE", "system", undefined, "system.advanced.screenHeight", advanced.screenHeight, 1, 16384);
         this.fixedRange("DB_MZ_UI_AREA_SIZE", "system", undefined, "system.advanced.uiAreaWidth", advanced.uiAreaWidth, 1, 16384);
         this.fixedRange("DB_MZ_UI_AREA_SIZE", "system", undefined, "system.advanced.uiAreaHeight", advanced.uiAreaHeight, 1, 16384);
-        for (const field of ["gameId", "mainFontFilename", "numberFontFilename", "fallbackFonts"] as const) {
+        for (const field of ["mainFontFilename", "numberFontFilename", "fallbackFonts"] as const) {
           if (advanced[field] !== undefined && typeof advanced[field] !== "string") {
             this.add("DB_MZ_SYSTEM_TEXT", "system", `system.advanced.${field}`, `MZ advanced.${field} must be a string.`);
           }
@@ -931,9 +933,37 @@ class SnapshotValidator {
       );
       return;
     }
+    this.warnForMvShowTextSpeakerNames(sourceTable, sourceId, value, path);
     for (const reference of references) {
       this.validateEventCommandReference(sourceTable, sourceId, reference);
     }
+  }
+
+  private warnForMvShowTextSpeakerNames(
+    sourceTable: RmmvDatabaseIssueTable,
+    sourceId: number | undefined,
+    value: unknown,
+    path: string,
+  ): void {
+    if (this.#engine !== "rpg-maker-mv" || !Array.isArray(value)) return;
+    const compatibleCommands = value
+      .map((command, index) => ({ command, index }))
+      .filter(({ command }) => (
+        isRecord(command)
+        && command.code === 101
+        && Array.isArray(command.parameters)
+        && command.parameters.length === 5
+      ));
+    const first = compatibleCommands[0];
+    if (!first) return;
+    this.add(
+      "DB_MV_MZ_SHOW_TEXT_SPEAKER_NAME",
+      sourceTable,
+      `${path}[${first.index}].parameters[4]`,
+      `${compatibleCommands.length} Show Text command(s) keep an MZ speakerName parameter for compatibility; RPG Agent MV preserves the value, but the RPG Maker MV runtime does not display it.`,
+      sourceId,
+      "warning",
+    );
   }
 
   private validateEventCommandReference(
@@ -1152,12 +1182,6 @@ class SnapshotValidator {
         this.fixedRange("DB_EFFECT_VALUE", table, id, `${itemPath}.value1`, effect.value1, 1, 1000);
       } else if (code === 42) {
         this.fixedRange("DB_EFFECT_VALUE", table, id, `${itemPath}.value1`, effect.value1, 1, 1000);
-      }
-      if (![11, 12].includes(code)) {
-        this.fixedRange("DB_EFFECT_VALUE", table, id, `${itemPath}.value2`, effect.value2, 0, 0);
-      }
-      if ([33, 34, 41, 43, 44].includes(code)) {
-        this.fixedRange("DB_EFFECT_VALUE", table, id, `${itemPath}.value1`, effect.value1, 0, 0);
       }
     });
   }
@@ -1652,20 +1676,21 @@ function prospectiveIssues(
   afterSnapshot: RmmvDatabaseSnapshot,
   beforeMaps: readonly RmmvDatabaseMapDocument[],
   afterMaps: readonly RmmvDatabaseMapDocument[],
+  excludeUnchangedWarnings: boolean,
 ): RmmvDatabaseSemanticIssue[] {
-  const existingErrors = new Map<string, unknown[]>();
+  const existingIssues = new Map<string, unknown[]>();
   for (const issue of before) {
-    if (issue.severity !== "error") continue;
+    if (issue.severity !== "error" && !excludeUnchangedWarnings) continue;
     const identity = semanticIssueIdentity(issue);
-    const values = existingErrors.get(identity) ?? [];
+    const values = existingIssues.get(identity) ?? [];
     values.push(semanticIssueValue(beforeSnapshot, beforeMaps, issue));
-    existingErrors.set(identity, values);
+    existingIssues.set(identity, values);
   }
 
   return after.filter((issue) => {
-    if (issue.severity !== "error") return true;
+    if (issue.severity !== "error" && !excludeUnchangedWarnings) return true;
     const identity = semanticIssueIdentity(issue);
-    const existingValues = existingErrors.get(identity);
+    const existingValues = existingIssues.get(identity);
     if (!existingValues?.length) return true;
     const afterValue = semanticIssueValue(afterSnapshot, afterMaps, issue);
     const matchingIndex = existingValues.findIndex((beforeValue) => isDeepStrictEqual(beforeValue, afterValue));

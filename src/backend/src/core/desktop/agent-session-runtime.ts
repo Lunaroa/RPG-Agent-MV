@@ -1050,7 +1050,7 @@ export class AgentSessionRuntime {
       agentExecutionSettings: await this.getAgentExecutionSettingsForDispatch(),
       intent: session.intent,
       productLanguage: session.productLanguage,
-      project: session.project,
+      project: session.project || undefined,
       projectBinding: session.projectBinding,
       projectPromptKind: parent
         ? (sameAgentProjectIdentity(parent.projectBinding, session.projectBinding) ? "none" : "changed")

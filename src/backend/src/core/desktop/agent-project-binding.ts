@@ -89,7 +89,7 @@ export function resolveAgentProjectBinding(
     runnableStructure: manifest.runnableStructure,
     runtimeAvailable: Boolean(runtime),
     runtimeSource: runtime?.source || null,
-    runtimeReason: runtime ? null : runtimeResolution?.selectionRequired?.reason || "missing",
+    runtimeReason: runtime ? null : runtimeResolution?.selectionRequired?.reason === "invalid" ? "invalid" : "missing",
     ...(runtime ? { runtime } : {}),
   };
 }

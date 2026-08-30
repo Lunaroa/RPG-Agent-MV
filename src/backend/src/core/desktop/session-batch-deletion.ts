@@ -1,7 +1,7 @@
 export interface BatchDeletableSession {
   id: string;
   status: string;
-  parentSessionId?: string;
+  parentSessionId?: string | null;
 }
 
 export interface BatchSessionDeletionPlan {
@@ -38,7 +38,7 @@ export function planBatchSessionDeletion(
     const session = sessions.get(id);
     return Boolean(session && !TERMINAL_SESSION_STATUSES.has(session.status));
   });
-  const parentIdById = Object.fromEntries(ids.map((id) => [id, sessions.get(id)?.parentSessionId]));
+  const parentIdById = Object.fromEntries(ids.map((id) => [id, sessions.get(id)?.parentSessionId ?? undefined]));
   if (missingIds.length || protectedIds.length) {
     return { orderedIds: [], protectedIds, missingIds, parentIdById };
   }

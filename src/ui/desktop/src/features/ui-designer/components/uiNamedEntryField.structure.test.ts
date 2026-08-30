@@ -18,7 +18,7 @@ test('switch and variable references show names through the system entry selecto
   const field = compile('UiNamedEntryField.vue')
   const conditions = compile('UiConditionEditor.vue')
   const events = compile('UiDesignerEvents.vue')
-  const settings = compile('UiDesignerSettingsSurface.vue')
+  const settings = compile('UiDesignerSceneSettingsSurface.vue')
   const composable = read('../composables/useSystemNamedEntries.ts')
 
   assert.match(field, /SystemNamedEntrySelectorDialog/)

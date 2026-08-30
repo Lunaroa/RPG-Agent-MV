@@ -45,13 +45,12 @@ test('prepares an isolated game project that boots the current in-memory UI scen
   const preparation = prepareUiDesignerGamePreviewProject(root, project, scene());
   try {
     const isolated = preparation.temporaryProject;
-    const previewScene = JSON.parse(fs.readFileSync(path.join(isolated, 'js', 'plugins', 'mzui-data', 'Scene_Sample.json'), 'utf8'));
     const launcher = fs.readFileSync(path.join(isolated, 'js', 'plugins', `${UI_DESIGNER_GAME_PREVIEW_PLUGIN_NAME}.js`), 'utf8');
     const pluginsSource = fs.readFileSync(path.join(isolated, 'js', 'plugins.js'), 'utf8');
     const plugins = JSON.parse(pluginsSource.slice(pluginsSource.indexOf('['), pluginsSource.lastIndexOf(']') + 1));
 
     assert.equal(preparation.sceneName, 'Scene_Sample');
-    assert.equal(previewScene.meta.description, 'current unsaved state');
+    assert.equal(fs.existsSync(path.join(isolated, 'js', 'plugins', 'mzui-data')), false);
     assert.match(launcher, /SceneManager\.goto\(SceneClass\)/);
     assert.ok(plugins.findIndex((entry: { name: string }) => entry.name === 'MZUIRuntime') < plugins.findIndex((entry: { name: string }) => entry.name === UI_DESIGNER_GAME_PREVIEW_PLUGIN_NAME));
     assert.equal(plugins.find((entry: { name: string }) => entry.name === 'MZUIRuntime').parameters.AutoRegister, 'false');
@@ -169,9 +168,15 @@ test('embeds the designer global data into the isolated preview launcher', () =>
     new (SceneBoot as unknown as new () => { start(): void })().start();
 
     assert.deepEqual(JSON.parse(JSON.stringify(installed)), [{ data: [{ text: 'sample entry' }] }]);
-    assert.equal(fs.existsSync(path.join(preparation.temporaryProject, 'data', 'GlobalUI.json')), false);
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(preparation.temporaryProject, 'data', 'GlobalUI.json'), 'utf8')),
+      { data: [{ text: 'sample entry' }] },
+    );
     assert.equal(fs.readFileSync(globalDataSource, 'utf8'), '{ "data": [{ "text": "sample entry" }] }');
-    assert.equal(fs.existsSync(path.join(project, 'data', 'GlobalUI.json')), false);
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(project, 'data', 'GlobalUI.json'), 'utf8')),
+      { data: [{ text: 'sample entry' }] },
+    );
   } finally {
     cleanupIsolatedProject(preparation);
   }

@@ -20,6 +20,11 @@ export const PRODUCT_PLUGIN_REGISTRY = [
     titleKey: 'productPlugin.uiDesigner.title',
     descriptionKey: 'productPlugin.uiDesigner.description',
   },
+  {
+    ...PRODUCT_PLUGIN_DESCRIPTORS[1],
+    titleKey: 'productPlugin.unlimitedMapLayers.title',
+    descriptionKey: 'productPlugin.unlimitedMapLayers.description',
+  },
 ] as const satisfies readonly ProductPluginDefinition[]
 
 function validSemverRange(value: string): boolean {

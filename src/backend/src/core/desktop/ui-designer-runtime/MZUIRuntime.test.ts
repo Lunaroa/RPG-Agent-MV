@@ -70,29 +70,21 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.throws(() => context.MZUIRuntime.registerScene('Scene_Custom', 'Scene_Base', sceneDocument()), /already owned/);
   });
 
-  test('scans deterministic scene files from MV www and MZ roots', () => {
+  test('scans editable scene sources directly from MV www and MZ data roots', () => {
     for (const layout of ['mv-www', 'mz-root']) {
       const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-runtime-scan-'));
       try {
         const engineRoot = layout === 'mv-www' ? path.join(project, 'www') : project;
-        fs.mkdirSync(path.join(engineRoot, 'js', 'plugins', 'mzui-data'), { recursive: true });
-        fs.mkdirSync(path.join(engineRoot, 'data'), { recursive: true });
+        fs.mkdirSync(path.join(engineRoot, 'data', 'ui-scenes'), { recursive: true });
+        fs.mkdirSync(path.join(engineRoot, 'js', 'plugins'), { recursive: true });
         for (const sceneName of ['Scene_Beta', 'Scene_Alpha', 'Scene_Title']) {
-          fs.writeFileSync(path.join(engineRoot, 'js', 'plugins', 'mzui-data', `${sceneName}.json`), JSON.stringify({
-            version: '1.1.0', runtimeVersion: '>=1.1.0',
-            meta: { sceneName, sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624 },
+          fs.writeFileSync(path.join(engineRoot, 'data', 'ui-scenes', `${sceneName}.mzui`), JSON.stringify({
+            version: '1.1.0', editorVersion: '1.1.0',
+            meta: { sceneName, sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624, author: '', description: '', created: 'now', modified: 'now' },
             transitions: { enter: { type: 'fade', duration: 0 }, exit: { type: 'fade', duration: 0 } },
-            globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], sceneScript: sceneScript(),
+            globalFilter: { blur: 0, glow: 0, preset: '' }, canvas: {}, guides: [], nodes: [], zOrder: [], sceneScript: sceneScript(),
           }), 'utf8');
         }
-        fs.writeFileSync(path.join(engineRoot, 'js', 'plugins', 'mzui-data', 'Scene_Bad.json'), '{', 'utf8');
-        fs.writeFileSync(path.join(engineRoot, 'js', 'plugins', 'mzui-data', 'Scene_InvalidScript.json'), JSON.stringify({
-          version: '1.1.0', runtimeVersion: '>=1.1.0',
-          meta: { sceneName: 'Scene_InvalidScript', sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624 },
-          transitions: { enter: { type: 'fade', duration: 0 }, exit: { type: 'fade', duration: 0 } },
-          globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], sceneScript: { version: '2.0.0', source: '' },
-        }), 'utf8');
-        fs.writeFileSync(path.join(engineRoot, 'js', 'plugins', 'mzui-data', 'notes.json'), '{}', 'utf8');
         const context = makeContext();
         const originalTitle = context.Scene_Title;
         context.PluginManager.parameters = () => ({ AutoRegister: 'true' });
@@ -103,12 +95,29 @@ describe('MZUIRuntime MV/MZ bridge', () => {
         assert.equal(typeof context.Scene_Beta, 'function');
         assert.equal(context.MZUIRuntime.isRegistered('Scene_Title'), true);
         assert.notEqual(context.Scene_Title, originalTitle);
-        assert.equal(context.MZUIRuntime.errors.some((entry: { scene?: string }) => entry.scene === 'Scene_Bad'), true);
-        assert.equal(context.MZUIRuntime.errors.some((entry: { scene?: string }) => entry.scene === 'Scene_InvalidScript'), true);
-        assert.equal(context.MZUIRuntime.errors.some((entry: { file?: string }) => entry.file === 'notes.json'), true);
       } finally {
         fs.rmSync(project, { recursive: true, force: true });
       }
+    }
+  });
+
+  test('stops startup with the scene name when a saved scene source is invalid', () => {
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-runtime-invalid-scene-'));
+    try {
+      const sceneDirectory = path.join(project, 'data', 'ui-scenes');
+      fs.mkdirSync(sceneDirectory, { recursive: true });
+      fs.mkdirSync(path.join(project, 'js', 'plugins'), { recursive: true });
+      fs.writeFileSync(path.join(sceneDirectory, 'Scene_Bad.mzui'), '{', 'utf8');
+      const context = makeContext();
+      context.PluginManager.parameters = () => ({ AutoRegister: 'true' });
+      context.process = { cwd: () => project };
+      context.require = nodeRequire;
+      assert.throws(
+        () => vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-invalid-scene.js' }),
+        /UI scene Scene_Bad could not be loaded from Scene_Bad\.mzui/,
+      );
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true });
     }
   });
 
@@ -1085,13 +1094,13 @@ describe('MZUIRuntime MV/MZ bridge', () => {
       try {
         const engineRoot = engine === 'MV' ? path.join(project, 'www') : project;
         fs.mkdirSync(path.join(engineRoot, 'data'), { recursive: true });
-        fs.mkdirSync(path.join(engineRoot, 'js', 'plugins', 'mzui-data'), { recursive: true });
+        fs.mkdirSync(path.join(engineRoot, 'data', 'ui-scenes'), { recursive: true });
         const sceneName = `Scene_External${engine}`;
-        fs.writeFileSync(path.join(engineRoot, 'js', 'plugins', 'mzui-data', `${sceneName}.json`), JSON.stringify({
-          version: '1.1.0', runtimeVersion: '>=1.1.0',
-          meta: { sceneName, sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624 },
+        fs.writeFileSync(path.join(engineRoot, 'data', 'ui-scenes', `${sceneName}.mzui`), JSON.stringify({
+          version: '1.1.0', editorVersion: '1.1.0',
+          meta: { sceneName, sceneBase: 'Scene_Base', canvasWidth: 816, canvasHeight: 624, author: '', description: '', created: 'now', modified: 'now' },
           transitions: { enter: { type: 'fade', duration: 0 }, exit: { type: 'fade', duration: 0 } },
-          globalFilter: { blur: 0, glow: 0, preset: '' }, nodes: [], zOrder: [], sceneScript: sceneScript(),
+          globalFilter: { blur: 0, glow: 0, preset: '' }, canvas: {}, guides: [], nodes: [], zOrder: [], sceneScript: sceneScript(),
         }), 'utf8');
         const context = makeContext();
         const documentUrl = pathToFileURL(path.join(engineRoot, 'index.html'));

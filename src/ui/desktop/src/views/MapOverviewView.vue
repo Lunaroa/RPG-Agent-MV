@@ -30,6 +30,7 @@ import { useI18n } from '../i18n'
 import { useProjectStore } from '../stores/project'
 import { useMapOverviewExportStore } from '../stores/mapOverviewExport'
 import { useWorkspaceStore } from '../stores/workspace'
+import { useProductPluginsStore } from '../stores/productPlugins'
 import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
 import { loadImageElement } from '../utils/imageLoading.ts'
 import { formatMapOverviewExportError } from '../utils/mapOverviewExportError'
@@ -81,6 +82,7 @@ import {
 const projectStore = useProjectStore()
 const mapOverviewExportStore = useMapOverviewExportStore()
 const workspaceStore = useWorkspaceStore()
+const productPlugins = useProductPluginsStore()
 const router = useRouter()
 const { language, t } = useI18n()
 const graphHost = ref<HTMLElement | null>(null)
@@ -118,6 +120,7 @@ const layoutParameterErrors = ref<Partial<Record<MapOverviewLayoutParameterField
 
 // ULDS overlay: toggle + preloaded layer bitmaps keyed by `${path}/${name}`.
 const showUldsLayers = ref(false)
+const uldsPluginEnabled = computed(() => productPlugins.isEnabled('unlimited-map-layers'))
 const uldsImages = shallowRef(new Map<string, MapOverviewUldsImageEntry | null>())
 let uldsLoadGeneration = 0
 
@@ -230,6 +233,7 @@ const exportRunningLabel = computed(() => {
 })
 
 onMounted(() => {
+  void productPlugins.load()
   stopOverviewProgress = maps.onOverviewProgress((progress) => {
     if (progress.sessionId !== overviewProgressSessionId) return
     overviewProgressPhase.value = progress.phase
@@ -303,9 +307,13 @@ watch(currentProject, (next, previous) => {
 
 // Preload ULDS layer bitmaps for every node when the overlay is on. Names that
 // the catalog cannot resolve stay null so the canvas skips them without retrying.
-watch([showUldsLayers, snapshot], ([enabled]) => {
-  if (!enabled) return
+watch([uldsPluginEnabled, showUldsLayers, snapshot], ([pluginEnabled, enabled]) => {
+  if (!pluginEnabled || !enabled) return
   void preloadUldsImages()
+})
+
+watch(uldsPluginEnabled, (enabled) => {
+  if (!enabled) showUldsLayers.value = false
 })
 
 async function preloadUldsImages(): Promise<void> {
@@ -1782,7 +1790,7 @@ async function cancelOverviewExport(): Promise<void> {
           <div ref="graphHost" class="overview-canvas">
             <MapOverviewSvgCanvas
               :ref="setGraphRef"
-              :ulds="{ enabled: showUldsLayers, images: uldsImages }"
+              :ulds="{ enabled: uldsPluginEnabled && showUldsLayers, images: uldsImages }"
               @node-click="selectNode"
               @node-dblclick="openMap"
               @edge-click="selectEdge"
@@ -1867,7 +1875,7 @@ async function cancelOverviewExport(): Promise<void> {
             :aria-label="t('mapOverview.zoom.in')"
             @click="zoomIn"
           >+</button>
-          <label class="overview-ulds-toggle" :title="t('mapOverview.ulds.showHint')" data-ui-id="map-overview-ulds-toggle">
+          <label v-if="uldsPluginEnabled" class="overview-ulds-toggle" :title="t('mapOverview.ulds.showHint')" data-ui-id="map-overview-ulds-toggle">
             <input v-model="showUldsLayers" type="checkbox">
             {{ t('mapOverview.ulds.show') }}
           </label>

@@ -4,7 +4,7 @@
  * @target MZ
  * @target MV
  * @param AutoRegister
- * @text Scan and register stable Scene_*.json files on boot
+ * @text Scan and register stable Scene_*.mzui files on boot
  * @type boolean
  * @default true
  */
@@ -12,7 +12,7 @@
   'use strict';
 
   var VERSION = '1.1.0';
-  var SCENE_DIRECTORY_DEFAULT = 'js/plugins/mzui-data';
+  var SCENE_DIRECTORY_DEFAULT = 'data/ui-scenes';
   var GLOBAL_DATA_FILE = 'data/GlobalUI.json';
   var BUILTIN_SCENE_NAMES = {
     Scene_Title: true,
@@ -137,6 +137,30 @@
     var canonical = Object.assign({}, scene, { version: '1.1.0', runtimeVersion: '>=1.1.0', sceneScript: { version: '1.1.0', source: source } });
     delete canonical.code;
     return canonical;
+  }
+
+  function canonicalizeSceneFile(scene) {
+    if (object(scene) && typeof scene.editorVersion === 'string') {
+      if (!object(scene.meta)) throw new Error('UI scene source requires metadata.');
+      return canonicalizeRuntimeScene({
+        version: scene.version,
+        runtimeVersion: '>=1.1.0',
+        meta: {
+          sceneName: scene.meta.sceneName,
+          sceneBase: scene.meta.sceneBase,
+          canvasWidth: scene.meta.canvasWidth,
+          canvasHeight: scene.meta.canvasHeight,
+          author: scene.meta.author || '',
+          description: scene.meta.description || '',
+        },
+        transitions: scene.transitions,
+        globalFilter: scene.globalFilter,
+        nodes: scene.nodes,
+        zOrder: scene.zOrder,
+        sceneScript: scene.sceneScript,
+      });
+    }
+    return canonicalizeRuntimeScene(scene);
   }
 
   function compileBody(source, args) {
@@ -2993,8 +3017,9 @@
       var path = require('path');
       return fs.readFileSync(path.join(resolveEngineRoot(), relativePath), 'utf8');
     } catch (error) {
-      reportApiError({ label: 'scene-directory', message: 'Node fs is unavailable; UI scene directory cannot be scanned: ' + errorText(error) });
-      return null;
+      var message = 'Node fs is unavailable; UI scene directory cannot be scanned: ' + errorText(error);
+      reportApiError({ label: 'scene-directory', message: message });
+      throw new Error(message);
     }
   }
 
@@ -3008,11 +3033,11 @@
       if (!fs.existsSync(directory) || !fs.statSync(directory).isDirectory()) return [];
       return fs.readdirSync(directory).filter(function (name) {
         var lower = String(name).toLowerCase();
-        return lower.endsWith('.json') && lower !== 'manifest.json' && lower !== '.ui-designer-preview.json';
+        return lower.endsWith('.mzui');
       }).sort();
     } catch (error) {
       reportApiError({ label: 'scene-directory', message: errorText(error) });
-      return [];
+      throw error;
     }
   }
 
@@ -3225,19 +3250,23 @@
       var directory = relativeDirectory || this.sceneDirectory;
       var files = listSceneFiles(directory);
       files.forEach(function (fileName) {
-        if (!/^Scene_[A-Za-z0-9_$]+\.json$/.test(fileName)) {
-          reportApiError({ file: fileName, label: 'scene-directory', message: 'UI scene directory contains a non-scene JSON file; expected a Scene_*.json filename.' });
-          return;
+        if (!/^Scene_[A-Za-z0-9_$]+\.mzui$/.test(fileName)) {
+          var invalidNameMessage = 'UI scene directory contains an invalid source filename; expected Scene_*.mzui: ' + fileName;
+          reportApiError({ file: fileName, label: 'scene-directory', message: invalidNameMessage });
+          throw new Error(invalidNameMessage);
         }
-        var sceneName = fileName.slice(0, -'.json'.length);
+        var sceneName = fileName.slice(0, -'.mzui'.length);
         var raw = readFile(directory.replace(/\\/g, '/') + '/' + fileName);
-        if (!raw) return;
         try {
-          var scene = canonicalizeRuntimeScene(JSON.parse(raw));
+          var scene = canonicalizeSceneFile(JSON.parse(raw));
           if (!scene || scene.version !== VERSION || scene.runtimeVersion !== '>=1.1.0' || !scene.meta || scene.meta.sceneName !== sceneName) throw new Error('UI scene file metadata does not match its stable filename.');
           if (!scene.sceneScript || scene.sceneScript.version !== '1.1.0' || typeof scene.sceneScript.source !== 'string') throw new Error('UI scene file requires a supported one-file sceneScript.');
           registerScene(sceneName, scene.meta.sceneBase, scene);
-        } catch (error) { reportApiError({ scene: sceneName, file: fileName, label: 'scene', message: errorText(error) }); }
+        } catch (error) {
+          var message = 'UI scene ' + sceneName + ' could not be loaded from ' + fileName + ': ' + errorText(error);
+          reportApiError({ scene: sceneName, file: fileName, label: 'scene', message: message });
+          throw new Error(message);
+        }
       });
       return this;
     },

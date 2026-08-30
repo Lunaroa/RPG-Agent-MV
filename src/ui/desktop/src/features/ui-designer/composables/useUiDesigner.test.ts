@@ -215,7 +215,6 @@ test('closing the only opened tab leaves no scene behind', async () => {
     async readPreferences() { return success({}) },
     async writePreferences() { return success() },
     async writeRecovery() { return success({ id: 'recovery' }) },
-    async exportRuntime() { return success('runtime.json') },
   }
   const designer = useUiDesigner({ adapters: { file } })
   assert.equal(await designer.open(), true)
@@ -247,7 +246,6 @@ test('opening an older design normalizes newly required animation fields before 
     async readPreferences() { return success({}) },
     async writePreferences() { return success() },
     async writeRecovery() { return success({ id: 'recovery' }) },
-    async exportRuntime() { return success('runtime.json') },
   }
 
   const designer = useUiDesigner({ adapters: { file } })
@@ -891,7 +889,6 @@ test('recovery cleanup failure keeps the recovery id and reports discard failure
     async readPreferences() { return success({}) },
     async writePreferences() { return success() },
     async writeRecovery() { return success({ id: 'recovery' }) },
-    async exportRuntime() { return success('runtime.json') },
   }
   const designer = useUiDesigner({ adapters: { file } })
   const scene = designer.scenes.value[0]
@@ -924,7 +921,7 @@ test('scene data import creates a dirty editor copy that can be saved as a new s
         scene: imported,
         metadata: {
           id: 'scene-data-1',
-          relativePath: 'js/plugins/mzui-data/imported.json',
+          relativePath: 'data/ui-scenes/Scene_Imported_Runtime.mzui',
         sceneName: 'Scene_Imported_Runtime',
           version: '1.0.0',
           runtimeVersion: '1.0.0',
@@ -938,7 +935,7 @@ test('scene data import creates a dirty editor copy that can be saved as a new s
     },
   }
   const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { file, resource } })
-  assert.equal(await designer.importSceneData('js/plugins/mzui-data/imported.json', true), true)
+  assert.equal(await designer.importSceneData('data/ui-scenes/Scene_Imported_Runtime.mzui', true), true)
   const scene = designer.activeScene.value
   assert.equal(scene.document.meta.sceneName, 'Scene_Imported_Runtime')
   assert.equal(scene.sourcePath, undefined)
@@ -946,6 +943,46 @@ test('scene data import creates a dirty editor copy that can be saved as a new s
   assert.equal(await designer.save('saveAs'), true)
   assert.equal(savedPath, 'ui/imported-copy.mzui')
   assert.equal(scene.history.isDirty, false)
+})
+
+test('save as keeps the proposed scene name across one overwrite confirmation', async () => {
+  const calls: Array<{ sceneName: string; force?: boolean }> = []
+  const file = {
+    async saveAs(document: ReturnType<typeof createUiDocument>, request?: { force?: boolean }) {
+      calls.push({ sceneName: document.meta.sceneName, force: request?.force })
+      if (!request?.force) {
+        return {
+          status: 'error' as const,
+          message: 'scene exists',
+          conflict: { code: 'UI_DESIGNER_CONFLICT' as const, recoverable: true },
+        }
+      }
+      const sourcePath = 'data/ui-scenes/Scene_Replacement.mzui'
+      return {
+        status: 'success' as const,
+        message: 'saved',
+        value: document,
+        sourcePath,
+        metadata: { path: sourcePath, digest: 'saved-digest', mtimeMs: 2, size: 1 },
+      }
+    },
+  } as unknown as UiDesignerPersistenceAdapter
+  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { file } })
+  const originalName = designer.document.value.meta.sceneName
+
+  assert.equal(await designer.save('saveAs', { sceneName: 'Scene_Replacement' }), false)
+  assert.equal(designer.document.value.meta.sceneName, originalName)
+  assert.equal(designer.pendingSaveAsName.value, 'Scene_Replacement')
+  assert.equal(designer.saveAsConflict.value, true)
+
+  assert.equal(await designer.resolveFileConflict('force'), true)
+  assert.deepEqual(calls, [
+    { sceneName: 'Scene_Replacement', force: undefined },
+    { sceneName: 'Scene_Replacement', force: true },
+  ])
+  assert.equal(designer.document.value.meta.sceneName, 'Scene_Replacement')
+  assert.equal(designer.activeScene.value.sourcePath, 'data/ui-scenes/Scene_Replacement.mzui')
+  assert.equal(designer.pendingSaveAsName.value, null)
 })
 
 test('switching scenes flushes the single-file source draft to its captured scene', () => {
@@ -1007,7 +1044,6 @@ test('loading preferences migrates the legacy bare ui-monospace code font to the
     async readPreferences() { return success({ codeFontFamily: 'ui-monospace' }) },
     async writePreferences() { return success() },
     async writeRecovery() { return success({ id: 'recovery' }) },
-    async exportRuntime() { return success('runtime.json') },
   }
   const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { file } })
   assert.equal(await designer.loadPreferences(), true)

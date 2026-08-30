@@ -1,14 +1,17 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, test } from 'node:test';
+import { compileScript, parse } from '@vue/compiler-sfc';
 
 const mapPropertiesSource = readFileSync(new URL('./MapPropertiesDialog.vue', import.meta.url), 'utf8');
 const eventEditorSource = readFileSync(new URL('./EventEditorDialog.vue', import.meta.url), 'utf8');
 const eventConditionSource = readFileSync(new URL('./EventConditionSelect.vue', import.meta.url), 'utf8');
 const eventImagePickerSource = readFileSync(new URL('./EventImagePickerDialog.vue', import.meta.url), 'utf8');
 const editorToolbarSource = readFileSync(new URL('./EditorToolbar.vue', import.meta.url), 'utf8');
+const uldsPanelSource = readFileSync(new URL('./UldsPanel.vue', import.meta.url), 'utf8');
 const leftDockSource = readFileSync(new URL('../layout/LeftDock.vue', import.meta.url), 'utf8');
 const editorViewSource = readFileSync(new URL('../../views/EditorView.vue', import.meta.url), 'utf8');
+const mapOverviewSource = readFileSync(new URL('../../views/MapOverviewView.vue', import.meta.url), 'utf8');
 const mapRendererSource = readFileSync(new URL('../../composables/useMapRenderer.ts', import.meta.url), 'utf8');
 const mapCanvasEditorSource = readFileSync(new URL('../../composables/useMapCanvasEditor.ts', import.meta.url), 'utf8');
 const projectAccessSource = readFileSync(new URL('../console/ProjectAccessControl.vue', import.meta.url), 'utf8');
@@ -48,6 +51,32 @@ describe('editor semantic controls', () => {
     assert.match(editorViewSource, /layer\.value = 'auto'/);
     assert.match(editorToolbarSource, /overflow-x:auto/);
     assert.doesNotMatch(editorViewSource, /supports-layer-selection="editorCatalog\?\.engine === 'rpg-maker-mz'"/);
+  });
+
+  test('keeps unlimited layers behind its product-plugin switch and uses Z as the ordering control', () => {
+    assert.match(editorViewSource, /productPlugins\.isEnabled\('unlimited-map-layers'\)/);
+    assert.match(editorViewSource, /:ulds-available="uldsPluginEnabled && selectedMapId != null"/);
+    assert.match(editorViewSource, /<UldsPanel\s+v-if="uldsPluginEnabled"/);
+    assert.match(editorViewSource, /registerProductPluginLifecycleGuard\('unlimited-map-layers'/);
+    assert.match(mapOverviewSource, /v-if="uldsPluginEnabled" class="overview-ulds-toggle"/);
+    assert.match(mapOverviewSource, /enabled: uldsPluginEnabled && showUldsLayers/);
+    for (const id of ['z', 'scale-x', 'scale-y', 'opacity']) {
+      assert.match(uldsPanelSource, new RegExp(`<el-input-number[^>]+data-ui-id="ulds-layer-${id}"`));
+    }
+    assert.match(uldsPanelSource, /<el-input-number[^>]+:min="0"[^>]+:max="255"[^>]+data-ui-id="ulds-layer-opacity"/);
+    assert.doesNotMatch(uldsPanelSource, /moveRow\(|editor\.ulds\.moveUp|editor\.ulds\.moveDown/);
+  });
+
+  test('compiles the product-gated unlimited-layer surfaces', () => {
+    for (const [name, source] of [
+      ['UldsPanel.vue', uldsPanelSource],
+      ['EditorView.vue', editorViewSource],
+      ['MapOverviewView.vue', mapOverviewSource],
+    ] as const) {
+      const parsed = parse(source, { filename: name });
+      assert.deepEqual(parsed.errors, []);
+      assert.doesNotThrow(() => compileScript(parsed.descriptor, { id: `unlimited-layers-${name}`, inlineTemplate: true }));
+    }
   });
 
   test('makes event conditions and image selection explicit and keyboard reachable', () => {

@@ -15,21 +15,26 @@ import {
   UiDesignerValidationError,
 } from './ui-designer-validation.ts';
 import { lunaRpgDirPath } from './project-config-service.ts';
+import { resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
 
 export const UI_DESIGNER_FILE_EXTENSION = '.mzui';
 export const UI_DESIGNER_RECENT_LIMIT = 10;
 
-const UI_SCENE_FILE_SCAN_MAX_DEPTH = 6;
-const UI_SCENE_FILE_SCAN_MAX_FILES = 200;
-const UI_SCENE_FILE_SCAN_EXCLUDED_DIRS = new Set(['node_modules', '.git']);
 const UI_SCENE_NAME_PATTERN = /^Scene_[A-Za-z0-9_$]+$/;
 const UI_DESIGNER_PROJECT_DIRECTORY = 'ui-designer';
-const UI_DESIGNER_SCENE_DIRECTORY = 'scenes';
+export const UI_DESIGNER_SCENE_DIRECTORY = 'ui-scenes';
+const UI_DESIGNER_LEGACY_SCENE_DIRECTORY = 'scenes';
 const UI_DESIGNER_THUMBNAIL_DIRECTORY = 'thumbnails';
 const UI_DESIGNER_THUMBNAIL_MAX_BYTES = 2 * 1024 * 1024;
+const UI_DESIGNER_SCENE_MIGRATION_MARKER = 'project-scenes-v1.migrated.json';
+const UI_DESIGNER_GLOBAL_DATA_MIGRATION_MARKER = 'global-data-v1.migrated.json';
 
 export function projectUiDesignerSceneDirectory(projectRoot: string): string {
-  return path.join(lunaRpgDirPath(projectRoot), UI_DESIGNER_PROJECT_DIRECTORY, UI_DESIGNER_SCENE_DIRECTORY);
+  return path.join(resolveRmmvLayout(projectRoot).dataDir, UI_DESIGNER_SCENE_DIRECTORY);
+}
+
+function legacyProjectUiDesignerSceneDirectory(projectRoot: string): string {
+  return path.join(lunaRpgDirPath(projectRoot), UI_DESIGNER_PROJECT_DIRECTORY, UI_DESIGNER_LEGACY_SCENE_DIRECTORY);
 }
 
 export function projectUiDesignerThumbnailDirectory(projectRoot: string): string {
@@ -44,7 +49,112 @@ export function projectUiDesignerScenePath(projectRoot: string, sceneName: strin
 export const UI_DESIGNER_GLOBAL_DATA_FILENAME = 'global-ui.json';
 
 export function projectUiDesignerGlobalDataPath(projectRoot: string): string {
+  return path.join(resolveRmmvLayout(projectRoot).dataDir, 'GlobalUI.json');
+}
+
+function legacyProjectUiDesignerGlobalDataPath(projectRoot: string): string {
   return path.join(lunaRpgDirPath(projectRoot), UI_DESIGNER_PROJECT_DIRECTORY, UI_DESIGNER_GLOBAL_DATA_FILENAME);
+}
+
+function uiDesignerMigrationMarkerPath(projectRoot: string, name: string): string {
+  return path.join(lunaRpgDirPath(projectRoot), UI_DESIGNER_PROJECT_DIRECTORY, name);
+}
+
+function migrationCompleted(markerPath: string, operation: string): boolean {
+  if (!fs.existsSync(markerPath)) return false;
+  const stat = fs.lstatSync(markerPath);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new UiDesignerPersistenceError(operation, 'The UI designer migration marker is not a safe file.');
+  try {
+    const parsed = JSON.parse(fs.readFileSync(markerPath, 'utf8')) as { version?: unknown };
+    if (parsed.version !== 1) throw new Error('Unsupported marker version.');
+    return true;
+  } catch (error) {
+    throw new UiDesignerPersistenceError(operation, 'The UI designer migration marker is invalid.', error);
+  }
+}
+
+function markMigrationCompleted(markerPath: string): void {
+  writeFileAtomically(markerPath, Buffer.from(`${JSON.stringify({ version: 1 }, null, 2)}\n`, 'utf8'));
+}
+
+export interface UiDesignerProjectSceneMigrationResult {
+  copied: string[];
+}
+
+/**
+ * Copy project-owned legacy scene sources into the Runtime-readable data
+ * directory. The legacy files stay untouched and are no longer scanned after
+ * this succeeds.
+ */
+export function migrateLegacyProjectUiDesignerScenes(projectRoot: string): UiDesignerProjectSceneMigrationResult {
+  const sourceDirectory = legacyProjectUiDesignerSceneDirectory(projectRoot);
+  const targetDirectory = projectUiDesignerSceneDirectory(projectRoot);
+  if (!fs.existsSync(sourceDirectory)) return { copied: [] };
+  const marker = uiDesignerMigrationMarkerPath(projectRoot, UI_DESIGNER_SCENE_MIGRATION_MARKER);
+  if (migrationCompleted(marker, 'migrate-project-scenes')) return { copied: [] };
+  const sourceStat = fs.lstatSync(sourceDirectory);
+  if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) {
+    throw new UiDesignerPersistenceError('migrate-project-scenes', 'The legacy UI scene directory is not a safe project directory.');
+  }
+  const copied: string[] = [];
+  const entries = fs.readdirSync(sourceDirectory, { withFileTypes: true })
+    .filter((entry) => entry.name.toLowerCase().endsWith(UI_DESIGNER_FILE_EXTENSION))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  for (const entry of entries) {
+    const source = path.join(sourceDirectory, entry.name);
+    const stat = fs.lstatSync(source);
+    if (!entry.isFile() || stat.isSymbolicLink()) {
+      throw new UiDesignerPersistenceError('migrate-project-scenes', `Legacy UI scene ${entry.name} is not a safe file.`);
+    }
+    const read = readUiDesignerFile(source);
+    const expectedName = `${read.document.meta.sceneName}${UI_DESIGNER_FILE_EXTENSION}`;
+    if (entry.name !== expectedName) {
+      throw new UiDesignerPersistenceError('migrate-project-scenes', `Legacy UI scene ${entry.name} does not match its scene name ${read.document.meta.sceneName}.`);
+    }
+    const target = path.join(targetDirectory, expectedName);
+    const body = fs.readFileSync(source);
+    if (fs.existsSync(target)) {
+      const targetStat = fs.lstatSync(target);
+      if (!targetStat.isFile() || targetStat.isSymbolicLink() || !fs.readFileSync(target).equals(body)) {
+        throw new UiDesignerPersistenceError('migrate-project-scenes', `A different UI scene already exists at ${expectedName}; migration did not overwrite it.`);
+      }
+      continue;
+    }
+    writeFileAtomically(target, body);
+    copied.push(target);
+  }
+  markMigrationCompleted(marker);
+  return { copied };
+}
+
+function migrateLegacyProjectUiDesignerGlobalData(projectRoot: string): void {
+  const source = legacyProjectUiDesignerGlobalDataPath(projectRoot);
+  if (!fs.existsSync(source)) return;
+  const marker = uiDesignerMigrationMarkerPath(projectRoot, UI_DESIGNER_GLOBAL_DATA_MIGRATION_MARKER);
+  if (migrationCompleted(marker, 'migrate-project-global-data')) return;
+  const sourceStat = fs.lstatSync(source);
+  if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) {
+    throw new UiDesignerPersistenceError('migrate-project-global-data', 'The legacy global UI data entry is not a safe file.');
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(source, 'utf8').replace(/^\uFEFF/, ''));
+  } catch (error) {
+    throw new UiDesignerPersistenceError('migrate-project-global-data', 'The legacy global UI data is not valid JSON.', error);
+  }
+  assertUiDesignerGlobalData(parsed);
+  const target = projectUiDesignerGlobalDataPath(projectRoot);
+  const body = fs.readFileSync(source);
+  if (fs.existsSync(target)) {
+    const targetStat = fs.lstatSync(target);
+    if (!targetStat.isFile() || targetStat.isSymbolicLink() || !fs.readFileSync(target).equals(body)) {
+      throw new UiDesignerPersistenceError('migrate-project-global-data', 'Different global UI data already exists in the project data directory; migration did not overwrite it.');
+    }
+    markMigrationCompleted(marker);
+    return;
+  }
+  writeFileAtomically(target, body);
+  markMigrationCompleted(marker);
 }
 
 function assertUiDesignerGlobalData(value: unknown): UiDesignerGlobalDataValue {
@@ -55,6 +165,7 @@ function assertUiDesignerGlobalData(value: unknown): UiDesignerGlobalDataValue {
 
 /** Reads the project-wide global UI data; a missing file means "no data yet". */
 export function readProjectUiDesignerGlobalData(projectRoot: string): UiDesignerGlobalDataReadResult {
+  migrateLegacyProjectUiDesignerGlobalData(projectRoot);
   const resolved = projectUiDesignerGlobalDataPath(projectRoot);
   const metadata = readMetadataIfExists(resolved);
   if (!metadata) return { data: {}, metadata: null };
@@ -71,6 +182,7 @@ export function saveProjectUiDesignerGlobalData(
   data: UiDesignerGlobalDataValue,
   options: UiDesignerSaveOptions = {},
 ): UiDesignerFileMetadata {
+  migrateLegacyProjectUiDesignerGlobalData(projectRoot);
   const resolved = projectUiDesignerGlobalDataPath(projectRoot);
   const valid = assertUiDesignerGlobalData(data);
   const existing = readMetadataIfExists(resolved);
@@ -109,56 +221,42 @@ export function writeProjectUiDesignerThumbnail(projectRoot: string, sceneName: 
   return target;
 }
 
-function readSceneFileSceneName(filePath: string): string | null {
-  try {
-    const raw: unknown = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    if (!raw || typeof raw !== 'object') return null;
-    const sceneName = (raw as { meta?: { sceneName?: unknown } }).meta?.sceneName;
-    return typeof sceneName === 'string' && UI_SCENE_NAME_PATTERN.test(sceneName) ? sceneName : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
- * Lists .mzui scene documents inside the current RPG Maker project so event
- * actions can target any saved scene, not just the ones open in the editor.
- * The scan is bounded (depth, file count, excluded directories); unreadable
- * or invalid documents are skipped rather than failing the whole listing.
+ * Lists only the canonical scene sources owned by the current project. Invalid
+ * entries fail explicitly instead of disappearing from the editor or falling
+ * back to an unrelated project file.
  */
 export function listUiDesignerSceneFiles(projectRoot: string): UiDesignerSceneFileRecord[] {
   const root = path.resolve(projectRoot);
   if (!fs.existsSync(root)) return [];
+  migrateLegacyProjectUiDesignerScenes(root);
+  const directory = projectUiDesignerSceneDirectory(root);
+  if (!fs.existsSync(directory)) return [];
   const records: UiDesignerSceneFileRecord[] = [];
-  const walk = (directory: string, depth: number): void => {
-    if (depth > UI_SCENE_FILE_SCAN_MAX_DEPTH || records.length >= UI_SCENE_FILE_SCAN_MAX_FILES) return;
-    let entries: fs.Dirent[];
-    try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
-    catch { return; }
-    for (const entry of entries) {
-      if (records.length >= UI_SCENE_FILE_SCAN_MAX_FILES) return;
-      const fullPath = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        if (depth < UI_SCENE_FILE_SCAN_MAX_DEPTH && !UI_SCENE_FILE_SCAN_EXCLUDED_DIRS.has(entry.name)) walk(fullPath, depth + 1);
-        continue;
-      }
-      if (!entry.isFile() || !entry.name.toLowerCase().endsWith(UI_DESIGNER_FILE_EXTENSION)) continue;
-      const sceneName = readSceneFileSceneName(fullPath);
-      if (sceneName) {
-        const thumbnailPath = path.join(projectUiDesignerThumbnailDirectory(root), `${sceneName}.png`);
-        const thumbnailUrl = pngDataUrl(thumbnailPath);
-        const modifiedAt = fs.statSync(fullPath).mtime.toISOString();
-        records.push({
-          path: path.relative(root, fullPath).split(path.sep).join('/'),
-          sourcePath: fullPath,
-          sceneName,
-          modifiedAt,
-          ...(thumbnailUrl ? { thumbnailUrl } : {}),
-        });
-      }
+  const entries = fs.readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.name.toLowerCase().endsWith(UI_DESIGNER_FILE_EXTENSION))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  for (const entry of entries) {
+    const fullPath = path.join(directory, entry.name);
+    const stat = fs.lstatSync(fullPath);
+    if (!entry.isFile() || stat.isSymbolicLink()) {
+      throw new UiDesignerPersistenceError('list-project-scenes', `UI scene ${entry.name} is not a safe file.`);
     }
-  };
-  walk(root, 0);
+    const read = readUiDesignerFile(fullPath);
+    const sceneName = read.document.meta.sceneName;
+    if (entry.name !== `${sceneName}${UI_DESIGNER_FILE_EXTENSION}`) {
+      throw new UiDesignerPersistenceError('list-project-scenes', `UI scene filename ${entry.name} does not match ${sceneName}.`);
+    }
+    const thumbnailPath = path.join(projectUiDesignerThumbnailDirectory(root), `${sceneName}.png`);
+    const thumbnailUrl = pngDataUrl(thumbnailPath);
+    records.push({
+      path: path.relative(root, fullPath).split(path.sep).join('/'),
+      sourcePath: fullPath,
+      sceneName,
+      modifiedAt: stat.mtime.toISOString(),
+      ...(thumbnailUrl ? { thumbnailUrl } : {}),
+    });
+  }
   return records.sort((left, right) => left.path.localeCompare(right.path));
 }
 

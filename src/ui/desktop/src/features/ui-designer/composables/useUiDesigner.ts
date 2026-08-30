@@ -23,7 +23,6 @@ import type {
   UiGuide,
   UiRuntimeStatus,
   UiRuntimeDiagnostic,
-  UiDesignerRuntimeStageResult,
   UiTreeDropPosition,
   UiValidationReport,
   UiViewport,
@@ -79,7 +78,6 @@ import { UI_DESIGNER_BUILT_IN_TEMPLATES, createBuiltInUiDesignerTemplate, isBuil
 import { createUiDesignerDraftCoordinator, type UiDesignerDraftCoordinator } from './draftCoordinator'
 import { createUiDesignerSceneHistoryOperations } from './sceneHistoryOperations'
 import { createUiDesignerPersistenceOperations, UI_DESIGNER_DEFAULT_CODE_FONT_FAMILY } from './persistenceOperations'
-import { createUiDesignerRuntimeOperations } from './runtimeOperations'
 import { clearRecoverySnapshot } from './recoveryLifecycle'
 import {
   normalizeUiDesignerProjectRelativeResourcePath,
@@ -204,7 +202,6 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const runtimeDiagnostics = ref<UiRuntimeDiagnostic[]>([])
   const previewDiagnostics = runtimeDiagnostics
   const runtimeStatus = ref<UiRuntimeStatus>({ state: 'unknown', message: 'Runtime has not been inspected.' })
-  const runtimeStaging = ref<UiDesignerRuntimeStageResult | null>(null)
   const resourceCatalog = ref<UiProjectResourceCatalog | null>(null)
   const resourceStatus = ref<UiFileStatus>('idle')
   const resourceMessage = ref('')
@@ -213,11 +210,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const projectProfileMessage = ref('')
   const actionError = ref('')
   const fileConflict = ref<UiDesignerFileConflict | null>(null)
-  const runtimeConflict = ref(false)
-  const runtimeConflictPath = ref<string | undefined>()
-  const runtimeConflictOperation = ref<'stage' | 'export' | null>(null)
-  const runtimeConflictFiles = ref<string[]>([])
-  const runtimeProofMissing = ref(false)
+  const pendingSaveAsName = ref<string | null>(null)
   const previewDisposers = new Set<(reason: UiDesignerPreviewDisposeReason) => Promise<boolean>>()
   const resourceMutationHandlers = new Set<(manifest: ProjectAssetChangeManifest) => Promise<void> | void>()
   let previewDisposePromise: Promise<boolean> | null = null
@@ -267,8 +260,6 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const isDirty = computed(() => scenes.value.some((scene) => sceneIsDirty(scene)))
   const hasProject = computed(() => Boolean(projectPath.value?.trim()))
   const canSave = computed(() => adapters.file !== undefined && adapters.file !== createUiDesignerAdapters().file)
-  const canExport = computed(() => hasProject.value && adapters.runtime.stageScene !== undefined && adapters.runtime !== createUiDesignerAdapters().runtime)
-  const canManageRuntime = computed(() => hasProject.value && adapters.runtime !== createUiDesignerAdapters().runtime)
   const canLoadResources = computed(() => hasProject.value && adapters.resource !== createUiDesignerAdapters().resource)
   const canRenderCanvas = computed(() => hasProject.value && adapters.rendererHost !== createUiDesignerAdapters().rendererHost)
   const canPreview = computed(() => hasProject.value && adapters.gamePreview !== createUiDesignerAdapters().gamePreview)
@@ -280,6 +271,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     ? { width: projectProfile.value.screenWidth, height: projectProfile.value.screenHeight }
     : null)
   const canCreateScene = computed(() => Boolean(newSceneCanvasSize.value))
+  const saveAsConflict = computed(() => Boolean(fileConflict.value && pendingSaveAsName.value))
 
   const persistenceOperations = createUiDesignerPersistenceOperations({
     getFile: () => adapters.file,
@@ -450,8 +442,9 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     runtimeDiagnostics.value = []
     resourceCatalog.value = null
     sceneFiles.value = []
+    fileConflict.value = null
+    pendingSaveAsName.value = null
     runtimeStatus.value = { state: 'unknown', message: 'Runtime has not been inspected.' }
-    runtimeStaging.value = null
     projectProfile.value = null
     projectProfileStatus.value = nextProjectPath?.trim() ? 'busy' : 'idle'
     projectProfileMessage.value = ''
@@ -615,37 +608,20 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     return true
   }
 
-  const runtimeOperations = createUiDesignerRuntimeOperations({
-    getRuntime: () => adapters.runtime,
-    getFile: () => adapters.file,
-    projectPath,
-    projectGeneration,
-    hasProject,
-    canSave,
-    canExport,
-    canManageRuntime,
-    document,
-    flushDrafts,
-    fileStatus,
-    fileMessage,
-    runtimeStatus,
-    runtimeStaging,
-    runtimeProofMissing,
-    runtimeConflict,
-    runtimeConflictPath,
-    runtimeConflictOperation,
-    runtimeConflictFiles,
-    fileConflict,
-  })
-  const {
-    exportRuntime,
-    exportRuntimeJson,
-    installRuntime,
-    stageRuntime,
-    resolveRuntimeConflict,
-    clearConflictState,
-    checkRuntime,
-  } = runtimeOperations
+  const checkRuntime = async () => {
+    if (!hasProject.value) {
+      runtimeStatus.value = { state: 'file-unconfigured', message: 'Select a project before checking Runtime.' }
+      return runtimeStatus.value
+    }
+    const generation = projectGeneration.value
+    try {
+      const result = await adapters.runtime.checkRuntime(projectPath.value)
+      if (generation === projectGeneration.value) runtimeStatus.value = result
+    } catch (error) {
+      if (generation === projectGeneration.value) runtimeStatus.value = { state: 'error', message: error instanceof Error ? error.message : String(error) }
+    }
+    return runtimeStatus.value
+  }
 
   const setGridEnabled = (enabled: boolean) => {
     const next = cloneUiDocument(document.value)
@@ -1281,7 +1257,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     return cleared
   }
 
-  const saveScene = async (sceneId: string, mode: 'save' | 'saveAs' = 'save', options: { force?: boolean } = {}) => {
+  const saveScene = async (sceneId: string, mode: 'save' | 'saveAs' = 'save', options: { force?: boolean; sceneName?: string } = {}) => {
     if (!canSave.value) {
       fileStatus.value = 'unavailable'
       fileMessage.value = 'File adapter is not connected; no project file was written.'
@@ -1289,13 +1265,26 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     }
     fileStatus.value = 'busy'
     fileConflict.value = null
-    runtimeConflict.value = false
     try {
       const scene = scenes.value.find((item) => item.id === sceneId)
       if (!scene) return false
       const capturedSceneId = scene.id
       flushDrafts(capturedSceneId)
       const sourceBefore = JSON.stringify(scene.document)
+      const savedDocument = cloneUiDocument(scene.document)
+      if (mode === 'saveAs') {
+        const sceneName = (options.sceneName ?? savedDocument.meta.sceneName).trim()
+        if (!isValidUiDesignerSceneName(sceneName)) {
+          fileStatus.value = 'error'
+          fileMessage.value = 'The scene name is invalid.'
+          pendingSaveAsName.value = null
+          return false
+        }
+        savedDocument.meta.sceneName = sceneName
+        pendingSaveAsName.value = sceneName
+      } else {
+        pendingSaveAsName.value = null
+      }
       const generation = projectGeneration.value
       const request = {
         path: mode === 'saveAs' ? undefined : scene?.sourcePath,
@@ -1303,7 +1292,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
         expected: mode === 'saveAs' || !scene?.openedMetadata ? undefined : { digest: scene.openedMetadata.digest, mtimeMs: scene.openedMetadata.mtimeMs },
         force: options.force,
       }
-      const result = mode === 'saveAs' ? await adapters.file.saveAs(cloneUiDocument(scene.document), request) : await adapters.file.save(cloneUiDocument(scene.document), request)
+      const result = mode === 'saveAs' ? await adapters.file.saveAs(savedDocument, request) : await adapters.file.save(savedDocument, request)
       if (generation !== projectGeneration.value) return false
       fileStatus.value = result.status
       fileMessage.value = result.message
@@ -1314,7 +1303,8 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
           fileMessage.value = 'The tab changed while saving; its newer edits remain dirty and were not marked saved.'
           return false
         }
-        if (result.value) currentScene.document = currentScene.history.commit(result.value, 'Save source')
+        const persistedDocument = result.value ?? savedDocument
+        if (JSON.stringify(currentScene.document) !== JSON.stringify(persistedDocument)) currentScene.document = currentScene.history.commit(persistedDocument, 'Save source')
         currentScene.history.markSaved()
         currentScene.sourcePath = result.sourcePath ?? result.path ?? currentScene.sourcePath
         currentScene.openedMetadata = result.metadata
@@ -1332,9 +1322,11 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
           }
         }
         currentScene.recoveryId = result.recoveryId
+        pendingSaveAsName.value = null
         void refreshSceneFiles()
         return true
       }
+      if (!result.conflict) pendingSaveAsName.value = null
       return false
     } catch (error) {
       fileStatus.value = 'error'
@@ -1345,7 +1337,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     }
   }
 
-  const save = async (mode: 'save' | 'saveAs' = 'save', options: { force?: boolean } = {}) => {
+  const save = async (mode: 'save' | 'saveAs' = 'save', options: { force?: boolean; sceneName?: string } = {}) => {
     const scene = activeScene.value
     return scene ? saveScene(scene.id, mode, options) : false
   }
@@ -1546,15 +1538,18 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   }
 
   const resolveFileConflict = async (choice: 'reload' | 'saveAs' | 'force') => {
-    if (runtimeConflict.value) {
-      if (choice !== 'force') return false
-      return resolveRuntimeConflict()
+    if (choice === 'reload') {
+      pendingSaveAsName.value = null
+      return reloadConflict()
     }
-    if (choice === 'reload') return reloadConflict()
     if (choice === 'saveAs') return save('saveAs')
+    if (pendingSaveAsName.value) return save('saveAs', { force: true, sceneName: pendingSaveAsName.value })
     return save('save', { force: true })
   }
-  const clearFileConflict = () => clearConflictState()
+  const clearFileConflict = () => {
+    pendingSaveAsName.value = null
+    fileConflict.value = null
+  }
 
   const loadResources = async (request: UiDesignerResourceRequest = {}) => {
     if (!hasProject.value) {
@@ -2038,7 +2033,6 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     previewDiagnostics,
     runtimeDiagnostics,
     runtimeStatus,
-    runtimeStaging,
     resourceCatalog,
     resourceStatus,
     resourceMessage,
@@ -2047,11 +2041,8 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     projectProfileMessage,
     actionError,
     fileConflict,
-    runtimeConflict,
-    runtimeConflictPath,
-    runtimeConflictOperation,
-    runtimeConflictFiles,
-    runtimeProofMissing,
+    pendingSaveAsName,
+    saveAsConflict,
     recentFiles,
     sceneFiles,
     recoveryRecords,
@@ -2064,8 +2055,6 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     isSceneDirty,
     canSave,
     hasProject,
-    canExport,
-    canManageRuntime,
     canLoadResources,
     canPreview,
     canRenderCanvas,
@@ -2158,13 +2147,9 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     reloadConflict,
     resolveFileConflict,
     clearFileConflict,
-    exportRuntime,
-    exportRuntimeJson,
     loadResources,
     importSceneData,
     checkRuntime,
-    installRuntime,
-    stageRuntime,
     startPreview,
     stopPreview,
     startEditorPreview,

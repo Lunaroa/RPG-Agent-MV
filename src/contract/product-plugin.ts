@@ -36,6 +36,19 @@ export const PRODUCT_PLUGIN_DESCRIPTORS = [
     compatibleProductVersion: '^0.7.1',
     defaultEnabled: false,
   },
+  {
+    id: 'unlimited-map-layers',
+    version: '1.0.0',
+    route: '/workbench',
+    icon: 'Picture',
+    name: { 'en-US': 'Unlimited map layers', 'zh-CN': '无限图层' },
+    description: {
+      'en-US': 'Edit and preview ULDS layers in the map editor and map overview.',
+      'zh-CN': '在地图编辑器与地图总览中编辑和预览 ULDS 无限图层。',
+    },
+    compatibleProductVersion: '^0.7.1',
+    defaultEnabled: false,
+  },
 ] as const satisfies readonly ProductPluginDescriptor[]
 
 /** Persisted enablement state for product plugins in workspace settings. */

@@ -15,6 +15,7 @@ import { useWorkbenchUiStore } from '../../stores/workbenchUi';
 import { useWorkspaceStore } from '../../stores/workspace';
 import { useShortcutsStore } from '../../stores/shortcuts';
 import { requestGlobalSearchOpen } from '../../utils/globalSearchEvents';
+import { dispatchUiDesignerMenuCommand } from '../../features/ui-designer/menuCommands';
 
 const ui = useWorkbenchUiStore();
 const shortcuts = useShortcutsStore();
@@ -68,6 +69,14 @@ const playtestRuntimeChangeDisabled = computed(() => (
 
 type EditorCommand = 'undo' | 'redo' | 'save';
 type MenuAction = () => void | Promise<void>;
+interface TopBarMenuItem {
+  key: string;
+  label?: string;
+  shortcut?: string;
+  disabled?: boolean;
+  separator?: boolean;
+  action?: MenuAction;
+}
 
 function emitEditorCommand(command: EditorCommand) {
   if (router.currentRoute.value.path !== '/workbench' || !projectStore.currentProject) {
@@ -99,23 +108,45 @@ function openTutorial() {
   window.dispatchEvent(new Event('agent-rpg:onboarding-tour:start'));
 }
 
-const menus = computed<{ key: string; label: string; items: { key: string; label: string; shortcut?: string; disabled?: boolean; action: MenuAction }[] }[]>(() => [
-  { key: 'file', label: t('topbar.menu.file'), items: [
-    { key: 'save', label: t('topbar.menu.save'), shortcut: shortcuts.bindingLabel('app.save'), action: () => emitEditorCommand('save') },
-    { key: 'open-project-folder', label: t('topbar.menu.openProjectFolder'), disabled: !projectStore.currentProject, action: openProjectFolder },
-  ]},
-  { key: 'edit', label: t('topbar.menu.edit'), items: [
-    { key: 'undo', label: t('topbar.menu.undo'), shortcut: 'Ctrl+Z', action: () => emitEditorCommand('undo') },
-    { key: 'redo', label: t('topbar.menu.redo'), shortcut: 'Ctrl+Shift+Z', action: () => emitEditorCommand('redo') },
-  ]},
-  { key: 'tools', label: t('topbar.menu.tools'), items: [
-    { key: 'global-search', label: t('topbar.menu.search'), shortcut: shortcuts.bindingLabel('app.globalSearch'), action: () => requestGlobalSearchOpen() },
-  ]},
-  { key: 'help', label: t('topbar.menu.help'), items: [
-    { key: 'tutorial', label: t('topbar.menu.tutorial'), action: openTutorial },
-    { key: 'docs', label: t('topbar.menu.docs'), action: openDocs },
-  ]},
-]);
+const menus = computed<{ key: string; label: string; items: TopBarMenuItem[] }[]>(() => {
+  const items: { key: string; label: string; items: TopBarMenuItem[] }[] = [
+    { key: 'file', label: t('topbar.menu.file'), items: [
+      { key: 'save', label: t('topbar.menu.save'), shortcut: shortcuts.bindingLabel('app.save'), action: () => emitEditorCommand('save') },
+      { key: 'open-project-folder', label: t('topbar.menu.openProjectFolder'), disabled: !projectStore.currentProject, action: openProjectFolder },
+    ]},
+    { key: 'edit', label: t('topbar.menu.edit'), items: [
+      { key: 'undo', label: t('topbar.menu.undo'), shortcut: 'Ctrl+Z', action: () => emitEditorCommand('undo') },
+      { key: 'redo', label: t('topbar.menu.redo'), shortcut: 'Ctrl+Shift+Z', action: () => emitEditorCommand('redo') },
+    ]},
+    { key: 'tools', label: t('topbar.menu.tools'), items: [
+      { key: 'global-search', label: t('topbar.menu.search'), shortcut: shortcuts.bindingLabel('app.globalSearch'), action: () => requestGlobalSearchOpen() },
+    ]},
+    { key: 'help', label: t('topbar.menu.help'), items: [
+      { key: 'tutorial', label: t('topbar.menu.tutorial'), action: openTutorial },
+      { key: 'docs', label: t('topbar.menu.docs'), action: openDocs },
+    ]},
+  ];
+  if (router.currentRoute.value.path === '/ui-designer') {
+    items.push({ key: 'ui-designer', label: t('topbar.menu.uiDesigner'), items: [
+      { key: 'new-scene', label: t('topbar.menu.uiDesignerNew'), shortcut: 'Ctrl+N', action: () => dispatchUiDesignerMenuCommand('new') },
+      { key: 'open-scene', label: t('topbar.menu.uiDesignerOpen'), shortcut: 'Ctrl+O', action: () => dispatchUiDesignerMenuCommand('open') },
+      { key: 'save-scene', label: t('topbar.menu.uiDesignerSave'), shortcut: shortcuts.bindingLabel('app.save'), action: () => dispatchUiDesignerMenuCommand('save') },
+      { key: 'save-as-scene', label: t('topbar.menu.uiDesignerSaveAs'), action: () => dispatchUiDesignerMenuCommand('saveAs') },
+      { key: 'separator-preview', separator: true },
+      { key: 'editor-preview', label: t('topbar.menu.uiDesignerEditorPreview'), shortcut: 'Ctrl+P', action: () => dispatchUiDesignerMenuCommand('editorPreview') },
+      { key: 'game-preview', label: t('topbar.menu.uiDesignerGamePreview'), shortcut: 'F6', action: () => dispatchUiDesignerMenuCommand('gamePreview') },
+      { key: 'separator-global-data', separator: true },
+      { key: 'global-data', label: t('topbar.menu.uiDesignerGlobalData'), action: () => dispatchUiDesignerMenuCommand('globalData') },
+      { key: 'separator-settings', separator: true },
+      { key: 'settings', label: t('topbar.menu.uiDesignerSettings'), action: () => dispatchUiDesignerMenuCommand('settings') },
+      { key: 'separator-help', separator: true },
+      { key: 'quick-guide', label: t('topbar.menu.uiDesignerQuickGuide'), action: () => dispatchUiDesignerMenuCommand('tour') },
+      { key: 'shortcuts', label: t('topbar.menu.uiDesignerShortcuts'), action: () => dispatchUiDesignerMenuCommand('shortcuts') },
+      { key: 'about', label: t('topbar.menu.uiDesignerAbout'), action: () => dispatchUiDesignerMenuCommand('about') },
+    ]});
+  }
+  return items;
+});
 
 function toggleMenu(key: string) {
   closePlaytestRuntimeMenu();
@@ -135,8 +166,8 @@ function closeAllMenus() {
   closePlaytestRuntimeMenu();
 }
 
-function onMenuAction(item: { action: MenuAction; disabled?: boolean }) {
-  if (item.disabled) return;
+function onMenuAction(item: TopBarMenuItem) {
+  if (item.disabled || item.separator || !item.action) return;
   closeMenus();
   void item.action();
 }
@@ -377,17 +408,19 @@ onUnmounted(() => {
     >
       {{ menu.label }}
       <div v-if="openMenu === menu.key" class="dropdown">
-        <div
-          v-for="item in menu.items"
-          :key="item.key"
-          class="dd-item"
-          :class="{ disabled: item.disabled }"
-          :data-ui-id="`topbar-menu-${menu.key}-${item.key}`"
-          @click.stop="onMenuAction(item)"
-        >
-          <span>{{ item.label }}</span>
-          <span v-if="item.shortcut" class="dd-shortcut">{{ item.shortcut }}</span>
-        </div>
+        <template v-for="item in menu.items" :key="item.key">
+          <div v-if="item.separator" class="dd-separator" role="separator" />
+          <div
+            v-else
+            class="dd-item"
+            :class="{ disabled: item.disabled }"
+            :data-ui-id="`topbar-menu-${menu.key}-${item.key}`"
+            @click.stop="onMenuAction(item)"
+          >
+            <span>{{ item.label }}</span>
+            <span v-if="item.shortcut" class="dd-shortcut">{{ item.shortcut }}</span>
+          </div>
+        </template>
       </div>
     </div>
 
@@ -724,6 +757,7 @@ onUnmounted(() => {
   color: var(--app-ink);
 }
 .dd-item.disabled{opacity:.42;cursor:not-allowed}.dd-item.disabled:hover{background:transparent}
+.dd-separator { height: 1px; margin: 4px 6px; background: var(--app-border); }
 
 .dd-shortcut {
   margin-left: auto;

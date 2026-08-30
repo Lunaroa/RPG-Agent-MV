@@ -5,14 +5,14 @@ import { UI_DESIGNER_LOCAL_SHORTCUTS, type UiDesignerShortcutDisplay } from '../
 
 const props = defineProps<{
   modelValue: boolean
-  surface: 'help' | 'shortcuts' | 'tour'
+  surface: 'about' | 'shortcuts' | 'tour'
   tourStep: number
   shortcutBindings: UiDesignerShortcutDisplay[]
 }>()
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; 'update:tourStep': [value: number]; complete: [] }>()
 const { t } = useUiDesignerI18n()
 const tourSteps: UiDesignerMessageKey[] = ['tourStep1', 'tourStep2', 'tourStep3', 'tourStep4', 'tourStep5']
-const title = () => props.surface === 'help' ? t('help') : props.surface === 'shortcuts' ? t('shortcuts') : t('tour')
+const title = () => props.surface === 'about' ? t('about') : props.surface === 'shortcuts' ? t('shortcuts') : t('tour')
 const close = (visible: boolean) => emit('update:modelValue', visible)
 const finish = () => emit('complete')
 const formatShortcut = (binding: UiDesignerShortcutDisplay) => [binding.ctrlOrMeta ? 'Ctrl/Cmd' : '', binding.alt ? 'Alt' : '', binding.shift ? 'Shift' : '', binding.key].filter(Boolean).join(' + ')
@@ -21,7 +21,7 @@ const allShortcutBindings = computed(() => [...props.shortcutBindings, ...UI_DES
 
 <template>
   <el-dialog :model-value="props.modelValue" :title="title()" width="min(620px, 92vw)" destroy-on-close :data-ui-id="props.surface === 'tour' ? 'ui-designer-onboarding-dialog' : undefined" :data-testid="props.surface === 'tour' ? 'ui-designer-onboarding-dialog' : undefined" @update:model-value="close">
-    <template v-if="props.surface === 'help'">
+    <template v-if="props.surface === 'about'">
       <div class="dialog-copy"><p>{{ t('helpBody') }}</p><p>{{ t('resourcePathHelp') }}</p></div>
     </template>
     <template v-else-if="props.surface === 'shortcuts'">

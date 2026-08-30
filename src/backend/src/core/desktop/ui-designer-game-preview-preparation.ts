@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { UiRuntimeSceneExport } from '../../../../contract/ui-designer.ts';
+import { normalizeUiRuntimeSceneGeometry } from '../../../../contract/ui-designer-geometry.ts';
+import { canonicalUiRuntimeSceneExport } from '../../../../contract/ui-designer-script.ts';
 import type { RpgMakerEngine } from '../rmmv/rpg-maker-engine.ts';
 import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import {
@@ -19,10 +21,9 @@ import {
   bundledUiDesignerRuntime,
   UI_DESIGNER_RUNTIME_PLUGIN_NAME,
   UI_DESIGNER_RUNTIME_RELATIVE_PATH,
-  UI_DESIGNER_SCENE_DIRECTORY,
-  writeUiDesignerRuntimeExport,
 } from './ui-designer-runtime-service.ts';
 import { readProjectUiDesignerGlobalData } from './ui-designer-service.ts';
+import { validateUiRuntimeSceneExport } from './ui-designer-validation.ts';
 
 export const UI_DESIGNER_GAME_PREVIEW_PLUGIN_NAME = 'RpgAgentUiDesignerPreview';
 
@@ -44,6 +45,10 @@ export function prepareUiDesignerGamePreviewProject(
   dependencies: UiDesignerGamePreviewPreparationDependencies = {},
 ): UiDesignerGamePreviewPreparation {
   const sourceLayout = inspectRmmvProject(project);
+  // Complete the one-time legacy migration before the isolated-project source
+  // snapshot is captured. Migration is an intentional source-project write;
+  // the later integrity check must only detect changes made during preparation.
+  const projectGlobalData = readProjectUiDesignerGlobalData(project);
   const isolated = prepareIsolatedStagedProject(workflowRoot, project, {
     temporaryPrefix: 'rmmv-agent-ui-preview-',
     ...(dependencies.temporaryProjectPath ? { temporaryProjectPath: dependencies.temporaryProjectPath } : {}),
@@ -67,7 +72,6 @@ export function prepareUiDesignerGamePreviewProject(
     const pluginsDirectory = path.join(layout.resourceRoot, 'js', 'plugins');
     const pluginsPath = path.join(layout.resourceRoot, 'js', 'plugins.js');
     const runtimePath = path.join(layout.resourceRoot, ...UI_DESIGNER_RUNTIME_RELATIVE_PATH.split('/'));
-    const scenePath = path.join(layout.resourceRoot, ...UI_DESIGNER_SCENE_DIRECTORY.split('/'), `${sceneName}.json`);
     const launcherPath = path.join(pluginsDirectory, `${UI_DESIGNER_GAME_PREVIEW_PLUGIN_NAME}.js`);
     const entries = readPluginEntries(pluginsPath)
       .filter((entry) => entry.name !== UI_DESIGNER_RUNTIME_PLUGIN_NAME && entry.name !== UI_DESIGNER_GAME_PREVIEW_PLUGIN_NAME);
@@ -86,16 +90,15 @@ export function prepareUiDesignerGamePreviewProject(
 
     assertOwnership();
     fs.mkdirSync(pluginsDirectory, { recursive: true });
-    fs.mkdirSync(path.dirname(scenePath), { recursive: true });
     fs.writeFileSync(runtimePath, bundledUiDesignerRuntime().source, { encoding: 'utf8' });
-    writeUiDesignerRuntimeExport(scenePath, scene, { overwrite: true });
-    const canonicalScene = JSON.parse(fs.readFileSync(scenePath, 'utf8')) as UiRuntimeSceneExport;
-    // Preview reads $global from the designer's saved global data even before
-    // it is published as data/GlobalUI.json in the source project. Embed it in
-    // the launcher instead of writing a file: packaged game runtimes may lack
-    // Node integration, so the runtime's fs-based load would silently fail.
-    const globalData = readProjectUiDesignerGlobalData(project);
-    fs.writeFileSync(launcherPath, previewLauncherSource(canonicalScene, globalData.metadata ? globalData.data : null), { encoding: 'utf8' });
+    const canonicalScene = canonicalizePreviewScene(scene);
+    // Embed the current editor state so preview can include unsaved changes
+    // without creating a second scene artifact in either project.
+    fs.writeFileSync(
+      launcherPath,
+      previewLauncherSource(canonicalScene, projectGlobalData.metadata ? projectGlobalData.data : null),
+      { encoding: 'utf8' },
+    );
     fs.writeFileSync(pluginsPath, serializePluginEntries(entries), { encoding: 'utf8' });
     assertOwnership();
 
@@ -150,6 +153,16 @@ function readPluginEntries(filePath: string): PluginEntry[] {
 
 function serializePluginEntries(entries: readonly PluginEntry[]): string {
   return `var $plugins =\n${JSON.stringify(entries, null, 2)};\n`;
+}
+
+function canonicalizePreviewScene(scene: UiRuntimeSceneExport): UiRuntimeSceneExport {
+  const report = validateUiRuntimeSceneExport(scene);
+  if (!report.valid) {
+    throw new UiDesignerGamePreviewPreparationError(
+      `UI runtime scene validation failed: ${report.errors.map((issue) => issue.message).join('; ')}`,
+    );
+  }
+  return normalizeUiRuntimeSceneGeometry(canonicalUiRuntimeSceneExport(scene));
 }
 
 function previewLauncherSource(scene: UiRuntimeSceneExport, globalData: unknown): string {

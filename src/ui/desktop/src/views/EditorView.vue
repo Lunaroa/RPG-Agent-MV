@@ -9,7 +9,7 @@
       v-model:show-regions="showRegions"
       v-model:show-tile-flags="showTileFlags"
       v-model:show-ulds="showUldsLayers"
-      :ulds-available="selectedMapId != null"
+      :ulds-available="uldsPluginEnabled && selectedMapId != null"
       :tile-flags-available="tileFlagsAvailable"
       :supports-layer-selection="Boolean(editorCatalog)"
       :zoom="zoom"
@@ -216,6 +216,7 @@
       @save="saveProperties"
     />
     <UldsPanel
+      v-if="uldsPluginEnabled"
       :visible="uldsPanelOpen"
       :map-name="currentMapName"
       :layers="savedUldsLayers"
@@ -369,6 +370,7 @@ import { useEventPlacementAskStore, type PlacementListEvent } from '../stores/ev
 import { useWorkbenchUiStore } from '../stores/workbenchUi';
 import { useProjectStore } from '../stores/project';
 import { useShortcutsStore } from '../stores/shortcuts';
+import { useProductPluginsStore } from '../stores/productPlugins';
 import { placeContractAtCell } from '../composables/usePlacementAtCell';
 import type { MvEvent, MvMap, UldsDrawLayer } from '../composables/useMapRenderer';
 import { ULDS_DEFAULT_Z, orderUldsLayerKeys, parseUldsNote, staticUldsBlendMode, staticUldsBoolean, staticUldsCoordinate, staticUldsNumber, writeUldsNote, type UldsLayerRecord } from '@contract/ulds';
@@ -391,6 +393,7 @@ import {
   type MapPreviewDiagnostic,
 } from '../utils/mapPreviewDiagnostics';
 import { formatUserFacingErrorMessage } from '../utils/user-facing-error';
+import { registerProductPluginLifecycleGuard } from '../utils/productPluginLifecycle';
 import { useI18n, type MessageKey } from '../i18n';
 import type {
   MapPreviewPreflightFailure,
@@ -408,6 +411,7 @@ const eventPlacementAsk = useEventPlacementAskStore();
 const workbenchUi = useWorkbenchUiStore();
 const projectStore = useProjectStore();
 const shortcuts = useShortcutsStore();
+const productPlugins = useProductPluginsStore();
 const { language, t } = useI18n();
 
 // 聊天浮层盖住的是顶部工具栏（满宽不挤压）；地图区按浮层宽度右移让出可见空间。
@@ -508,6 +512,7 @@ const currentParallaxImage = shallowRef<HTMLImageElement | null>(null);
 const showUldsLayers = ref(false);
 const uldsPanelOpen = ref(false);
 const uldsSaving = ref(false);
+const uldsPluginEnabled = computed(() => productPlugins.isEnabled('unlimited-map-layers'));
 // Panel draft while editing; null means the map note is the live source.
 const uldsDraftLayers = shallowRef<UldsLayerRecord[] | null>(null);
 const savedUlds = computed(() => parseUldsNote(currentMapNote.value));
@@ -521,14 +526,21 @@ const uldsDirty = computed(() => (
 ));
 const uldsDrawLayers = shallowRef<UldsDrawLayer[]>([]);
 const canvasUldsLayers = computed<UldsDrawLayer[]>(() => (
-  showUldsLayers.value && mode.value !== 'preview' ? uldsDrawLayers.value : []
+  uldsPluginEnabled.value && showUldsLayers.value && mode.value !== 'preview' ? uldsDrawLayers.value : []
 ));
 const uldsImageCache = new Map<string, HTMLImageElement | null>();
 let uldsImageLoadSequence = 0;
+let unregisterUldsPluginLifecycle: (() => void) | null = null;
 
 watch(effectiveUldsLayers, rebuildUldsDrawLayers);
 watch([effectiveUldsLayers, editorCatalog], () => { void ensureUldsImages(); }, { immediate: true });
 watch(selectedMapId, () => { uldsDraftLayers.value = null; });
+watch(uldsPluginEnabled, (enabled) => {
+  if (enabled) return;
+  showUldsLayers.value = false;
+  uldsPanelOpen.value = false;
+  if (!uldsDirty.value) uldsDraftLayers.value = null;
+});
 
 function uldsLayerImageKey(record: UldsLayerRecord): { key: string; path: string; name: string } | null {
   const name = String(record.name || '').trim();
@@ -694,7 +706,7 @@ const {
   setMap, clearMap, setPaletteCanvas, setCanvasElement, setOverlayElement, setRegionLabelElement, setScrollElement, selectTileTab, selectMapTool, selectTileMode, selectShadowMode, canvasCell, eventAtCell,
   onPaletteMouseDown, onPaletteMouseMove, onPaletteMouseUp, onPaletteMouseLeave,
   onCanvasMouseDown, onCanvasMouseMove, onCanvasMouseLeave, onCanvasDoubleClick, onCanvasWheel, onCanvasScroll,
-  renderMap, renderOverlay, zoomIn, zoomOut, resetZoom, setZoom, undo, redo, getPlacementCell, ensureMapCellVisible,
+  renderMap, renderOverlay, zoomIn, zoomOut, resetZoom, setZoom, undo, redo, getPlacementCell, getLastEventClickCell, ensureMapCellVisible,
 } = canvasEditor;
 
 const placementStatusHint = computed(() => {
@@ -1333,6 +1345,12 @@ const zoomControls = { zoomIn, zoomOut, resetZoom };
 
 onMounted(() => {
   /* Data loading is driven by KeepAlive activation. */
+  void productPlugins.load();
+  unregisterUldsPluginLifecycle = registerProductPluginLifecycleGuard('unlimited-map-layers', {
+    isDirty: () => uldsDirty.value,
+    save: saveUldsLayers,
+    discard: discardUldsLayers,
+  });
 });
 
 onActivated(() => {
@@ -1453,6 +1471,8 @@ async function loadEditorProject(startVersion: string, versionMapId?: number): P
 
 onUnmounted(() => {
   unbindEditorSurface();
+  unregisterUldsPluginLifecycle?.();
+  unregisterUldsPluginLifecycle = null;
 });
 watch(mode, (value, previous) => {
   persistWorkspaceSelection();
@@ -2320,7 +2340,7 @@ async function saveMapNote(mapId: number, note: string): Promise<boolean> {
 }
 
 function openUldsPanel() {
-  if (selectedMapId.value == null) return;
+  if (!uldsPluginEnabled.value || selectedMapId.value == null) return;
   uldsPanelOpen.value = true;
   showUldsLayers.value = true;
 }
@@ -2329,17 +2349,25 @@ function onUldsLayersInput(layers: UldsLayerRecord[]) {
   uldsDraftLayers.value = layers;
 }
 
-async function saveUldsLayers() {
+async function saveUldsLayers(): Promise<boolean> {
   const mapId = selectedMapId.value;
   const layers = uldsDraftLayers.value;
-  if (mapId == null || layers == null) return;
+  if (mapId == null || layers == null) return false;
   uldsSaving.value = true;
   try {
     const saved = await saveMapNote(mapId, writeUldsNote(currentMapNote.value, layers, savedUlds.value.invalidBlocks));
     if (saved) uldsDraftLayers.value = null;
+    return saved;
   } finally {
     uldsSaving.value = false;
   }
+}
+
+function discardUldsLayers(): boolean {
+  uldsDraftLayers.value = null;
+  uldsPanelOpen.value = false;
+  showUldsLayers.value = false;
+  return true;
 }
 
 async function confirmDiscardUldsDraft(): Promise<boolean> {
@@ -2736,6 +2764,7 @@ async function cutEvent(eventId: number) {
 }
 async function pasteEvent(x?: number, y?: number) {
   if (!eventClipboard.value || selectedMapId.value == null) return;
+  if (x != null && y != null && eventAtCell(x, y)) { ElMessage.warning(t('editor.event.cellOccupied')); return; }
   const event = { ...clone(eventClipboard.value.data), id: 0, ...(x == null ? {} : { x }), ...(y == null ? {} : { y }) };
   busy.value = true;
   try {
@@ -2870,7 +2899,7 @@ function onEditorKeyDown(event: KeyboardEvent) {
   else if (event.key === 'Enter' && selectedEventId.value != null) { event.preventDefault(); openEventEditor(selectedEventId.value); }
   else if (ctrl && event.key.toLowerCase() === 'c' && selectedEventId.value != null) { event.preventDefault(); copyEvent(selectedEventId.value); }
   else if (ctrl && event.key.toLowerCase() === 'x' && selectedEventId.value != null) { event.preventDefault(); void cutEvent(selectedEventId.value); }
-  else if (ctrl && event.key.toLowerCase() === 'v' && eventClipboard.value) { event.preventDefault(); void pasteEvent(); }
+  else if (ctrl && event.key.toLowerCase() === 'v' && eventClipboard.value) { event.preventDefault(); const cell = getLastEventClickCell(); void pasteEvent(cell?.x, cell?.y); }
 }
 function isFormTarget(target: EventTarget | null) { return ['INPUT', 'TEXTAREA', 'SELECT'].includes((target as HTMLElement | null)?.tagName || ''); }
 function setStatus(text: string, kind: EditorStatusKind) { statusText.value = text; statusKind.value = kind; }

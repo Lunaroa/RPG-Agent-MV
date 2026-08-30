@@ -5,7 +5,7 @@ import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 import { documentation, system } from '../../../api/client'
 
 const props = defineProps<{ designer: UiDesignerController }>()
-const emit = defineEmits<{ newScene: []; returnToScene: []; sceneReady: [] }>()
+const emit = defineEmits<{ newScene: []; open: []; returnToScene: []; sceneReady: [] }>()
 const designer = props.designer
 const { t, language } = useUiDesignerI18n()
 const learningError = ref('')
@@ -56,7 +56,7 @@ const loadSceneTemplate = async (name: string) => {
       <div class="welcome-actions">
         <el-button v-if="designer.scenes.length" data-ui-id="ui-designer-welcome-return" data-testid="ui-designer-welcome-return" @click="emit('returnToScene')">{{ t('returnToScene') }}</el-button>
         <el-button data-ui-id="ui-designer-welcome-new-scene" data-testid="ui-designer-new" type="primary" @click="emit('newScene')">{{ t('newScene') }}</el-button>
-        <el-button data-testid="ui-designer-open" :disabled="!designer.canSave" @click="void openScene()">{{ t('open') }}</el-button>
+        <el-button data-testid="ui-designer-open" :disabled="!designer.canSave || !designer.hasProject" @click="emit('open')">{{ t('open') }}</el-button>
       </div>
     </div>
     <el-alert v-if="!designer.canSave" type="info" :closable="false" :title="t('adapterRequired')" />

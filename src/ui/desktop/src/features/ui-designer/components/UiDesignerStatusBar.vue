@@ -7,7 +7,7 @@ const props = defineProps<{ designer: UiDesignerController }>()
 const designer = props.designer
 const { t } = useUiDesignerI18n()
 const runtimeLabels: Record<UiRuntimeStatus['state'], UiDesignerMessageKey> = {
-  unknown: 'runtimeUnknown', missing: 'runtimeMissing', 'file-unconfigured': 'runtimeFileUnconfigured', 'configured-disabled': 'runtimeConfiguredDisabled', 'enabled-compatible': 'runtimeEnabledCompatible', 'version-too-old': 'runtimeVersionTooOld', 'content-mismatch': 'runtimeContentMismatch', 'staged-pending': 'runtimeStagedPending', error: 'runtimeError',
+  unknown: 'runtimeUnknown', missing: 'runtimeMissing', 'file-unconfigured': 'runtimeFileUnconfigured', 'configured-disabled': 'runtimeConfiguredDisabled', 'enabled-compatible': 'runtimeEnabledCompatible', 'version-too-old': 'runtimeVersionTooOld', 'content-mismatch': 'runtimeContentMismatch', error: 'runtimeError',
 }
 const previewLabels: Record<UiPreviewState, UiDesignerMessageKey> = { idle: 'previewIdle', unavailable: 'previewUnavailable', preparing: 'previewPreparing', running: 'previewRunning', stopped: 'previewStopped', error: 'previewError' }
 const runtimeLabel = (state: UiRuntimeStatus['state']) => t(runtimeLabels[state])
@@ -30,10 +30,9 @@ const compatibilitySummary = () => {
     <span v-if="designer.runtimeDiagnostics.length" class="status-item warning">{{ t('runtimeDiagnostics') }}: {{ designer.runtimeDiagnostics.length }}</span>
     <span class="status-item">{{ t('runtime') }}: {{ runtimeLabel(designer.runtimeStatus.state) }}</span>
     <span v-if="designer.runtimeStatus.projectCompatibility" class="status-item" :class="{ warning: !designer.runtimeStatus.projectCompatibility.engineVersionSupported }">{{ compatibilitySummary() }}</span>
-    <span v-if="designer.runtimeStaging?.affectedFiles.length" class="status-item">{{ t('stagedSummary') }} ({{ designer.runtimeStaging.affectedFiles.join(', ') }})</span>
     <span class="status-item">{{ t('editorPreviewStatus') }}: {{ previewLabel(designer.previewStatus) }}</span>
-    <el-button size="small" text :disabled="designer.isPreviewing || !designer.canManageRuntime" @click="void designer.checkRuntime()">{{ t('checkRuntime') }}</el-button>
-    <span class="status-item" :class="{ error: designer.previewStatus === 'error' || designer.previewStatus === 'unavailable' || designer.fileStatus === 'error' || designer.resourceStatus === 'error' || designer.actionError || designer.recoveryCleanupPending || designer.runtimeProofMissing }">{{ designer.recoveryCleanupPending ? t('recoveryCleanupPending') : designer.runtimeProofMissing ? t('runtimeProofMissing') : operationSummary() }}<details v-if="!designer.recoveryCleanupPending && operationDetails()" class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ operationDetails() }}</span></details></span>
+    <el-button size="small" text :disabled="designer.isPreviewing || !designer.hasProject" @click="void designer.checkRuntime()">{{ t('checkRuntime') }}</el-button>
+    <span class="status-item" :class="{ error: designer.previewStatus === 'error' || designer.previewStatus === 'unavailable' || designer.fileStatus === 'error' || designer.resourceStatus === 'error' || designer.actionError || designer.recoveryCleanupPending }">{{ designer.recoveryCleanupPending ? t('recoveryCleanupPending') : operationSummary() }}<details v-if="!designer.recoveryCleanupPending && operationDetails()" class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ operationDetails() }}</span></details></span>
   </footer>
 </template>
 

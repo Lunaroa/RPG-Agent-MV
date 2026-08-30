@@ -40,9 +40,18 @@
               </span>
               <span class="c-num"><input v-model="row.x" :placeholder="t('editor.ulds.coordPlaceholder')" @change="commitCell(row, 'x')" /></span>
               <span class="c-num"><input v-model="row.y" :placeholder="t('editor.ulds.coordPlaceholder')" @change="commitCell(row, 'y')" /></span>
-              <span class="c-num"><input v-model="row.z" placeholder="0.5" @change="commitCell(row, 'z')" /></span>
-              <span class="c-num"><input v-model="row['scale.x']" placeholder="1" @change="commitCell(row, 'scale.x')" /></span>
-              <span class="c-num"><input v-model="row['scale.y']" placeholder="1" @change="commitCell(row, 'scale.y')" /></span>
+              <span class="c-num">
+                <input v-if="isExpression(row.z)" class="ulds-expr" :value="String(row.z)" disabled :title="t('editor.ulds.expressionHint')" />
+                <el-input-number v-else size="small" controls-position="right" :model-value="staticUldsNumber(row.z, ULDS_DEFAULT_Z)" :step="0.1" data-ui-id="ulds-layer-z" @change="setNumericCell(row, 'z', $event)" />
+              </span>
+              <span class="c-num">
+                <input v-if="isExpression(row['scale.x'])" class="ulds-expr" :value="String(row['scale.x'])" disabled :title="t('editor.ulds.expressionHint')" />
+                <el-input-number v-else size="small" controls-position="right" :model-value="staticUldsNumber(row['scale.x'], 1)" :step="0.1" data-ui-id="ulds-layer-scale-x" @change="setNumericCell(row, 'scale.x', $event)" />
+              </span>
+              <span class="c-num">
+                <input v-if="isExpression(row['scale.y'])" class="ulds-expr" :value="String(row['scale.y'])" disabled :title="t('editor.ulds.expressionHint')" />
+                <el-input-number v-else size="small" controls-position="right" :model-value="staticUldsNumber(row['scale.y'], 1)" :step="0.1" data-ui-id="ulds-layer-scale-y" @change="setNumericCell(row, 'scale.y', $event)" />
+              </span>
               <span class="c-blend">
                 <input
                   v-if="isExpression(row.blendMode)"
@@ -58,7 +67,10 @@
                   <option :value="3">{{ t('editor.ulds.blend3') }}</option>
                 </select>
               </span>
-              <span class="c-num"><input v-model="row.opacity" placeholder="255" @change="commitCell(row, 'opacity')" /></span>
+              <span class="c-num">
+                <input v-if="isExpression(row.opacity)" class="ulds-expr" :value="String(row.opacity)" disabled :title="t('editor.ulds.expressionHint')" />
+                <el-input-number v-else size="small" controls-position="right" :model-value="staticUldsNumber(row.opacity, 255)" :min="0" :max="255" :step="1" :precision="0" data-ui-id="ulds-layer-opacity" @change="setNumericCell(row, 'opacity', $event)" />
+              </span>
               <span class="c-loop">
                 <input
                   v-if="isLoopExpression(row.loop)"
@@ -70,8 +82,6 @@
                 <input v-else type="checkbox" :checked="staticUldsBoolean(row.loop, false)" data-ui-id="ulds-layer-loop" @change="setLoop(row, $event)" />
               </span>
               <span class="c-ops">
-                <button type="button" class="ulds-mini-btn" :disabled="index === 0" :title="t('editor.ulds.moveUp')" @click="moveRow(index, -1)">↑</button>
-                <button type="button" class="ulds-mini-btn" :disabled="index === draft.length - 1" :title="t('editor.ulds.moveDown')" @click="moveRow(index, 1)">↓</button>
                 <button type="button" class="ulds-mini-btn danger" :title="t('editor.ulds.deleteRow')" @click="deleteRow(index)">✕</button>
               </span>
             </div>
@@ -96,7 +106,7 @@ import { LAYER_Z } from '../../constants/layerZIndex';
 import ImageAssetPickerDialog from './ImageAssetPickerDialog.vue';
 import { useI18n } from '../../i18n';
 import type { EditorProjectCatalog } from '../../api/client';
-import { staticUldsBoolean, staticUldsNumber, type UldsLayerRecord } from '@contract/ulds';
+import { ULDS_DEFAULT_Z, staticUldsBoolean, staticUldsNumber, type UldsLayerRecord } from '@contract/ulds';
 
 const props = defineProps<{
   visible: boolean;
@@ -155,6 +165,12 @@ function isExpression(value: unknown): boolean {
 function isLoopExpression(value: unknown): boolean {
   return isExpression(value) && value !== 'true' && value !== 'false';
 }
+type UldsNumericKey = 'z' | 'scale.x' | 'scale.y' | 'opacity';
+function setNumericCell(row: UldsLayerRecord, key: UldsNumericKey, value: number | undefined) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) delete row[key];
+  else row[key] = key === 'opacity' ? Math.min(255, Math.max(0, Math.round(value))) : value;
+  commitRow();
+}
 function setBlendMode(row: UldsLayerRecord, event: Event) {
   row.blendMode = Number((event.target as HTMLSelectElement).value);
   commitRow();
@@ -172,13 +188,6 @@ function addRow() {
 }
 function deleteRow(index: number) {
   draft.value.splice(index, 1);
-  commitRow();
-}
-function moveRow(index: number, delta: -1 | 1) {
-  const target = index + delta;
-  if (target < 0 || target >= draft.value.length) return;
-  const [row] = draft.value.splice(index, 1);
-  draft.value.splice(target, 0, row);
   commitRow();
 }
 function openPicker(index: number) {
@@ -230,7 +239,7 @@ function onDragEnd() { dragOffset = null; }
   position: absolute;
   top: 64px;
   right: 16px;
-  width: min(860px, calc(100vw - 32px));
+  width: min(960px, calc(100vw - 32px));
   display: flex;
   flex-direction: column;
   max-height: min(560px, calc(100vh - 96px));
@@ -255,7 +264,7 @@ function onDragEnd() { dragOffset = null; }
 .ulds-table { display: flex; flex-direction: column; font-size: 11px; }
 .ulds-row {
   display: grid;
-  grid-template-columns: minmax(120px, 1.6fr) 72px 72px 52px 56px 56px 76px 52px 34px 76px;
+  grid-template-columns: minmax(120px, 1.6fr) 72px 72px 72px 78px 78px 76px 78px 34px 24px;
   gap: 2px;
   align-items: center;
   padding: 1px 0;
@@ -274,6 +283,7 @@ function onDragEnd() { dragOffset = null; }
 .c-name input { flex: 1 1 auto; min-width: 0; }
 .c-ops { display: flex; gap: 2px; justify-content: flex-end; }
 .c-num input, .c-name input { width: 100%; box-sizing: border-box; }
+.c-num :deep(.el-input-number) { width: 100%; }
 .c-blend select, .c-blend input, .c-loop input.ulds-expr { width: 100%; box-sizing: border-box; }
 .ulds-path-suffix { flex: 0 0 auto; color: var(--app-ink-soft); font-size: 10px; }
 .c-loop { text-align: center; }

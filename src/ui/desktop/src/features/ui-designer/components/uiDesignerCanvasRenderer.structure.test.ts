@@ -26,7 +26,7 @@ const compileComponent = (name: string) => {
 }
 
 test('authoring canvas compiles with Fabric as the single design renderer', () => {
-  for (const name of ['./UiDesignerCanvas.vue', './UiDesignerFabricCanvas.vue', './UiPropertyField.vue', './UiDesignerShell.vue', './UiDesignerExportSurface.vue', '../../../views/UiDesignerView.vue']) compileComponent(name)
+  for (const name of ['./UiDesignerCanvas.vue', './UiDesignerFabricCanvas.vue', './UiPropertyField.vue', './UiDesignerShell.vue', './UiDesignerOpenSceneSurface.vue', './UiDesignerSaveAsSurface.vue', './UiDesignerSceneSettingsSurface.vue', '../../../views/UiDesignerView.vue']) compileComponent(name)
   assert.equal(fs.existsSync(new URL('./UiCanvasNode.vue', import.meta.url)), false)
   assert.equal(fs.existsSync(new URL('./UiDesignerStaticNodePreview.vue', import.meta.url)), false)
 })
@@ -492,12 +492,8 @@ test('external previews keep the existing Element Plus tree owner mounted', () =
   assert.doesNotMatch(shell, /nodePanelRef|expandedNodeIds|fullscreenPreview/)
 })
 
-test('project publishing reviews staged files before applying them', () => {
-  assert.match(shell, /runtimeInstallPromptTitle/)
-  assert.match(shell, /await rawDesigner\.checkRuntime\(\)/)
-  assert.match(shell, /props\.applyProjectChanges\?\./)
-  assert.match(routedView, /mapsApi\.projectStaging\(project\)/)
-  assert.match(routedView, /collectStagedFiles\(status, fallbackFiles\)/)
-  assert.match(routedView, /ElMessageBox\.confirm\(/)
-  assert.match(routedView, /mapsApi\.applyProjectStaging\(/)
+test('scene persistence has no project publishing or staging confirmation path', () => {
+  assert.doesNotMatch(shell, /runtimeInstallPromptTitle|applyProjectChanges|UiDesignerExportSurface/)
+  assert.doesNotMatch(routedView, /projectStaging|applyProjectStaging|collectStagedFiles/)
+  assert.match(shell, /rawDesigner\.save\('saveAs', \{ sceneName \}\)/)
 })

@@ -10,7 +10,6 @@ import type {
   UiDesignerSceneFileRecord,
   UiDesignerResourceAdapter,
   UiDesignerRuntimeAdapter,
-  UiDesignerRuntimeStageResult,
   UiDesignerRendererHostAdapter,
   UiDesignerGamePreviewAdapter,
   UiDesignerRendererHostSession,
@@ -82,9 +81,6 @@ export const unavailableFileAdapter: UiDesignerPersistenceAdapter = {
   async writeRecovery() {
     return unavailable('Recovery adapter is not connected.')
   },
-  async exportRuntime() {
-    return unavailable('Runtime export adapter is not connected; no file was written.')
-  },
   async readGlobalData() {
     return unavailable('Global data adapter is not connected; no project data was loaded.')
   },
@@ -120,15 +116,6 @@ export const unavailableProjectAdapter: UiDesignerProjectAdapter = {
 export const unavailableRuntimeAdapter: UiDesignerRuntimeAdapter = {
   async checkRuntime(): Promise<UiRuntimeStatus> {
     return { state: 'unknown', message: 'Runtime inspection adapter is not connected.' }
-  },
-  async installRuntime() {
-    return unavailable('Runtime install adapter is not connected; no plugin files changed.')
-  },
-  async stageScene() {
-    return unavailable('Runtime staging adapter is not connected; no project files changed.')
-  },
-  async stageGlobalData() {
-    return unavailable('Runtime staging adapter is not connected; no project files changed.')
   },
 }
 
@@ -178,28 +165,6 @@ function asSaveResult<T>(value: unknown, fallbackMessage: string): UiDesignerSav
   return result
 }
 
-function unwrapRuntimeResult(result: UiFileResult<unknown>): UiFileResult<UiDesignerRuntimeStageResult> {
-  const value = result.value
-  if (value && typeof value === 'object' && 'runtime' in value) {
-    const stage = value as Partial<UiDesignerRuntimeStageResult> & { runtime?: UiRuntimeStatus }
-    if (!stage.runtime || typeof stage.digest !== 'string' || !Array.isArray(stage.affectedFiles)) return { ...result, status: 'error', value: undefined, message: 'Runtime staging result is incomplete.' }
-    return {
-      ...result,
-      value: {
-        status: stage.status === 'staged' ? 'staged' : 'staged',
-        affectedFiles: stage.affectedFiles.filter((item): item is string => typeof item === 'string'),
-        runtime: stage.runtime,
-        sceneRelativePath: typeof stage.sceneRelativePath === 'string' ? stage.sceneRelativePath : undefined,
-        digest: stage.digest,
-        transaction: stage.transaction,
-      },
-      affectedFiles: result.affectedFiles ?? stage.affectedFiles,
-      digest: result.digest ?? stage.digest,
-    }
-  }
-  return { ...result, status: result.status === 'success' ? 'error' : result.status, value: undefined, message: result.message || 'Runtime staging result is incomplete.' }
-}
-
 export function createDesktopUiDesignerAdapters(projectPath?: string, lifecycle?: UiDesignerAdapterBundle['lifecycle']): UiDesignerAdapterBundle {
   const file: UiDesignerPersistenceAdapter = {
     async open(request) { return asSaveResult(await api.uiDesigner.open({ ...request, project: projectPath }), 'The UI designer source file could not be opened.') },
@@ -214,7 +179,6 @@ export function createDesktopUiDesignerAdapters(projectPath?: string, lifecycle?
     async clearRecovery(id) { return asResult(await api.uiDesigner.clearRecovery(id), 'The recovery snapshot could not be cleared.') },
     async readPreferences() { return asResult(await api.uiDesigner.readPreferences(), 'Designer preferences are unavailable.') },
     async writePreferences(value) { return asResult(await api.uiDesigner.writePreferences(value), 'Designer preferences could not be saved.') },
-    async exportRuntime(scene, request) { return asResult(await api.uiDesigner.exportRuntime({ scene, ...request }), 'The runtime JSON could not be exported.') },
     async readGlobalData(request) { return asResult(await api.uiDesigner.readGlobalData({ ...request, project: projectPath }), 'The project global UI data could not be loaded.') },
     async saveGlobalData(data, request) { return asSaveResult(await api.uiDesigner.saveGlobalData({ ...request, project: projectPath }, data), 'The project global UI data could not be saved.') },
   }
@@ -235,9 +199,6 @@ export function createDesktopUiDesignerAdapters(projectPath?: string, lifecycle?
   }
   const runtime: UiDesignerRuntimeAdapter = {
     async checkRuntime() { const result = asResult<UiRuntimeStatus>(await api.uiDesigner.checkRuntime({ project: projectPath }), 'Runtime inspection failed.'); return result.value ?? { state: 'error', message: result.message } },
-    async installRuntime(_project, options) { return unwrapRuntimeResult(asResult(await api.uiDesigner.installRuntime({ project: projectPath, ...options }), 'Runtime installation could not be staged.')) },
-    async stageScene(_project, scene, options) { return unwrapRuntimeResult(asResult(await api.uiDesigner.stageScene({ project: projectPath, scene, ...options }), 'Runtime scene staging failed.')) },
-    async stageGlobalData(_project, data) { return unwrapRuntimeResult(asResult(await api.uiDesigner.stageGlobalData({ project: projectPath, data }), 'Global UI data staging failed.')) },
   }
   const rendererHost: UiDesignerRendererHostAdapter = {
     async start(generation) {

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { UiDesignerAdapterBundle, UiDesignerLifecycleAdapter, UiRuntimeStatus } from '@contract/ui-designer'
+import type { UiDesignerAdapterBundle, UiDesignerLifecycleAdapter } from '@contract/ui-designer'
 import { useUiDesigner, type UiDesignerController } from '../composables/useUiDesigner'
 import { useUiDesignerLifecycle } from '../composables/useUiDesignerLifecycle'
 import { createUiDesignerShortcutRegistry, type UiDesignerShortcutDisplay } from '../composables/shortcutRegistry'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
+import { UI_DESIGNER_MENU_COMMAND_EVENT, uiDesignerMenuCommandFromEvent } from '../menuCommands'
 import { normalizePaneSize } from '../models/geometry'
 import { isBuiltInUiDesignerTemplate, uiDesignerBuiltInTemplateSceneName } from '../models/templates'
 import UiDesignerCanvas from './UiDesignerCanvas.vue'
@@ -17,7 +18,9 @@ import UiDesignerSceneTabs from './UiDesignerSceneTabs.vue'
 import UiDesignerToolbar from './UiDesignerToolbar.vue'
 import UiDesignerWelcome from './UiDesignerWelcome.vue'
 import UiDesignerSettingsSurface from './UiDesignerSettingsSurface.vue'
-import UiDesignerExportSurface from './UiDesignerExportSurface.vue'
+import UiDesignerSceneSettingsSurface from './UiDesignerSceneSettingsSurface.vue'
+import UiDesignerOpenSceneSurface from './UiDesignerOpenSceneSurface.vue'
+import UiDesignerSaveAsSurface from './UiDesignerSaveAsSurface.vue'
 import UiDesignerGlobalDataSurface from './UiDesignerGlobalDataSurface.vue'
 import UiDesignerNewSceneSurface from './UiDesignerNewSceneSurface.vue'
 import UiDesignerHelpSurface from './UiDesignerHelpSurface.vue'
@@ -27,18 +30,14 @@ const props = withDefaults(defineProps<{
   projectPath?: string
   lifecycleAdapter?: UiDesignerLifecycleAdapter
   manageProjectContext?: boolean
-  applyProjectChanges?: (fallbackFiles: string[]) => Promise<boolean>
 }>(), { adapters: undefined, projectPath: undefined, lifecycleAdapter: undefined, manageProjectContext: true })
 const { t } = useUiDesignerI18n()
 let rawDesigner!: ReturnType<typeof useUiDesigner>
-const surface = ref<'settings' | 'help' | 'shortcuts' | 'tour' | 'export' | 'newScene' | 'globalData' | null>(null)
+const surface = ref<'settings' | 'sceneSettings' | 'about' | 'shortcuts' | 'tour' | 'newScene' | 'openScene' | 'saveAs' | 'globalData' | null>(null)
 const tourStep = ref(0)
 const showWelcome = ref(true)
-const exportPath = ref('')
-const exportCompleted = ref(false)
-const runtimePromptVisible = ref(false)
-const runtimePromptBusy = ref(false)
-const runtimePromptDismissedProject = ref('')
+const saveAsInitialName = ref('')
+const saveAsBusy = ref(false)
 const newSceneDraft = reactive({ name: '', width: 816, height: 624, sceneBase: 'Scene_Base' })
 const newSceneTemplate = ref('blank')
 const newSceneNameAutomatic = ref(true)
@@ -83,7 +82,6 @@ watch(() => rawDesigner.fileStatus.value, (status, previous) => {
   if (status !== 'error' || previous === 'error') return
   ElMessage({ type: 'error', message: rawDesigner.fileMessage.value ? `${t('operationError')}: ${rawDesigner.fileMessage.value}` : t('operationError') })
 })
-const firstSaveConflict = computed(() => Boolean(designer.fileConflict && !designer.runtimeConflict && !designer.activeScene?.sourcePath))
 const lifecycle = useUiDesignerLifecycle({
   adapter: props.lifecycleAdapter,
   isDirty: () => rawDesigner.isDirty.value || rawDesigner.isEditorPreviewing.value || rawDesigner.isPreviewing.value || rawDesigner.previewCleanupPending.value || rawDesigner.previewDisposalInFlight.value,
@@ -135,45 +133,38 @@ const completeTour = async () => {
   await rawDesigner.savePreferences({ tourCompleted: true })
 }
 const closeSurface = (visible: boolean) => { if (!visible) { if (surface.value === 'tour') void completeTour(); else surface.value = null } }
-const runtimeNeedsStartupPrompt = computed(() => ['missing', 'file-unconfigured', 'configured-disabled', 'version-too-old'].includes(designer.runtimeStatus.state))
-const runtimePromptLabels: Partial<Record<UiRuntimeStatus['state'], UiDesignerMessageKey>> = {
-  missing: 'runtimeMissing',
-  'file-unconfigured': 'runtimeFileUnconfigured',
-  'configured-disabled': 'runtimeConfiguredDisabled',
-  'version-too-old': 'runtimeVersionTooOld',
+const openScenePicker = async () => {
+  if (!rawDesigner.hasProject.value) return
+  await rawDesigner.loadWelcomeRecords()
+  surface.value = 'openScene'
 }
-const runtimePromptStatusLabel = () => t(runtimePromptLabels[designer.runtimeStatus.state] ?? 'runtimeUnknown')
-const dismissRuntimePrompt = () => {
-  runtimePromptDismissedProject.value = props.projectPath ?? ''
-  runtimePromptVisible.value = false
+const openProjectScene = async (sourcePath: string) => {
+  if (!(await rawDesigner.open({ path: sourcePath }))) return
+  surface.value = null
+  showWelcome.value = false
 }
-const installRuntimeFromPrompt = async () => {
-  if (runtimePromptBusy.value) return
-  let forceModifiedRuntime = false
-  if (designer.runtimeStatus.needsConfirmation) {
-    try {
-      await ElMessageBox.confirm(t('runtimeModifiedBody'), t('runtimeModifiedTitle'), {
-        type: 'warning',
-        confirmButtonText: t('replaceRuntime'),
-        cancelButtonText: t('lifecycleCancel'),
-        closeOnClickModal: false,
-      })
-      forceModifiedRuntime = true
-    } catch {
-      return
-    }
-  }
-  runtimePromptBusy.value = true
+const openSaveAs = () => {
+  if (!rawDesigner.activeScene.value || !rawDesigner.hasProject.value) return
+  saveAsInitialName.value = rawDesigner.document.value.meta.sceneName
+  surface.value = 'saveAs'
+}
+const saveAsScene = async (sceneName: string) => {
+  if (saveAsBusy.value) return
+  saveAsBusy.value = true
   try {
-    const staged = await rawDesigner.installRuntime({ enable: true, forceModifiedRuntime })
-    if (!staged) return
-    runtimePromptVisible.value = false
-    exportCompleted.value = true
-    const applied = await props.applyProjectChanges?.(rawDesigner.runtimeStaging.value?.affectedFiles ?? [])
-    if (applied) await rawDesigner.checkRuntime()
+    if (await rawDesigner.save('saveAs', { sceneName })) {
+      surface.value = null
+      showWelcome.value = false
+    } else if (rawDesigner.fileConflict.value) {
+      surface.value = null
+    }
   } finally {
-    runtimePromptBusy.value = false
+    saveAsBusy.value = false
   }
+}
+const saveConflictAs = () => {
+  rawDesigner.clearFileConflict()
+  openSaveAs()
 }
 const inspectorRef = ref<UiDesignerInspectorExpose>()
 const canvasRef = ref<UiDesignerCanvasExpose>()
@@ -195,6 +186,21 @@ const saveCurrentCanvas = () => {
 }
 const showEditingMode = () => {
   if (rawDesigner.scenes.value.length) showWelcome.value = false
+}
+const onUiDesignerMenuCommand = (event: Event) => {
+  const command = uiDesignerMenuCommandFromEvent(event)
+  if (!command) return
+  if (command === 'new') openNewScene()
+  else if (command === 'open') void openScenePicker()
+  else if (command === 'save') saveCurrentCanvas()
+  else if (command === 'saveAs') openSaveAs()
+  else if (command === 'editorPreview') { showEditingMode(); toggleEditorPreview() }
+  else if (command === 'gamePreview') { showEditingMode(); toggleGamePreview() }
+  else if (command === 'globalData') surface.value = 'globalData'
+  else if (command === 'settings') surface.value = 'settings'
+  else if (command === 'tour') openTour()
+  else if (command === 'shortcuts') surface.value = 'shortcuts'
+  else if (command === 'about') surface.value = 'about'
 }
 const captureSaveShortcut = (event: KeyboardEvent) => {
   if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.altKey || event.key.toLowerCase() !== 's') return
@@ -243,23 +249,12 @@ watch(() => designer.scenes.length, (count, previous) => {
   else if (count > (previous ?? 0)) showWelcome.value = false
 })
 watch(() => props.projectPath, (next, previous) => {
-  if (next !== previous) {
-    runtimePromptVisible.value = false
-    runtimePromptDismissedProject.value = ''
-  }
   if (props.manageProjectContext && next !== previous) void rawDesigner.setProjectContext(next, props.adapters)
 })
-watch(
-  () => [props.projectPath, designer.runtimeStatus.state, surface.value] as const,
-  ([project, _state, activeSurface]) => {
-    if (!project || activeSurface || runtimePromptDismissedProject.value === project || !runtimeNeedsStartupPrompt.value) return
-    runtimePromptVisible.value = true
-  },
-)
 onMounted(async () => {
   const modifier = (key: string, handler: () => void | Promise<void>, shift = false, description?: string) => shortcutRegistry.register({ key, ctrlOrMeta: true, shift, description, handler })
   modifier('n', openNewScene, false, 'shortcutNewScene')
-  modifier('o', () => { if (designer.canSave) void designer.open() }, false, 'shortcutOpen')
+  modifier('o', openScenePicker, false, 'shortcutOpen')
   shortcutRegistry.register({
     key: 's',
     ctrlOrMeta: true,
@@ -284,7 +279,6 @@ onMounted(async () => {
   modifier(']', () => { if (designer.selectedIds.length) designer.moveToEdge(designer.selectedIds[0], 'bottom') }, true, 'shortcutToBottom')
   modifier('0', () => designer.setZoom(1), false, 'shortcutResetZoom')
   modifier('h', () => designer.fitCanvas(), true, 'shortcutFitCanvas')
-  modifier('e', () => { exportCompleted.value = false; surface.value = 'export' }, false, 'shortcutExport')
   modifier('p', toggleEditorPreview, false, 'shortcutEditorPreview')
   modifier(';', () => { designer.setCanvasSetting('guidesVisible', !designer.document.canvas.guidesVisible) }, false, 'shortcutToggleGuides')
   // Bare arrows nudge 1px, Shift+arrows nudge 10px. During editor/game preview,
@@ -301,6 +295,7 @@ onMounted(async () => {
   shortcutBindings.value = shortcutRegistry.list()
   window.addEventListener('keydown', captureSaveShortcut, true)
   window.addEventListener('keydown', shortcutRegistry.handle)
+  window.addEventListener(UI_DESIGNER_MENU_COMMAND_EVENT, onUiDesignerMenuCommand)
   await rawDesigner.loadPreferences()
   await rawDesigner.loadWelcomeRecords()
   await rawDesigner.loadProjectProfile()
@@ -310,12 +305,12 @@ onMounted(async () => {
   if (initialScene && !initialScene.sourcePath && !rawDesigner.isSceneDirty(initialScene.id)) await rawDesigner.closeScene(initialScene.id)
   showWelcome.value = true
   if (!Boolean(designer.preferences.tourCompleted)) openTour()
-  if (rawDesigner.hasProject.value) await rawDesigner.checkRuntime()
 })
 onBeforeUnmount(() => {
   endPaneDrag()
   window.removeEventListener('keydown', captureSaveShortcut, true)
   window.removeEventListener('keydown', shortcutRegistry.handle)
+  window.removeEventListener(UI_DESIGNER_MENU_COMMAND_EVENT, onUiDesignerMenuCommand)
   shortcutRegistry.unregisterAll()
   rawDesigner.flushDrafts()
   if (rawDesigner.isEditorPreviewing.value) rawDesigner.stopEditorPreview()
@@ -327,7 +322,7 @@ onBeforeUnmount(() => {
 
 <template>
     <section class="ui-designer-shell" :class="{ 'code-mode-active': designer.editingMode === 'code' || designer.editingMode === 'json' }" data-ui-id="ui-designer-shell">
-    <UiDesignerToolbar :designer="designer" @home="showWelcome = true" @editing-mode="showEditingMode" @settings="surface = 'settings'" @help="surface = 'help'" @shortcuts="surface = 'shortcuts'" @tour="openTour" @export="exportCompleted = false; surface = 'export'" @global-data="surface = 'globalData'" />
+    <UiDesignerToolbar :designer="designer" @home="showWelcome = true" @open="void openScenePicker()" @save-as="openSaveAs" @editing-mode="showEditingMode" @scene-settings="surface = 'sceneSettings'" @global-data="surface = 'globalData'" />
     <UiDesignerSceneTabs :designer="designer" @new-scene="openNewScene" />
     <div class="designer-workspace" :class="{ 'welcome-active': showWelcome }" :style="workspaceStyle">
       <aside v-if="!showWelcome" class="left-pane">
@@ -335,7 +330,7 @@ onBeforeUnmount(() => {
       </aside>
       <div v-if="!showWelcome" class="workspace-splitter" role="separator" :aria-label="t('leftPane')" @pointerdown="beginPaneDrag('left', $event)" />
       <main class="center-pane">
-        <UiDesignerWelcome v-if="showWelcome" :designer="designer" @new-scene="openNewScene" @return-to-scene="showWelcome = false" @scene-ready="showWelcome = false" />
+        <UiDesignerWelcome v-if="showWelcome" :designer="designer" @new-scene="openNewScene" @open="void openScenePicker()" @return-to-scene="showWelcome = false" @scene-ready="showWelcome = false" />
         <template v-else>
           <UiDesignerCanvas ref="canvasRef" v-show="designer.editingMode === 'design'" :designer="designer" @edit-node="editPrimaryNode" />
           <UiDesignerCodePanel v-show="designer.editingMode === 'code'" :designer="designer" />
@@ -347,26 +342,18 @@ onBeforeUnmount(() => {
     </div>
     <UiDesignerNewSceneSurface v-if="surface === 'newScene'" :model-value="true" :draft="newSceneDraft" :template="newSceneTemplate" :template-options="sceneTemplateOptions" :template-label="sceneTemplateLabel" @update:model-value="closeSurface" @update:template="selectNewSceneTemplate" @name-edited="newSceneNameAutomatic = false" @create="createNewScene" @cancel="surface = null" />
     <UiDesignerSettingsSurface v-if="surface === 'settings'" :model-value="true" :designer="designer" :left-pane-width="leftPaneWidth" :right-pane-width="rightPaneWidth" :clamp-pane="(side, value) => clampPane(side, value)" @update:model-value="closeSurface" />
-    <UiDesignerExportSurface v-if="surface === 'export'" :model-value="true" :designer="designer" :export-path="exportPath" :export-completed="exportCompleted" :apply-project-changes="props.applyProjectChanges" @update:model-value="closeSurface" @update:export-path="exportPath = $event" @completed="exportCompleted = $event" />
+    <UiDesignerSceneSettingsSurface v-if="surface === 'sceneSettings'" :model-value="true" :designer="designer" @update:model-value="closeSurface" />
+    <UiDesignerOpenSceneSurface v-if="surface === 'openScene'" :model-value="true" :designer="designer" @update:model-value="closeSurface" @open="void openProjectScene($event)" />
+    <UiDesignerSaveAsSurface v-if="surface === 'saveAs'" :model-value="true" :initial-name="saveAsInitialName" :busy="saveAsBusy" @update:model-value="closeSurface" @save="void saveAsScene($event)" />
     <UiDesignerGlobalDataSurface v-if="surface === 'globalData'" :model-value="true" :designer="designer" @update:model-value="closeSurface" />
-    <UiDesignerHelpSurface v-if="surface === 'help' || surface === 'shortcuts' || surface === 'tour'" :model-value="true" :surface="surface" :tour-step="tourStep" :shortcut-bindings="shortcutBindings" @update:model-value="closeSurface" @update:tour-step="tourStep = $event" @complete="void completeTour()" />
+    <UiDesignerHelpSurface v-if="surface === 'about' || surface === 'shortcuts' || surface === 'tour'" :model-value="true" :surface="surface" :tour-step="tourStep" :shortcut-bindings="shortcutBindings" @update:model-value="closeSurface" @update:tour-step="tourStep = $event" @complete="void completeTour()" />
 
-    <el-dialog v-model="runtimePromptVisible" :title="t('runtimeInstallPromptTitle')" width="min(470px, 92vw)" :close-on-click-modal="false" @closed="runtimePromptDismissedProject = props.projectPath ?? ''">
-      <p class="dialog-copy">{{ t('runtimeInstallPromptBody') }}</p>
-      <p class="dialog-copy">{{ t('runtime') }}: {{ runtimePromptStatusLabel() }}</p>
-      <template #footer>
-        <el-button :disabled="runtimePromptBusy" @click="dismissRuntimePrompt">{{ t('runtimeInstallLater') }}</el-button>
-        <el-button type="primary" :loading="runtimePromptBusy" :disabled="!designer.canManageRuntime" @click="void installRuntimeFromPrompt()">{{ t('installRuntime') }}</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog :model-value="Boolean(designer.fileConflict)" :title="t(firstSaveConflict ? 'sceneNameConflictTitle' : 'conflictTitle')" width="min(470px, 92vw)" :close-on-click-modal="false" :show-close="false">
-      <p class="dialog-copy">{{ designer.runtimeConflict ? t('overwriteConflictBody') : firstSaveConflict ? t('sceneNameConflictBody') : t('conflictBody') }}</p>
-       <dl v-if="designer.runtimeConflict && designer.fileConflict?.actual" class="conflict-metadata"><dt>{{ t('modifiedTime') }}</dt><dd>{{ designer.fileConflict.actual.mtimeMs }}</dd><dt>{{ t('digest') }}</dt><dd>{{ designer.fileConflict.actual.digest }}</dd><template v-if="designer.runtimeConflictFiles?.length"><dt>{{ t('affectedFiles') }}</dt><dd>{{ designer.runtimeConflictFiles.join(', ') }}</dd></template></dl>
+    <el-dialog :model-value="Boolean(designer.fileConflict)" :title="t(designer.saveAsConflict ? 'sceneNameConflictTitle' : 'conflictTitle')" width="min(470px, 92vw)" :close-on-click-modal="false" :show-close="false">
+      <p class="dialog-copy">{{ t(designer.saveAsConflict ? 'sceneNameConflictBody' : 'conflictBody') }}</p>
       <template #footer>
         <el-button data-testid="ui-designer-conflict-cancel" @click="designer.clearFileConflict()">{{ t('lifecycleCancel') }}</el-button>
-        <el-button v-if="!designer.runtimeConflict && !firstSaveConflict" data-testid="ui-designer-conflict-reload" @click="void designer.resolveFileConflict('reload')">{{ t('reload') }}</el-button>
-        <el-button v-if="!designer.runtimeConflict" data-testid="ui-designer-conflict-save-as" @click="void designer.resolveFileConflict('saveAs')">{{ t('saveAs') }}</el-button>
+        <el-button v-if="!designer.saveAsConflict" data-testid="ui-designer-conflict-reload" @click="void designer.resolveFileConflict('reload')">{{ t('reload') }}</el-button>
+        <el-button v-if="!designer.saveAsConflict" data-testid="ui-designer-conflict-save-as" @click="saveConflictAs">{{ t('saveAs') }}</el-button>
         <el-button data-testid="ui-designer-conflict-force" type="danger" @click="void designer.resolveFileConflict('force')">{{ t('forceSave') }}</el-button>
       </template>
     </el-dialog>

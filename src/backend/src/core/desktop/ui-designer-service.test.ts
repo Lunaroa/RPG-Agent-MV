@@ -26,6 +26,7 @@ let tempRoot = '';
 
 beforeEach(() => {
   tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-designer-'));
+  fs.mkdirSync(path.join(tempRoot, 'data'), { recursive: true });
 });
 
 afterEach(() => {
@@ -55,9 +56,24 @@ describe('ui designer document service', () => {
 
     assert.throws(() => saveProjectUiDesignerGlobalData(tempRoot, 5 as unknown as Record<string, unknown>), /object or array/);
 
+    fs.rmSync(path.join(tempRoot, 'data', 'GlobalUI.json'));
     const corruptPath = path.join(tempRoot, '.luna_rpg', 'ui-designer', 'global-ui.json');
+    fs.mkdirSync(path.dirname(corruptPath), { recursive: true });
     fs.writeFileSync(corruptPath, '{', 'utf8');
     assert.throws(() => readProjectUiDesignerGlobalData(tempRoot), /not valid JSON/);
+  });
+
+  test('keeps legacy global data as a retained backup after its one-time migration', () => {
+    const project = path.join(tempRoot, 'global-migration');
+    fs.mkdirSync(path.join(project, 'data'), { recursive: true });
+    const legacyPath = path.join(project, '.luna_rpg', 'ui-designer', 'global-ui.json');
+    fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
+    fs.writeFileSync(legacyPath, `${JSON.stringify({ menu: 'legacy' }, null, 2)}\n`, 'utf8');
+
+    assert.deepEqual(readProjectUiDesignerGlobalData(project).data, { menu: 'legacy' });
+    saveProjectUiDesignerGlobalData(project, { menu: 'edited' }, { force: true });
+    assert.deepEqual(readProjectUiDesignerGlobalData(project).data, { menu: 'edited' });
+    assert.deepEqual(JSON.parse(fs.readFileSync(legacyPath, 'utf8')), { menu: 'legacy' });
   });
 
   test('reads metadata and rejects invalid tree/code schemas', () => {
@@ -274,32 +290,53 @@ describe('ui designer document service', () => {
 });
 
 describe('ui designer scene file listing', () => {
-  test('lists canonical and legacy project scenes with project thumbnails', () => {
+  test('lists only canonical project scenes and copies validated legacy scenes', () => {
     const project = path.join(tempRoot, 'project');
-    fs.mkdirSync(path.join(project, 'ui', 'nested'), { recursive: true });
+    fs.mkdirSync(path.join(project, 'data'), { recursive: true });
     const canonicalPath = projectUiDesignerScenePath(project, 'Scene_Sample');
     saveUiDesignerFile(canonicalPath, sampleDocument());
     writeProjectUiDesignerThumbnail(project, 'Scene_Sample', TEST_PNG_DATA_URL);
-    saveUiDesignerFile(path.join(project, 'ui', 'nested', 'menu.mzui'), { ...sampleDocument(), meta: { ...sampleDocument().meta, sceneName: 'Scene_Menu_Custom' } });
-    fs.writeFileSync(path.join(project, 'ui', 'broken.mzui'), 'not json', 'utf8');
-    const invalidName = sampleDocument();
-    invalidName.meta.sceneName = 'NotASceneClass';
-    fs.writeFileSync(path.join(project, 'ui', 'invalid-name.mzui'), JSON.stringify(invalidName), 'utf8');
-    fs.mkdirSync(path.join(project, 'node_modules', 'pkg'), { recursive: true });
-    saveUiDesignerFile(path.join(project, 'node_modules', 'pkg', 'vendored.mzui'), sampleDocument());
-    fs.writeFileSync(path.join(project, 'notes.txt'), 'ignored', 'utf8');
+    const legacyPath = path.join(project, '.luna_rpg', 'ui-designer', 'scenes', 'Scene_Menu_Custom.mzui');
+    saveUiDesignerFile(legacyPath, { ...sampleDocument(), meta: { ...sampleDocument().meta, sceneName: 'Scene_Menu_Custom' } });
+    const unrelatedPath = path.join(project, 'ui', 'Scene_Unrelated.mzui');
+    saveUiDesignerFile(unrelatedPath, { ...sampleDocument(), meta: { ...sampleDocument().meta, sceneName: 'Scene_Unrelated' } });
 
     const records = listUiDesignerSceneFiles(project);
-    assert.deepEqual(records.map((record) => record.sceneName), ['Scene_Sample', 'Scene_Menu_Custom']);
+    assert.deepEqual(records.map((record) => record.sceneName), ['Scene_Menu_Custom', 'Scene_Sample']);
     const canonical = records.find((record) => record.sceneName === 'Scene_Sample');
-    assert.equal(canonical?.path, '.luna_rpg/ui-designer/scenes/Scene_Sample.mzui');
+    assert.equal(canonical?.path, 'data/ui-scenes/Scene_Sample.mzui');
     assert.equal(canonical?.sourcePath, canonicalPath);
     assert.equal(canonical?.thumbnailUrl, TEST_PNG_DATA_URL);
     assert.equal(Number.isNaN(Date.parse(canonical?.modifiedAt ?? '')), false);
     const legacy = records.find((record) => record.sceneName === 'Scene_Menu_Custom');
-    assert.equal(legacy?.path, 'ui/nested/menu.mzui');
+    assert.equal(legacy?.path, 'data/ui-scenes/Scene_Menu_Custom.mzui');
     assert.equal(legacy?.thumbnailUrl, undefined);
+    assert.equal(fs.existsSync(legacyPath), true);
+    const migratedPath = path.join(project, 'data', 'ui-scenes', 'Scene_Menu_Custom.mzui');
+    assert.equal(fs.existsSync(migratedPath), true);
+    assert.equal(records.some((record) => record.sceneName === 'Scene_Unrelated'), false);
+    const edited = readUiDesignerFile(migratedPath).document;
+    edited.meta.description = 'edited after migration';
+    saveUiDesignerFile(migratedPath, edited, { force: true });
+    assert.deepEqual(listUiDesignerSceneFiles(project).map((record) => record.sceneName), ['Scene_Menu_Custom', 'Scene_Sample']);
+    assert.equal(readUiDesignerFile(migratedPath).document.meta.description, 'edited after migration');
+    assert.notEqual(readUiDesignerFile(legacyPath).document.meta.description, 'edited after migration');
     assert.deepEqual(listUiDesignerSceneFiles(path.join(project, 'missing')), []);
+  });
+
+  test('does not overwrite a different canonical scene during legacy migration', () => {
+    const project = path.join(tempRoot, 'project-conflict');
+    fs.mkdirSync(path.join(project, 'data'), { recursive: true });
+    const legacyPath = path.join(project, '.luna_rpg', 'ui-designer', 'scenes', 'Scene_Sample.mzui');
+    saveUiDesignerFile(legacyPath, sampleDocument());
+    const changed = sampleDocument();
+    changed.meta.description = 'different';
+    saveUiDesignerFile(projectUiDesignerScenePath(project, 'Scene_Sample'), changed);
+    assert.throws(
+      () => listUiDesignerSceneFiles(project),
+      (error: unknown) => error instanceof UiDesignerPersistenceError && error.operation === 'migrate-project-scenes',
+    );
+    assert.equal(readUiDesignerFile(legacyPath).document.meta.description, sampleDocument().meta.description);
   });
 });
 

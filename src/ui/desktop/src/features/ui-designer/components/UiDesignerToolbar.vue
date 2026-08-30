@@ -1,47 +1,18 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import { useUiDesignerI18n } from '../i18n'
 
 const props = defineProps<{ designer: UiDesignerController }>()
 const emit = defineEmits<{
-  settings: []
-  help: []
-  shortcuts: []
-  tour: []
-  export: []
+  open: []
+  'save-as': []
+  'scene-settings': []
   'global-data': []
   home: []
   'editing-mode': [mode: 'design' | 'code' | 'json']
 }>()
 const { t } = useUiDesignerI18n()
 const designer = props.designer
-const sceneNameDraft = ref(designer.document.meta.sceneName)
-let sceneNamePending = false
-const previewSceneName = (value: string) => {
-  sceneNameDraft.value = value
-  sceneNamePending = value !== designer.document.meta.sceneName
-}
-const commitSceneName = () => {
-  if (!sceneNamePending) return
-  const value = sceneNameDraft.value
-  sceneNamePending = false
-  if (value !== designer.document.meta.sceneName) designer.setSceneMeta('sceneName', value)
-}
-const cancelSceneName = () => {
-  sceneNamePending = false
-  sceneNameDraft.value = designer.document.meta.sceneName
-}
-const unregisterSceneNameDraft = designer.draftCoordinator.register(commitSceneName, {
-  cancel: cancelSceneName,
-  sceneId: () => designer.activeSceneId,
-  pending: () => sceneNamePending,
-})
-watch(() => designer.document.meta.sceneName, (value) => {
-  sceneNamePending = false
-  sceneNameDraft.value = value
-})
-onBeforeUnmount(() => { commitSceneName(); unregisterSceneNameDraft() })
 
 const toggleEditorPreview = () => { void (designer.isEditorPreviewing ? designer.stopEditorPreview() : designer.startEditorPreview()) }
 const toggleGamePreview = () => { void (designer.isPreviewing ? designer.stopPreview() : designer.startPreview()) }
@@ -61,10 +32,9 @@ const selectEditingMode = (mode: 'design' | 'code' | 'json') => {
     <div class="toolbar-actions">
       <el-button data-testid="ui-designer-home" data-ui-id="ui-designer-home" size="small" text @click="emit('home')">{{ t('home') }}</el-button>
       <el-button-group>
-        <el-button data-testid="ui-designer-open" size="small" :disabled="!designer.canSave" @click="void designer.open()">{{ t('open') }}</el-button>
+        <el-button data-testid="ui-designer-open" size="small" :disabled="!designer.canSave || !designer.hasProject" @click="emit('open')">{{ t('open') }}</el-button>
         <el-button data-testid="ui-designer-save" size="small" type="primary" :disabled="!designer.canSave || !designer.isDirty" @click="void designer.save()">{{ t('save') }}</el-button>
-        <el-button data-testid="ui-designer-save-as" size="small" :disabled="!designer.canSave" @click="void designer.save('saveAs')">{{ t('saveAs') }}</el-button>
-        <el-button data-testid="ui-designer-export" size="small" :disabled="!designer.canExport" @click="emit('export')">{{ t('publishToProject') }}</el-button>
+        <el-button data-testid="ui-designer-save-as" size="small" :disabled="!designer.canSave || !designer.hasProject" @click="emit('save-as')">{{ t('saveAs') }}</el-button>
       </el-button-group>
 
       <el-button-group>
@@ -85,23 +55,8 @@ const selectEditingMode = (mode: 'design' | 'code' | 'json') => {
         {{ t(designer.isPreviewing ? 'exitGamePreview' : 'gamePreview') }}
       </el-button>
 
+      <el-button data-testid="ui-designer-scene-settings" size="small" text :disabled="!designer.activeScene" @click="emit('scene-settings')">{{ t('sceneSettings') }}</el-button>
       <el-button data-testid="ui-designer-global-data" size="small" text :disabled="!designer.hasProject" @click="emit('global-data')">{{ t('globalData') }}</el-button>
-      <el-button size="small" text @click="emit('settings')">{{ t('settings') }}</el-button>
-      <el-button size="small" text @click="emit('help')">{{ t('help') }}</el-button>
-      <el-button size="small" text @click="emit('shortcuts')">{{ t('shortcuts') }}</el-button>
-      <el-button size="small" text @click="emit('tour')">{{ t('tour') }}</el-button>
-    </div>
-
-    <div class="toolbar-scene">
-      <el-input
-        :model-value="sceneNameDraft"
-        size="small"
-        :aria-label="t('sceneName')"
-        @update:model-value="previewSceneName"
-        @blur="commitSceneName"
-        @keydown.enter.prevent="commitSceneName"
-      />
-      <span class="scene-version">v{{ designer.document.version }}</span>
     </div>
   </header>
 </template>
@@ -145,21 +100,8 @@ const selectEditingMode = (mode: 'design' | 'code' | 'json') => {
 }
 
 .editor-preview-toggle { font-weight: 650; }
-.toolbar-scene {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 220px;
-}
-
-.scene-version {
-  color: var(--app-ink-soft);
-  font-size: 11px;
-  white-space: nowrap;
-}
 
 @media (max-width: 1100px) {
   .toolbar-brand { min-width: auto; }
-  .toolbar-scene { width: 150px; }
 }
 </style>

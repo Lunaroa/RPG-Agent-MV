@@ -2,34 +2,18 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type {
-  UiDesignerRuntimeStageResult as ContractUiDesignerRuntimeStageResult,
-  UiDesignerGlobalDataValue,
-  UiRuntimeSceneExport,
-  UiRuntimeStatus,
-} from '../../../../contract/ui-designer.ts';
-import { canonicalUiRuntimeSceneExport } from '../../../../contract/ui-designer-script.ts';
-import { normalizeUiRuntimeSceneGeometry } from '../../../../contract/ui-designer-geometry.ts';
+import type { UiRuntimeStatus } from '../../../../contract/ui-designer.ts';
 import {
-  dataRelativePath,
   inspectRmmvProject,
   resourceRelativePath,
   resolveRmmvLayout,
 } from '../rmmv/rmmv-layout.ts';
-import {
-  getProjectFileForRead,
-  getProjectStagingStatus,
-  stageProjectFilesAtomically,
-} from './staging-service.ts';
 import { writeFileAtomically } from './ui-designer-service.ts';
-import { validateUiRuntimeSceneExport } from './ui-designer-validation.ts';
 import { uiDesignerProjectCompatibility, unsupportedUiDesignerProjectCompatibility } from './ui-designer-compatibility.ts';
 
 export const UI_DESIGNER_RUNTIME_PLUGIN_NAME = 'MZUIRuntime';
 export const UI_DESIGNER_RUNTIME_VERSION = '1.1.0';
 export const UI_DESIGNER_RUNTIME_RELATIVE_PATH = 'js/plugins/MZUIRuntime.js';
-export const UI_DESIGNER_SCENE_DIRECTORY = 'js/plugins/mzui-data';
-export const UI_DESIGNER_GLOBAL_DATA_FILENAME = 'GlobalUI.json';
 
 export type UiDesignerRuntimeInspectionState =
   | 'missing'
@@ -38,7 +22,6 @@ export type UiDesignerRuntimeInspectionState =
   | 'enabled-compatible'
   | 'version-too-old'
   | 'content-mismatch'
-  | 'staged-pending'
   | 'error';
 
 export interface UiDesignerRuntimeInspection extends UiRuntimeStatus {
@@ -51,15 +34,16 @@ export interface UiDesignerRuntimeInspection extends UiRuntimeStatus {
   needsConfirmation: boolean;
 }
 
-export interface UiDesignerRuntimeStageOptions {
+export interface UiDesignerRuntimeInstallOptions {
   enable?: boolean;
   forceModifiedRuntime?: boolean;
-  sceneRelativePath?: string;
-  overwrite?: boolean;
 }
 
-export interface UiDesignerRuntimeStageResult extends ContractUiDesignerRuntimeStageResult {
+export interface UiDesignerRuntimeInstallResult {
+  status: 'installed';
+  affectedFiles: string[];
   runtime: UiDesignerRuntimeInspection;
+  digest: string;
 }
 
 export class UiDesignerRuntimeModifiedError extends Error {
@@ -67,7 +51,7 @@ export class UiDesignerRuntimeModifiedError extends Error {
   readonly recoverable = true;
 
   constructor() {
-    super('The project contains a modified MZUI runtime. Review or explicitly replace it before staging an update.');
+    super('The project contains a modified MZUI runtime. Review it before replacing the plugin.');
     this.name = 'UiDesignerRuntimeModifiedError';
   }
 }
@@ -77,44 +61,8 @@ export class UiDesignerRuntimeEnableRequiredError extends Error {
   readonly recoverable = false;
 
   constructor() {
-    super('Runtime installation must explicitly enable MZUIRuntime; no project files were staged.');
+    super('Runtime installation must explicitly enable MZUIRuntime; no project files were changed.');
     this.name = 'UiDesignerRuntimeEnableRequiredError';
-  }
-}
-
-export class UiDesignerSceneOverwriteRequiredError extends Error {
-  readonly code = 'UI_DESIGNER_OVERWRITE_REQUIRED';
-  readonly recoverable = true;
-  readonly relativePath: string;
-  readonly digest: string | null;
-  readonly mtimeMs: number | null;
-  readonly affectedFiles: string[];
-
-  constructor(relativePath: string, digest: string | null, mtimeMs: number | null) {
-    super(`UI designer scene already exists at ${relativePath}; confirm overwrite after reviewing the existing file.`);
-    this.name = 'UiDesignerSceneOverwriteRequiredError';
-    this.relativePath = relativePath;
-    this.digest = digest;
-    this.mtimeMs = mtimeMs;
-    this.affectedFiles = [relativePath];
-  }
-}
-
-export class UiDesignerRuntimeExportOverwriteRequiredError extends Error {
-  readonly code = 'UI_DESIGNER_OVERWRITE_REQUIRED';
-  readonly recoverable = true;
-  readonly path: string;
-  readonly digest: string | null;
-  readonly mtimeMs: number | null;
-  readonly affectedFiles: string[];
-
-  constructor(filePath: string, digest: string | null, mtimeMs: number | null) {
-    super(`Runtime export already exists at ${path.basename(filePath)}; confirm overwrite after reviewing the existing file.`);
-    this.name = 'UiDesignerRuntimeExportOverwriteRequiredError';
-    this.path = filePath;
-    this.digest = digest;
-    this.mtimeMs = mtimeMs;
-    this.affectedFiles = [path.basename(filePath)];
   }
 }
 
@@ -128,33 +76,11 @@ export function bundledUiDesignerRuntime(): { version: string; digest: string; s
   return { version: UI_DESIGNER_RUNTIME_VERSION, digest: BUNDLED_RUNTIME_DIGEST, source: BUNDLED_RUNTIME_SOURCE };
 }
 
-export function writeUiDesignerRuntimeExport(
-  filePath: string,
-  scene: UiRuntimeSceneExport,
-  options: { overwrite?: boolean } = {},
-): { path: string; digest: string; mtimeMs: number; size: number } {
-  const canonicalScene = validateRuntimeScene(scene);
-  const resolved = path.resolve(filePath);
-  if (path.extname(resolved).toLowerCase() !== '.json') throw new Error('Runtime exports must use the .json extension.');
-  const existing = fs.existsSync(resolved) ? fs.readFileSync(resolved) : null;
-  if (existing && !options.overwrite) {
-    const stat = fs.statSync(resolved);
-    throw new UiDesignerRuntimeExportOverwriteRequiredError(resolved, sha256(existing), stat.mtimeMs);
-  }
-  const body = Buffer.from(`${JSON.stringify(canonicalScene, null, 2)}\n`, 'utf8');
-  // Use the `.mzui` persistence writer's backup-aware replacement path.  A
-  // plain rename fails on Windows when the destination already exists and can
-  // leave a crash window with the target missing.
-  writeFileAtomically(resolved, body);
-  const stat = fs.statSync(resolved);
-  return { path: resolved, digest: sha256(body), mtimeMs: stat.mtimeMs, size: body.byteLength };
-}
-
 export function inspectUiDesignerRuntime(
   workflowRootInput: string,
   projectInput: string,
 ): UiDesignerRuntimeInspection {
-  const workflowRoot = path.resolve(workflowRootInput);
+  void workflowRootInput;
   const project = path.resolve(projectInput);
   try {
     const manifest = inspectRmmvProject(project);
@@ -162,30 +88,30 @@ export function inspectUiDesignerRuntime(
     const layout = resolveRmmvLayout(project);
     const runtimeRelativePath = resourceRelativePath(layout, UI_DESIGNER_RUNTIME_RELATIVE_PATH);
     const pluginConfigRelativePath = resourceRelativePath(layout, 'js/plugins.js');
-    const runtimeFile = getProjectFileForRead(workflowRoot, project, runtimeRelativePath);
-    const pluginConfigFile = getProjectFileForRead(workflowRoot, project, pluginConfigRelativePath);
-    const digest = runtimeFile && fs.existsSync(runtimeFile) ? sha256(fs.readFileSync(runtimeFile)) : null;
-    const plugins = pluginConfigFile && fs.existsSync(pluginConfigFile)
+    const runtimeFile = path.join(project, ...runtimeRelativePath.split('/'));
+    const pluginConfigFile = path.join(project, ...pluginConfigRelativePath.split('/'));
+    const runtimeExists = fs.existsSync(runtimeFile) && fs.statSync(runtimeFile).isFile();
+    const digest = runtimeExists ? sha256(fs.readFileSync(runtimeFile)) : null;
+    const plugins = fs.existsSync(pluginConfigFile) && fs.statSync(pluginConfigFile).isFile()
       ? parsePlugins(fs.readFileSync(pluginConfigFile, 'utf8'))
       : { entries: [], parseError: null };
     const plugin = plugins.entries.find((entry) => entry.name === UI_DESIGNER_RUNTIME_PLUGIN_NAME);
-    const affectedFiles = stagedAffectedFiles(workflowRoot, project, [runtimeRelativePath, pluginConfigRelativePath]);
     let state: UiDesignerRuntimeInspectionState;
-    if (!runtimeFile || !fs.existsSync(runtimeFile)) state = 'missing';
+    if (!runtimeExists) state = 'missing';
     else if (plugins.parseError) state = 'error';
     else if (!plugin) state = 'file-unconfigured';
     else if (digest !== BUNDLED_RUNTIME_DIGEST) state = runtimeVersion(runtimeFile) === UI_DESIGNER_RUNTIME_VERSION ? 'content-mismatch' : 'version-too-old';
     else if (!plugin.status) state = 'configured-disabled';
     else state = 'enabled-compatible';
-    // A staged runtime is only "pending" when its effective file is already
-    // the bundled content.  If a user edits the staged copy, report the
-    // mismatch first so an install cannot silently overwrite it.
-    if (affectedFiles.length > 0 && ['enabled-compatible', 'configured-disabled', 'file-unconfigured'].includes(state)) state = 'staged-pending';
+    const affectedFiles = [
+      ...(!runtimeExists || digest !== BUNDLED_RUNTIME_DIGEST ? [runtimeRelativePath] : []),
+      ...(!plugins.parseError && (!plugin || !plugin.status) ? [pluginConfigRelativePath] : []),
+    ];
     return {
       state,
       message: runtimeMessage(state),
       requiredVersion: UI_DESIGNER_RUNTIME_VERSION,
-      version: runtimeFile && fs.existsSync(runtimeFile) ? runtimeVersion(runtimeFile) : undefined,
+      version: runtimeExists ? runtimeVersion(runtimeFile) : undefined,
       runtimePath: runtimeRelativePath,
       runtimeRelativePath,
       pluginConfigRelativePath,
@@ -194,7 +120,6 @@ export function inspectUiDesignerRuntime(
       pluginConfigured: Boolean(plugin),
       pluginEnabled: Boolean(plugin?.status),
       affectedFiles,
-      staging: { pending: affectedFiles.length > 0, affectedFiles },
       needsConfirmation: state === 'content-mismatch' || state === 'version-too-old',
       projectCompatibility,
     };
@@ -209,35 +134,44 @@ export function inspectUiDesignerRuntime(
       digest: null,
       expectedDigest: BUNDLED_RUNTIME_DIGEST,
       affectedFiles: [],
-      staging: { pending: false, affectedFiles: [] },
       needsConfirmation: false,
       projectCompatibility: unsupportedUiDesignerProjectCompatibility('The selected folder is not a supported RPG Maker MV or MZ project.'),
     };
   }
 }
 
-/** Explicit runtime install/update + enable. Scene export is intentionally separate. */
-export function stageUiDesignerRuntimeInstall(
+/**
+ * Install and enable the project Runtime directly. Scene saves call this
+ * before writing their single Runtime-readable `.mzui` source, so no staging
+ * or second publish transaction is involved.
+ */
+export function installUiDesignerRuntime(
   workflowRootInput: string,
   projectInput: string,
-  options: UiDesignerRuntimeStageOptions = {},
-): UiDesignerRuntimeStageResult {
+  options: UiDesignerRuntimeInstallOptions = {},
+): UiDesignerRuntimeInstallResult {
   if (options.enable !== true) throw new UiDesignerRuntimeEnableRequiredError();
   const workflowRoot = path.resolve(workflowRootInput);
   const project = path.resolve(projectInput);
-  const before = inspectUiDesignerRuntime(workflowRoot, project);
-  if ((before.state === 'content-mismatch' || before.state === 'version-too-old') && !options.forceModifiedRuntime) {
-    throw new UiDesignerRuntimeModifiedError();
-  }
+  inspectRmmvProject(project);
   const layout = resolveRmmvLayout(project);
   const runtimeRelativePath = resourceRelativePath(layout, UI_DESIGNER_RUNTIME_RELATIVE_PATH);
   const pluginConfigRelativePath = resourceRelativePath(layout, 'js/plugins.js');
-  const sourceBefore = snapshotSourceFiles(project, [runtimeRelativePath, pluginConfigRelativePath]);
-  const pluginFile = getProjectFileForRead(workflowRoot, project, pluginConfigRelativePath);
-  const parsed = pluginFile && fs.existsSync(pluginFile)
-    ? parsePlugins(fs.readFileSync(pluginFile, 'utf8'))
+  const runtimePath = path.join(project, ...runtimeRelativePath.split('/'));
+  const pluginConfigPath = path.join(project, ...pluginConfigRelativePath.split('/'));
+  const affectedFiles: string[] = [];
+  if (fs.existsSync(runtimePath)) {
+    const current = fs.readFileSync(runtimePath);
+    const currentDigest = sha256(current);
+    const currentVersion = runtimeVersion(runtimePath);
+    if (currentDigest !== BUNDLED_RUNTIME_DIGEST && currentVersion === UI_DESIGNER_RUNTIME_VERSION && !options.forceModifiedRuntime) {
+      throw new UiDesignerRuntimeModifiedError();
+    }
+  }
+  const parsed = fs.existsSync(pluginConfigPath)
+    ? parsePlugins(fs.readFileSync(pluginConfigPath, 'utf8'))
     : { entries: [], parseError: null };
-  if (parsed.parseError) throw new Error(`Cannot stage MZUI runtime while plugins.js is invalid: ${parsed.parseError}`);
+  if (parsed.parseError) throw new Error(`Cannot install MZUI runtime while plugins.js is invalid: ${parsed.parseError}`);
   const existing = parsed.entries.find((entry) => entry.name === UI_DESIGNER_RUNTIME_PLUGIN_NAME);
   const runtimeEntry = {
     name: UI_DESIGNER_RUNTIME_PLUGIN_NAME,
@@ -249,119 +183,26 @@ export function stageUiDesignerRuntimeInstall(
   const existingIndex = entries.findIndex((entry) => entry.name === UI_DESIGNER_RUNTIME_PLUGIN_NAME);
   if (existingIndex >= 0) entries[existingIndex] = runtimeEntry;
   else entries.push(runtimeEntry);
-  const mutations: Array<{ relativePath: string; content: Buffer }> = [
-    { relativePath: runtimeRelativePath, content: Buffer.from(BUNDLED_RUNTIME_SOURCE, 'utf8') },
-    { relativePath: pluginConfigRelativePath, content: Buffer.from(serializePlugins(entries), 'utf8') },
-  ];
-  stageProjectFilesAtomically(workflowRoot, project, mutations);
-  const runtime = inspectUiDesignerRuntime(workflowRoot, project);
-  return {
-    status: 'staged',
-    affectedFiles: [...new Set(runtime.affectedFiles)],
-    runtime,
-    digest: BUNDLED_RUNTIME_DIGEST,
-    transaction: stageTransactionProof(project, [runtimeRelativePath, pluginConfigRelativePath], sourceBefore),
-    projectCompatibility: runtime.projectCompatibility,
-  };
-}
-
-/** Explicit scene export: stage only the scene JSON. Runtime install is separate. */
-export function stageUiDesignerSceneExport(
-  workflowRootInput: string,
-  projectInput: string,
-  scene: UiRuntimeSceneExport,
-  options: Pick<UiDesignerRuntimeStageOptions, 'sceneRelativePath' | 'overwrite'> = {},
-): UiDesignerRuntimeStageResult {
-  const workflowRoot = path.resolve(workflowRootInput);
-  const project = path.resolve(projectInput);
-  const canonicalScene = validateRuntimeScene(scene);
-  const layout = resolveRmmvLayout(project);
-  const sceneEnginePath = options.sceneRelativePath
-    ? normalizeSceneEnginePath(options.sceneRelativePath, layout)
-    : `${UI_DESIGNER_SCENE_DIRECTORY}/${canonicalScene.meta.sceneName}.json`;
-  const sceneRelativePath = resourceRelativePath(layout, sceneEnginePath);
-  const sourceBefore = snapshotSourceFiles(project, [sceneRelativePath]);
-  const existingFile = getProjectFileForRead(workflowRoot, project, sceneRelativePath);
-  if (existingFile && !options.overwrite) {
-    const stat = fs.statSync(existingFile);
-    throw new UiDesignerSceneOverwriteRequiredError(sceneRelativePath, sha256(fs.readFileSync(existingFile)), stat.mtimeMs);
+  const runtimeBody = Buffer.from(BUNDLED_RUNTIME_SOURCE, 'utf8');
+  if (!fs.existsSync(runtimePath) || sha256(fs.readFileSync(runtimePath)) !== BUNDLED_RUNTIME_DIGEST) {
+    writeFileAtomically(runtimePath, runtimeBody);
+    affectedFiles.push(runtimeRelativePath);
   }
-  stageProjectFilesAtomically(workflowRoot, project, [
-    { relativePath: sceneRelativePath, content: Buffer.from(`${JSON.stringify(canonicalScene, null, 2)}\n`, 'utf8') },
-  ]);
-  const runtime = inspectUiDesignerRuntime(workflowRoot, project);
+  const pluginBody = Buffer.from(serializePlugins(entries), 'utf8');
+  if (!fs.existsSync(pluginConfigPath) || !fs.readFileSync(pluginConfigPath).equals(pluginBody)) {
+    writeFileAtomically(pluginConfigPath, pluginBody);
+    affectedFiles.push(pluginConfigRelativePath);
+  }
   return {
-    status: 'staged',
-    affectedFiles: [sceneRelativePath],
-    runtime,
-    sceneRelativePath,
-    digest: sha256(Buffer.from(JSON.stringify(canonicalScene), 'utf8')),
-    transaction: stageTransactionProof(project, [sceneRelativePath], sourceBefore),
-    projectCompatibility: runtime.projectCompatibility,
-  };
-}
-
-/** Backward-compatible name now means the explicit install operation only. */
-export function stageUiDesignerRuntime(
-  workflowRootInput: string,
-  projectInput: string,
-  options: UiDesignerRuntimeStageOptions = {},
-): UiDesignerRuntimeStageResult {
-  return stageUiDesignerRuntimeInstall(workflowRootInput, projectInput, options);
-}
-
-/** Stage the project-wide global UI data as data/GlobalUI.json (www/data on MV). */
-export function stageUiDesignerGlobalDataExport(
-  workflowRootInput: string,
-  projectInput: string,
-  data: UiDesignerGlobalDataValue,
-): UiDesignerRuntimeStageResult {
-  const workflowRoot = path.resolve(workflowRootInput);
-  const project = path.resolve(projectInput);
-  if (!data || typeof data !== 'object') throw new Error('UI designer global data must be a JSON object or array.');
-  const layout = resolveRmmvLayout(project);
-  const globalDataRelativePath = dataRelativePath(layout, UI_DESIGNER_GLOBAL_DATA_FILENAME);
-  const sourceBefore = snapshotSourceFiles(project, [globalDataRelativePath]);
-  const content = Buffer.from(`${JSON.stringify(data, null, 2)}\n`, 'utf8');
-  stageProjectFilesAtomically(workflowRoot, project, [
-    { relativePath: globalDataRelativePath, content },
-  ]);
-  const runtime = inspectUiDesignerRuntime(workflowRoot, project);
-  return {
-    status: 'staged',
-    affectedFiles: [globalDataRelativePath],
-    runtime,
-    digest: crypto.createHash('sha256').update(content).digest('hex'),
-    transaction: stageTransactionProof(project, [globalDataRelativePath], sourceBefore),
-    projectCompatibility: runtime.projectCompatibility,
+    status: 'installed',
+    affectedFiles,
+    runtime: inspectUiDesignerRuntime(workflowRoot, project),
+    digest: BUNDLED_RUNTIME_DIGEST,
   };
 }
 
 export function runtimeSourceDigest(): string {
   return BUNDLED_RUNTIME_DIGEST;
-}
-
-function validateRuntimeScene(scene: UiRuntimeSceneExport): UiRuntimeSceneExport {
-  const report = validateUiRuntimeSceneExport(scene);
-  if (!report.valid) throw new Error(`UI runtime scene validation failed: ${report.errors.map((issue) => issue.message).join('; ')}`);
-  return normalizeUiRuntimeSceneGeometry(canonicalUiRuntimeSceneExport(scene));
-}
-
-function normalizeSceneEnginePath(input: string, layout: ReturnType<typeof resolveRmmvLayout>): string {
-  const value = String(input || '').replace(/\\/g, '/').replace(/^\/+/, '');
-  const rootPrefix = layout.resourceRootRelative ? `${layout.resourceRootRelative}/` : '';
-  const relative = value.startsWith(rootPrefix) ? value.slice(rootPrefix.length) : value;
-  const fileName = path.posix.basename(relative);
-  if (!relative.startsWith(`${UI_DESIGNER_SCENE_DIRECTORY}/`) || !/^Scene_[A-Za-z0-9_$]+\.json$/.test(fileName) || relative.split('/').some((part) => !part || part === '.' || part === '..')) throw new Error('UI runtime scene path is invalid.');
-  return relative;
-}
-
-function stagedAffectedFiles(workflowRoot: string, project: string, candidates: readonly string[]): string[] {
-  const status = getProjectStagingStatus(workflowRoot, project) as { files?: Array<{ relativePath?: unknown; operationId?: unknown }> };
-  const wanted = new Set(candidates.map(normalizePath));
-  return (status.files || [])
-    .map((entry) => String(entry.relativePath || ''))
-    .filter((relative) => wanted.has(normalizePath(relative)));
 }
 
 function parsePlugins(raw: string): { entries: Array<{ name: string; status: boolean; description: string; parameters: unknown }>; parseError: string | null } {
@@ -415,46 +256,10 @@ function runtimeMessage(state: UiDesignerRuntimeInspectionState): string {
     'enabled-compatible': 'MZ UI runtime is installed and enabled.',
     'version-too-old': 'MZ UI runtime is older than the bundled runtime.',
     'content-mismatch': 'MZ UI runtime differs from the bundled runtime.',
-    'staged-pending': 'MZ UI runtime changes are staged for this project.',
     error: 'MZ UI runtime status could not be inspected.',
   }[state];
 }
 
-function normalizePath(value: string): string {
-  return value.replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
-}
-
 function sha256(value: Buffer): string {
   return crypto.createHash('sha256').update(value).digest('hex');
-}
-
-interface SourceFileSnapshot {
-  exists: boolean;
-  digest: string | null;
-}
-
-function snapshotSourceFiles(project: string, relativePaths: readonly string[]): Map<string, SourceFileSnapshot> {
-  return new Map(relativePaths.map((relativePath) => {
-    const filePath = path.join(project, ...relativePath.split('/'));
-    const exists = fs.existsSync(filePath) && fs.statSync(filePath).isFile();
-    return [relativePath, { exists, digest: exists ? sha256(fs.readFileSync(filePath)) : null }];
-  }));
-}
-
-function stageTransactionProof(
-  project: string,
-  relativePaths: readonly string[],
-  sourceBefore: ReadonlyMap<string, SourceFileSnapshot>,
-): NonNullable<ContractUiDesignerRuntimeStageResult['transaction']> {
-  const sourceAfter = snapshotSourceFiles(project, relativePaths);
-  const sourceUnchanged = relativePaths.every((relativePath) => {
-    const before = sourceBefore.get(relativePath);
-    const after = sourceAfter.get(relativePath);
-    return before?.exists === after?.exists && before?.digest === after?.digest;
-  });
-  return {
-    operationId: `ui-designer-${crypto.randomUUID()}`,
-    sourceUnchanged,
-    stagingUnchanged: false,
-  };
 }

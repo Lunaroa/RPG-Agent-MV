@@ -660,7 +660,7 @@ export interface UiSnapResult extends UiPoint {
 }
 
 export interface UiRuntimeStatus {
-  state: 'unknown' | 'missing' | 'file-unconfigured' | 'configured-disabled' | 'enabled-compatible' | 'version-too-old' | 'content-mismatch' | 'staged-pending' | 'error'
+  state: 'unknown' | 'missing' | 'file-unconfigured' | 'configured-disabled' | 'enabled-compatible' | 'version-too-old' | 'content-mismatch' | 'error'
   version?: string
   requiredVersion?: string
   message: string
@@ -669,11 +669,6 @@ export interface UiRuntimeStatus {
   expectedDigest?: string
   pluginConfigured?: boolean
   pluginEnabled?: boolean
-  staging?: {
-    pending: boolean
-    affectedFiles: string[]
-    operationId?: string
-  }
   needsConfirmation?: boolean
   projectCompatibility?: UiDesignerProjectCompatibility
 }
@@ -703,21 +698,6 @@ export interface UiDesignerProjectProfile {
 
 /** Result payload for the UI-designer project-profile operation. */
 export interface UiDesignerProjectProfileResult extends UiDesignerProjectProfile {}
-
-/** Result of an explicit runtime install/update or scene-export staging transaction. */
-export interface UiDesignerRuntimeStageResult {
-  status: 'staged'
-  affectedFiles: string[]
-  runtime: UiRuntimeStatus
-  sceneRelativePath?: string
-  digest: string
-  transaction?: {
-    operationId?: string
-    sourceUnchanged?: boolean
-    stagingUnchanged?: boolean
-  }
-  projectCompatibility?: UiDesignerProjectCompatibility
-}
 
 export type UiFileOperation = 'open' | 'save' | 'saveAs' | 'export'
 export type UiFileStatus = 'idle' | 'ready' | 'busy' | 'unavailable' | 'success' | 'error'
@@ -846,7 +826,7 @@ export interface UiDesignerProjectRequest {
   project?: string
 }
 
-/** Project-wide UI data published to the game as data/GlobalUI.json and read
+/** Project-wide UI data saved to the game as data/GlobalUI.json and read
  * in scripts through $global / $dataGlobalUI. Roots are plain JSON values. */
 export type UiDesignerGlobalDataValue = Record<string, unknown> | unknown[]
 
@@ -858,11 +838,6 @@ export interface UiDesignerGlobalDataRequest extends UiDesignerProjectRequest {
 export interface UiDesignerGlobalDataReadResult {
   data: UiDesignerGlobalDataValue
   metadata: UiDesignerFileMetadata | null
-}
-
-export interface UiDesignerGlobalDataStageRequest extends UiDesignerProjectRequest {
-  data: UiDesignerGlobalDataValue
-  overwrite?: boolean
 }
 
 /** A profile request requires a selected project at runtime; the optional
@@ -903,29 +878,11 @@ export interface UiDesignerSceneDataReadResult {
 /** Native directory selection for bulk frame import; results stay project-relative. */
 export interface UiDesignerFrameFolderRequest extends UiDesignerProjectRequest {}
 
-export interface UiDesignerRuntimeInstallRequest extends UiDesignerProjectRequest {
-  forceModifiedRuntime?: boolean
-  /** Installation is an explicit install-and-enable transaction. */
-  enable: true
-}
-
-export interface UiDesignerSceneStageRequest extends UiDesignerProjectRequest {
-  scene: UiRuntimeSceneExport
-  targetPath?: string
-  overwrite?: boolean
-}
-
 export interface UiDesignerRecoveryWriteRequest {
   document: UiDesignerDocument
   sourcePath?: string
   sourceMetadata?: Pick<UiDesignerFileMetadata, 'digest' | 'mtimeMs'>
   key?: string
-}
-
-export interface UiDesignerRuntimeExportRequest {
-  scene: UiRuntimeSceneExport
-  path?: string
-  overwrite?: boolean
 }
 
 export interface UiDesignerSaveResult<T> extends UiFileResult<T> {
@@ -948,7 +905,6 @@ export interface UiDesignerPersistenceAdapter {
   revealSource(path: string): Promise<UiFileResult<null>>
   readPreferences(): Promise<UiFileResult<Record<string, unknown>>>
   writePreferences(value: Record<string, unknown>): Promise<UiFileResult<Record<string, unknown>>>
-  exportRuntime(scene: UiRuntimeSceneExport, request?: Pick<UiDesignerRuntimeExportRequest, 'path' | 'overwrite'>): Promise<UiFileResult<string>>
   readGlobalData(request?: UiDesignerGlobalDataRequest): Promise<UiFileResult<UiDesignerGlobalDataReadResult>>
   saveGlobalData(data: UiDesignerGlobalDataValue, request?: UiDesignerGlobalDataRequest): Promise<UiDesignerSaveResult<null>>
 }
@@ -1002,9 +958,6 @@ export interface UiDesignerProjectAdapter {
 
 export interface UiDesignerRuntimeAdapter {
   checkRuntime(projectPath?: string): Promise<UiRuntimeStatus>
-  installRuntime(projectPath: string, options: { enable: true; forceModifiedRuntime?: boolean }): Promise<UiFileResult<UiDesignerRuntimeStageResult>>
-  stageScene(projectPath: string, scene: UiRuntimeSceneExport, options?: { targetPath?: string; overwrite?: boolean }): Promise<UiFileResult<UiDesignerRuntimeStageResult>>
-  stageGlobalData(projectPath: string, data: UiDesignerGlobalDataValue): Promise<UiFileResult<UiDesignerRuntimeStageResult>>
 }
 
 export type UiDesignerRendererHostStopReason = 'project-change' | 'unload' | 'shutdown' | 'protocol-error'

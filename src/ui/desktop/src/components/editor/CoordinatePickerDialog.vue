@@ -90,6 +90,7 @@ const PICTURE_SCALE_MIN = 5;
 const PICTURE_SCALE_MAX = 1000;
 const mapPayload = ref<MapPayload | null>(null);
 const tilesetImages = ref<(HTMLImageElement | null)[]>([]);
+const parallaxImage = ref<HTMLImageElement | null>(null);
 const picturePreview = ref<ScreenPicturePreview | null>(null);
 const pictureImage = ref<HTMLImageElement | null>(null);
 const pictureError = ref('');
@@ -256,6 +257,9 @@ async function loadMap() {
     mapId.value = Number(payload.info.id);
     const urls = payload.tileset?.imageUrls || [];
     tilesetImages.value = await Promise.all(urls.map(async (url) => url ? loadImageElement(await resolveAssetUrl(url)) : null));
+    parallaxImage.value = payload.parallaxImageUrl
+      ? await loadImageElement(await resolveAssetUrl(payload.parallaxImageUrl))
+      : null;
     normalizeSelection();
     await nextTick();
     buildMapBase();
@@ -264,6 +268,7 @@ async function loadMap() {
   } catch (cause) {
     mapPayload.value = null;
     tilesetImages.value = [];
+    parallaxImage.value = null;
     mapBaseCanvas = null;
     error.value = cause instanceof Error ? cause.message : String(cause);
   } finally {
@@ -329,6 +334,7 @@ function buildMapBase() {
     tilesetImages: tilesetImages.value,
     tilesetFlags: payload.tileset?.flags || [],
     tileSize: tileSize.value,
+    parallaxImage: parallaxImage.value,
     showGrid: true,
   });
   context.restore();

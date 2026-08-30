@@ -302,6 +302,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
   let paletteCanvas: HTMLCanvasElement | null = null;
   let brush: MapCanvasBrush | null = null;
   let hoverCell: { x: number; y: number } | null = null;
+  let lastEventClickCell: { x: number; y: number } | null = null;
   let dragStart: { x: number; y: number } | null = null;
   let painting = false;
   let strokeEdits = new Map<string, TileEdit>();
@@ -412,6 +413,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     cancelStrokePreview();
     cancelMapRangeSelection(false);
     shadowHoverQuarter = null;
+    lastEventClickCell = null;
     map = nextMap;
     clearPaletteInteraction();
     tilesetImages = images;
@@ -448,6 +450,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     cancelStrokePreview();
     cancelMapRangeSelection(false);
     shadowHoverQuarter = null;
+    lastEventClickCell = null;
     map = null;
     clearPaletteInteraction();
     canvasWidth.value = 0;
@@ -1229,6 +1232,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       return;
     }
     if (options.mode.value === 'event') {
+      lastEventClickCell = { x: cell.x, y: cell.y };
       const existing = eventAtCell(cell.x, cell.y);
       options.selectEvent(existing?.id ?? null);
       if (existing && !options.eventViewOnly?.value) draggingEvent = { event: existing, originalX: existing.x, originalY: existing.y, moved: false };
@@ -1788,6 +1792,9 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     if (!map) return null;
     return { x: Math.floor(map.width / 2), y: Math.floor(map.height / 2) };
   }
+  function getLastEventClickCell(): { x: number; y: number } | null {
+    return lastEventClickCell ? { x: lastEventClickCell.x, y: lastEventClickCell.y } : null;
+  }
 
   return {
     canvasRef, overlayRef, regionLabelRef, scrollRef, canvasWidth, canvasHeight, zoom, cursorText, tilesetReady, tileTab, tileTabs,
@@ -1795,6 +1802,6 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     setMap, replaceMap, clearMap, setPaletteCanvas, setCanvasElement, setOverlayElement, setRegionLabelElement, setScrollElement, selectTileTab, selectMapTool, selectTileMode, selectShadowMode, canvasCell, eventAtCell,
     onPaletteMouseDown, onPaletteMouseMove, onPaletteMouseUp, onPaletteMouseLeave,
     onCanvasMouseDown, onCanvasMouseMove, onCanvasMouseLeave, onCanvasDoubleClick, onCanvasWheel, onCanvasScroll,
-    renderMap, renderOverlay, zoomIn, zoomOut, resetZoom, setZoom, undo, redo, getPlacementCell, ensureMapCellVisible,
+    renderMap, renderOverlay, zoomIn, zoomOut, resetZoom, setZoom, undo, redo, getPlacementCell, getLastEventClickCell, ensureMapCellVisible,
   };
 }

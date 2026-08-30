@@ -14,6 +14,10 @@ import {
 import type { BattleTestProjectPreparation } from './battle-test-preparation.ts';
 import type { ParticleAnimationPreviewPreparation } from './particle-animation-preview-preparation.ts';
 import type { UiDesignerGamePreviewPreparation } from './ui-designer-game-preview-preparation.ts';
+import {
+  ISOLATED_PROJECT_OWNERSHIP_SCHEMA_VERSION,
+  type IsolatedProjectOwnership,
+} from './isolated-project-attestation.ts';
 import type { UiRuntimeSceneExport } from '../../../../contract/ui-designer.ts';
 
 describe('interactive desktop playtest lifecycle', { concurrency: false }, () => {
@@ -134,6 +138,7 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
   test('reports the same effective runtime used by source-project launch', () => {
     const selectedExecutable = path.join(root, 'runtime', 'game.exe');
     const service = createService(root, {
+      child: new FakeChild(),
       resolveProjectRuntime: () => ({
         runtime: {
           engine: 'rpg-maker-mv',
@@ -157,6 +162,7 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
 
   test('reports an invalid saved runtime without exposing a stale executable path', () => {
     const service = createService(root, {
+      child: new FakeChild(),
       resolveProjectRuntime: () => ({
         selectionRequired: { engine: 'rpg-maker-mv', reason: 'invalid' },
       }),
@@ -693,6 +699,7 @@ function createBattlePreparation(_root: string, sourceProject: string): BattleTe
   return {
     sourceProject,
     temporaryProject,
+    ownership: ownershipFixture(),
     sourceFingerprint: 'source-hash',
     saveFingerprint: 'save-hash',
     staging: { files: [{ relativePath: 'data/Troops.json', delete: false, draftHash: 'draft-hash' }], digest: 'staging-hash' },
@@ -714,6 +721,7 @@ function createParticlePreparation(sourceProject: string): ParticleAnimationPrev
   return {
     sourceProject,
     temporaryProject,
+    ownership: ownershipFixture(),
     sourceFingerprint: 'source-hash',
     saveFingerprint: 'save-hash',
     staging: { files: [], digest: 'staging-hash' },
@@ -731,6 +739,7 @@ function createUiDesignerPreparation(sourceProject: string): UiDesignerGamePrevi
   return {
     sourceProject,
     temporaryProject,
+    ownership: ownershipFixture(),
     sourceFingerprint: 'source-hash',
     saveFingerprint: 'save-hash',
     staging: { files: [], digest: 'staging-hash' },
@@ -738,6 +747,16 @@ function createUiDesignerPreparation(sourceProject: string): UiDesignerGamePrevi
     engine: 'rpg-maker-mv',
     executable,
     sceneName: 'Scene_Sample',
+  };
+}
+
+function ownershipFixture(): IsolatedProjectOwnership {
+  return {
+    schemaVersion: ISOLATED_PROJECT_OWNERSHIP_SCHEMA_VERSION,
+    ownershipToken: 'ownership-token',
+    markerRelativePath: '.rmmv-agent-ownership.json',
+    sourceIdentityDigest: 'source-digest',
+    temporaryIdentityDigest: 'temporary-digest',
   };
 }
 

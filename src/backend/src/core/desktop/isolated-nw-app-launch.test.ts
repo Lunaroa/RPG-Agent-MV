@@ -16,7 +16,7 @@ import { createOwnedEmptyIsolatedProject } from './isolated-project-attestation.
 import type { IsolatedProjectPreparation } from './isolated-project-preparation.ts'
 import type { InteractiveProjectRuntime } from './interactive-playtest-runtime.ts'
 
-function createProject(root: string, layout: 'data' | 'www', name = layout): { project: string; resourceRoot: string; main: string } {
+function createProject(root: string, layout: 'data' | 'www', name: string = layout): { project: string; resourceRoot: string; main: string } {
   const project = path.join(root, `project-${name}`)
   const resourceRoot = layout === 'www' ? path.join(project, 'www') : project
   fs.mkdirSync(path.join(resourceRoot, 'data'), { recursive: true })

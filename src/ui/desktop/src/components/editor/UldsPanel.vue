@@ -106,7 +106,7 @@ import { LAYER_Z } from '../../constants/layerZIndex';
 import ImageAssetPickerDialog from './ImageAssetPickerDialog.vue';
 import { useI18n } from '../../i18n';
 import type { EditorProjectCatalog } from '../../api/client';
-import { ULDS_DEFAULT_Z, staticUldsBoolean, staticUldsNumber, type UldsLayerRecord } from '@contract/ulds';
+import { ULDS_DEFAULT_PATH, ULDS_DEFAULT_Z, staticUldsBoolean, staticUldsNumber, type UldsLayerRecord } from '@contract/ulds';
 
 const props = defineProps<{
   visible: boolean;
@@ -129,10 +129,6 @@ const { t } = useI18n();
 const draft = ref<UldsLayerRecord[]>([]);
 const picker = ref<InstanceType<typeof ImageAssetPickerDialog>>();
 let pickingIndex = -1;
-type UldsAssetKind = keyof EditorProjectCatalog['assets'];
-
-/** img/ buckets offered by the picker; parallaxes is the plugin default (no `path` key). */
-const ULDS_PATH_BUCKETS = ['parallaxes', 'pictures', 'tilesets', 'battlebacks1', 'battlebacks2', 'characters', 'faces'] as const;
 
 watch(() => [props.visible, props.mapName, props.layers] as const, ([visible], previous) => {
   if (!visible) return;
@@ -194,15 +190,18 @@ function openPicker(index: number) {
   const row = draft.value[index];
   if (!row) return;
   pickingIndex = index;
-  const bucket = (row.path && ULDS_PATH_BUCKETS.includes(row.path as typeof ULDS_PATH_BUCKETS[number]) ? row.path : 'parallaxes') as UldsAssetKind;
-  picker.value?.open({ asset: bucket, mode: 'plain', name: row.name || '' });
+  const path = String(row.path || ULDS_DEFAULT_PATH).replace(/\\/g, '/').replace(/^img\/+|^\/+|\/+$/g, '');
+  const name = String(row.name || '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  picker.value?.open({ rootDirectory: 'img', mode: 'plain', name: name ? `${path}/${name}` : '' });
 }
-function onPickerCommit(selection: { asset: UldsAssetKind; name: string }) {
+function onPickerCommit(selection: { directory: string; name: string }) {
   if (pickingIndex < 0 || !selection.name) return;
   const row = draft.value[pickingIndex];
   if (!row) return;
+  const path = selection.directory.replace(/\\/g, '/').replace(/^img\/+|^\/+|\/+$/g, '');
+  if (!path) return;
   row.name = selection.name;
-  if (selection.asset !== 'parallaxes') row.path = selection.asset;
+  if (path !== ULDS_DEFAULT_PATH) row.path = path;
   else delete row.path;
   commitRow();
 }

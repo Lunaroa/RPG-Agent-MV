@@ -7,6 +7,7 @@ const mapPropertiesSource = readFileSync(new URL('./MapPropertiesDialog.vue', im
 const eventEditorSource = readFileSync(new URL('./EventEditorDialog.vue', import.meta.url), 'utf8');
 const eventConditionSource = readFileSync(new URL('./EventConditionSelect.vue', import.meta.url), 'utf8');
 const eventImagePickerSource = readFileSync(new URL('./EventImagePickerDialog.vue', import.meta.url), 'utf8');
+const imageAssetPickerSource = readFileSync(new URL('./ImageAssetPickerDialog.vue', import.meta.url), 'utf8');
 const editorToolbarSource = readFileSync(new URL('./EditorToolbar.vue', import.meta.url), 'utf8');
 const uldsPanelSource = readFileSync(new URL('./UldsPanel.vue', import.meta.url), 'utf8');
 const leftDockSource = readFileSync(new URL('../layout/LeftDock.vue', import.meta.url), 'utf8');
@@ -65,11 +66,17 @@ describe('editor semantic controls', () => {
     }
     assert.match(uldsPanelSource, /<el-input-number[^>]+:min="0"[^>]+:max="255"[^>]+data-ui-id="ulds-layer-opacity"/);
     assert.doesNotMatch(uldsPanelSource, /moveRow\(|editor\.ulds\.moveUp|editor\.ulds\.moveDown/);
+    assert.match(uldsPanelSource, /rootDirectory: 'img'/);
+    assert.match(uldsPanelSource, /selection\.directory/);
+    assert.doesNotMatch(uldsPanelSource, /ULDS_PATH_BUCKETS/);
+    assert.match(imageAssetPickerSource, /catalogImageRootAssets\(props\.catalog\)/);
+    assert.match(imageAssetPickerSource, /resolveCatalogImageRootSelection\(selection\)/);
   });
 
   test('compiles the product-gated unlimited-layer surfaces', () => {
     for (const [name, source] of [
       ['UldsPanel.vue', uldsPanelSource],
+      ['ImageAssetPickerDialog.vue', imageAssetPickerSource],
       ['EditorView.vue', editorViewSource],
       ['MapOverviewView.vue', mapOverviewSource],
     ] as const) {

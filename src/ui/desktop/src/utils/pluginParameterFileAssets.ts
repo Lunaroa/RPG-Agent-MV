@@ -15,6 +15,12 @@ export type PluginFileAssetOption = {
 
 type CatalogAssetKey = keyof EditorProjectCatalog['assets'];
 
+export type CatalogImageRootSelection = {
+  asset: CatalogAssetKey;
+  directory: string;
+  name: string;
+};
+
 type DirectoryBucket = {
   directory: string;
   key: CatalogAssetKey;
@@ -44,6 +50,54 @@ export const PLUGIN_FILE_DIRECTORY_BUCKETS: readonly DirectoryBucket[] = [
   { directory: 'effects', key: 'effects', media: 'other' },
   { directory: 'movies', key: 'movies', media: 'movie' },
 ] as const;
+
+/** Flatten every catalog image bucket beneath the shared `img` browser root. */
+export function catalogImageRootAssets(
+  catalog: EditorProjectCatalog | null | undefined,
+): PluginFileAssetOption[] {
+  if (!catalog) return [];
+  return PLUGIN_FILE_DIRECTORY_BUCKETS
+    .filter((bucket) => bucket.media === 'image' && bucket.directory.startsWith('img/'))
+    .flatMap((bucket) => {
+      const relativeDirectory = bucket.directory.slice('img/'.length);
+      return (catalog.assets[bucket.key] || []).flatMap((asset) => {
+        const name = String(asset.name || '').replace(/\\/g, '/').replace(/^\/+/, '');
+        if (!name || name.includes('..')) return [];
+        return [{
+          name: `${relativeDirectory}/${name}`,
+          fileName: `${relativeDirectory}/${asset.fileName}`,
+          url: asset.url,
+        }];
+      });
+    })
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+/** Resolve an `img`-relative picker value back to its catalog bucket and path. */
+export function resolveCatalogImageRootSelection(
+  value: unknown,
+): CatalogImageRootSelection | null {
+  const selected = String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\/+|\/+$/g, '');
+  if (!selected || selected.includes('..')) return null;
+
+  const matches = PLUGIN_FILE_DIRECTORY_BUCKETS
+    .filter((bucket) => bucket.media === 'image' && bucket.directory.startsWith('img/'))
+    .map((bucket) => ({ bucket, relativeDirectory: bucket.directory.slice('img/'.length) }))
+    .filter(({ relativeDirectory }) => selected.startsWith(`${relativeDirectory}/`))
+    .sort((left, right) => right.relativeDirectory.length - left.relativeDirectory.length);
+  const match = matches[0];
+  if (!match) return null;
+  const name = selected.slice(match.relativeDirectory.length + 1);
+  if (!name || name.includes('..')) return null;
+  return {
+    asset: match.bucket.key,
+    directory: match.bucket.directory,
+    name,
+  };
+}
 
 export type PluginFileAssetResolution =
   | {

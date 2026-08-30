@@ -64,8 +64,10 @@ import type { EditorProjectCatalog, ProjectAssetEntry } from '../../api/client';
 import { MV_FACE_COLUMNS, MV_FACE_ROWS, mvFaceIndexFromCanvasPoint, normalizeFaceSize, normalizeMvFaceIndex } from '../../utils/rmmvFace';
 import { isBigCharacterName } from '../../composables/useMapRenderer';
 import {
+  catalogImageRootAssets,
   foldersFromAssetNames,
   PLUGIN_FILE_DIRECTORY_BUCKETS,
+  resolveCatalogImageRootSelection,
   type PluginFileAssetOption,
 } from '../../utils/pluginParameterFileAssets';
 import PluginParameterFilePickerDialog from './PluginParameterFilePickerDialog.vue';
@@ -73,12 +75,24 @@ import PluginParameterFilePickerDialog from './PluginParameterFilePickerDialog.v
 type ImageAssetKind = keyof EditorProjectCatalog['assets'];
 type ImagePickerMode = 'plain' | 'face' | 'character' | 'icon';
 
-interface OpenOptions {
-  asset: ImageAssetKind;
+interface OpenOptionsBase {
   mode?: ImagePickerMode;
   title?: string;
   name?: string;
   index?: number;
+}
+
+type OpenOptions = OpenOptionsBase & (
+  | { asset: ImageAssetKind; rootDirectory?: never }
+  | { asset?: never; rootDirectory: 'img' }
+);
+
+interface ImageAssetPickerSelection {
+  asset: ImageAssetKind;
+  mode: ImagePickerMode;
+  name: string;
+  index: number;
+  directory: string;
 }
 
 const props = defineProps<{
@@ -86,13 +100,14 @@ const props = defineProps<{
   loadImage: (url: string) => Promise<HTMLImageElement | null>;
 }>();
 
-const emit = defineEmits<{ commit: [selection: { asset: ImageAssetKind; mode: ImagePickerMode; name: string; index: number }] }>();
+const emit = defineEmits<{ commit: [selection: ImageAssetPickerSelection] }>();
 
 const { t } = useI18n();
 const subDialogZ = String(LAYER_Z.subDialog);
 const visible = ref(false);
 const title = ref(t('imgPicker.chooseImage'));
 const assetKind = ref<ImageAssetKind>('pictures');
+const rootDirectory = ref<'img' | null>(null);
 const mode = ref<ImagePickerMode>('plain');
 const name = ref('');
 const index = ref(0);
@@ -107,13 +122,17 @@ let bitmap: HTMLImageElement | null = null;
 const imageCache = new Map<string, HTMLImageElement | null>();
 
 // Plain mode feeds the plugin-manager picker straight from the catalog bucket.
-const plainDirectory = computed(() =>
+const assetDirectory = computed(() =>
   PLUGIN_FILE_DIRECTORY_BUCKETS.find((bucket) => bucket.key === assetKind.value)?.directory
   || `img/${String(assetKind.value)}`);
-const plainAssets = computed<PluginFileAssetOption[]>(() => (props.catalog?.assets[assetKind.value] || [])
-  .map((asset) => ({ name: String(asset.name || '').replace(/\\/g, '/'), fileName: asset.fileName, url: asset.url }))
-  .filter((asset) => Boolean(asset.name) && !asset.name.includes('..'))
-  .sort((left, right) => left.name.localeCompare(right.name)));
+const plainDirectory = computed(() => rootDirectory.value || assetDirectory.value);
+const plainAssets = computed<PluginFileAssetOption[]>(() => {
+  if (rootDirectory.value === 'img') return catalogImageRootAssets(props.catalog);
+  return (props.catalog?.assets[assetKind.value] || [])
+    .map((asset) => ({ name: String(asset.name || '').replace(/\\/g, '/'), fileName: asset.fileName, url: asset.url }))
+    .filter((asset) => Boolean(asset.name) && !asset.name.includes('..'))
+    .sort((left, right) => left.name.localeCompare(right.name));
+});
 const plainFolders = computed(() => foldersFromAssetNames(plainAssets.value.map((asset) => asset.name)));
 
 function iconGridLayout(): { cols: number; rows: number; nativeCellW: number; nativeCellH: number } {
@@ -151,9 +170,18 @@ onMounted(() => window.addEventListener('keydown', onKeyDown));
 onUnmounted(() => window.removeEventListener('keydown', onKeyDown));
 
 function open(options: OpenOptions) {
-  assetKind.value = options.asset;
   mode.value = options.mode || 'plain';
   title.value = options.title || t('imgPicker.chooseImage');
+  rootDirectory.value = options.rootDirectory || null;
+  if (options.rootDirectory === 'img') {
+    if (mode.value !== 'plain') throw new Error('The img root picker only supports plain image selection.');
+    const current = resolveCatalogImageRootSelection(options.name);
+    if (current) assetKind.value = current.asset;
+    name.value = current?.name || '';
+    plainPicker.value?.open(String(options.name || ''));
+    return;
+  }
+  assetKind.value = options.asset;
   if (mode.value === 'plain') {
     name.value = options.name || '';
     plainPicker.value?.open(String(options.name || ''));
@@ -338,7 +366,13 @@ function normalizeCharacterIndex(value: unknown): number {
 }
 
 function commit() {
-  emit('commit', { asset: assetKind.value, mode: mode.value, name: name.value, index: index.value });
+  emit('commit', {
+    asset: assetKind.value,
+    mode: mode.value,
+    name: name.value,
+    index: index.value,
+    directory: assetDirectory.value,
+  });
   close();
 }
 
@@ -349,8 +383,25 @@ function confirmAsset(value: string) {
 }
 
 function commitPlainSelection(selection: string) {
+  if (rootDirectory.value === 'img') {
+    const resolved = resolveCatalogImageRootSelection(selection);
+    if (!resolved) {
+      if (!selection) emit('commit', { asset: assetKind.value, mode: 'plain', name: '', index: 0, directory: 'img' });
+      return;
+    }
+    assetKind.value = resolved.asset;
+    name.value = resolved.name;
+    emit('commit', { ...resolved, mode: 'plain', index: 0 });
+    return;
+  }
   name.value = selection;
-  emit('commit', { asset: assetKind.value, mode: 'plain', name: selection, index: 0 });
+  emit('commit', {
+    asset: assetKind.value,
+    mode: 'plain',
+    name: selection,
+    index: 0,
+    directory: assetDirectory.value,
+  });
 }
 
 

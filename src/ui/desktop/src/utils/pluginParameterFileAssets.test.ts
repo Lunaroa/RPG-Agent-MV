@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import type { EditorProjectCatalog, ProjectRelativeDirectoryListResult } from '../../api/client';
 import {
+  catalogImageRootAssets,
   inferPluginFileMediaKind,
   isPluginFileAudioDirectory,
   normalizePluginFileDirectory,
+  resolveCatalogImageRootSelection,
   resolvePluginParameterFileAssets,
   resolvePluginParameterFileAssetsFromCatalog,
   shouldPersistPluginFileBrowserViewMode,
@@ -81,6 +83,29 @@ function catalogWith(
 }
 
 describe('pluginParameterFileAssets', () => {
+  test('builds one img-root catalog and resolves selections back to physical buckets', () => {
+    const catalog = catalogWith({
+      parallaxes: [{ name: 'BlueSky', fileName: 'BlueSky.png', url: 'rmmv-asset://sky' }],
+      pictures: [{ name: 'ui/Frame', fileName: 'ui/Frame.png', url: 'rmmv-asset://frame' }],
+      svActors: [{ name: 'Hero', fileName: 'Hero.png', url: 'rmmv-asset://hero' }],
+    });
+    assert.deepEqual(
+      catalogImageRootAssets(catalog).map((asset) => asset.name),
+      ['parallaxes/BlueSky', 'pictures/ui/Frame', 'sv_actors/Hero'],
+    );
+    assert.deepEqual(resolveCatalogImageRootSelection('pictures/ui/Frame'), {
+      asset: 'pictures',
+      directory: 'img/pictures',
+      name: 'ui/Frame',
+    });
+    assert.deepEqual(resolveCatalogImageRootSelection('sv_actors/Hero'), {
+      asset: 'svActors',
+      directory: 'img/sv_actors',
+      name: 'Hero',
+    });
+    assert.equal(resolveCatalogImageRootSelection('audio/bgm/Theme'), null);
+  });
+
   test('infers media for img/audio roots and nested dirs', () => {
     assert.equal(inferPluginFileMediaKind('img'), 'image');
     assert.equal(inferPluginFileMediaKind('img/titles1'), 'image');

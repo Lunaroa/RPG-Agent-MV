@@ -258,7 +258,7 @@ onUnmounted(() => {
           <div v-else-if="bootError" class="app-state-card error">{{ bootError }}</div>
           <router-view v-else v-slot="{ Component, route: currentRoute }">
             <RouteErrorBoundary>
-                <KeepAlive :max="3" :exclude="['UiDesignerView']">
+              <KeepAlive :max="3" :exclude="['UiDesignerView']">
                 <component :is="Component" :key="workspaceCacheKey(currentRoute)" />
               </KeepAlive>
             </RouteErrorBoundary>

@@ -10,16 +10,20 @@ import {
 } from '../rmmv/rmmv-layout.ts';
 import { writeFileAtomically } from './ui-designer-service.ts';
 import { uiDesignerProjectCompatibility, unsupportedUiDesignerProjectCompatibility } from './ui-designer-compatibility.ts';
+import { isLegacyManagedUiDesignerRuntimeDigest } from './ui-designer-managed-runtime-revisions.ts';
 
 export const UI_DESIGNER_RUNTIME_PLUGIN_NAME = 'MZUIRuntime';
 export const UI_DESIGNER_RUNTIME_VERSION = '1.1.0';
 export const UI_DESIGNER_RUNTIME_RELATIVE_PATH = 'js/plugins/MZUIRuntime.js';
+export const UI_DESIGNER_RUNTIME_MANIFEST_RELATIVE_PATH = 'data/ui-scenes/MZUIRuntime.manifest.json';
+const UI_DESIGNER_RUNTIME_MANIFEST_VERSION = '1.0.0';
 
 export type UiDesignerRuntimeInspectionState =
   | 'missing'
   | 'file-unconfigured'
   | 'configured-disabled'
   | 'enabled-compatible'
+  | 'managed-update-available'
   | 'version-too-old'
   | 'content-mismatch'
   | 'error';
@@ -44,15 +48,21 @@ export interface UiDesignerRuntimeInstallResult {
   affectedFiles: string[];
   runtime: UiDesignerRuntimeInspection;
   digest: string;
+  backupRelativePath?: string;
 }
 
 export class UiDesignerRuntimeModifiedError extends Error {
   readonly code = 'UI_DESIGNER_RUNTIME_MODIFIED';
   readonly recoverable = true;
+  readonly choices = ['backup-and-replace', 'cancel'] as const;
+  readonly affectedFiles: string[];
+  readonly digest: string;
 
-  constructor() {
-    super('The project contains a modified MZUI runtime. Review it before replacing the plugin.');
+  constructor(runtimeRelativePath: string, digest: string) {
+    super('The project runtime contains unrecognized changes. Back it up and replace it before continuing the save.');
     this.name = 'UiDesignerRuntimeModifiedError';
+    this.affectedFiles = [runtimeRelativePath];
+    this.digest = digest;
   }
 }
 
@@ -70,7 +80,7 @@ const BUNDLED_RUNTIME_SOURCE = fs.readFileSync(
   new URL('./ui-designer-runtime/MZUIRuntime.js', import.meta.url),
   'utf8',
 );
-const BUNDLED_RUNTIME_DIGEST = sha256(Buffer.from(BUNDLED_RUNTIME_SOURCE, 'utf8'));
+const BUNDLED_RUNTIME_DIGEST = runtimeContentDigest(Buffer.from(BUNDLED_RUNTIME_SOURCE, 'utf8'));
 
 export function bundledUiDesignerRuntime(): { version: string; digest: string; source: string } {
   return { version: UI_DESIGNER_RUNTIME_VERSION, digest: BUNDLED_RUNTIME_DIGEST, source: BUNDLED_RUNTIME_SOURCE };
@@ -87,11 +97,14 @@ export function inspectUiDesignerRuntime(
     const projectCompatibility = uiDesignerProjectCompatibility(manifest);
     const layout = resolveRmmvLayout(project);
     const runtimeRelativePath = resourceRelativePath(layout, UI_DESIGNER_RUNTIME_RELATIVE_PATH);
+    const manifestRelativePath = resourceRelativePath(layout, UI_DESIGNER_RUNTIME_MANIFEST_RELATIVE_PATH);
     const pluginConfigRelativePath = resourceRelativePath(layout, 'js/plugins.js');
     const runtimeFile = path.join(project, ...runtimeRelativePath.split('/'));
+    const manifestFile = path.join(project, ...manifestRelativePath.split('/'));
     const pluginConfigFile = path.join(project, ...pluginConfigRelativePath.split('/'));
     const runtimeExists = fs.existsSync(runtimeFile) && fs.statSync(runtimeFile).isFile();
-    const digest = runtimeExists ? sha256(fs.readFileSync(runtimeFile)) : null;
+    const digest = runtimeExists ? runtimeContentDigest(fs.readFileSync(runtimeFile)) : null;
+    const management = inspectRuntimeManagement(digest, manifestFile);
     const plugins = fs.existsSync(pluginConfigFile) && fs.statSync(pluginConfigFile).isFile()
       ? parsePlugins(fs.readFileSync(pluginConfigFile, 'utf8'))
       : { entries: [], parseError: null };
@@ -99,12 +112,15 @@ export function inspectUiDesignerRuntime(
     let state: UiDesignerRuntimeInspectionState;
     if (!runtimeExists) state = 'missing';
     else if (plugins.parseError) state = 'error';
+    else if (management === 'modified') state = 'content-mismatch';
+    else if (management === 'managed-previous') state = 'managed-update-available';
     else if (!plugin) state = 'file-unconfigured';
-    else if (digest !== BUNDLED_RUNTIME_DIGEST) state = runtimeVersion(runtimeFile) === UI_DESIGNER_RUNTIME_VERSION ? 'content-mismatch' : 'version-too-old';
     else if (!plugin.status) state = 'configured-disabled';
     else state = 'enabled-compatible';
+    const manifestCurrent = digest === BUNDLED_RUNTIME_DIGEST && runtimeManifestDigest(manifestFile) === BUNDLED_RUNTIME_DIGEST;
     const affectedFiles = [
       ...(!runtimeExists || digest !== BUNDLED_RUNTIME_DIGEST ? [runtimeRelativePath] : []),
+      ...(!manifestCurrent ? [manifestRelativePath] : []),
       ...(!plugins.parseError && (!plugin || !plugin.status) ? [pluginConfigRelativePath] : []),
     ];
     return {
@@ -120,7 +136,7 @@ export function inspectUiDesignerRuntime(
       pluginConfigured: Boolean(plugin),
       pluginEnabled: Boolean(plugin?.status),
       affectedFiles,
-      needsConfirmation: state === 'content-mismatch' || state === 'version-too-old',
+      needsConfirmation: state === 'content-mismatch',
       projectCompatibility,
     };
   } catch (error) {
@@ -156,22 +172,24 @@ export function installUiDesignerRuntime(
   inspectRmmvProject(project);
   const layout = resolveRmmvLayout(project);
   const runtimeRelativePath = resourceRelativePath(layout, UI_DESIGNER_RUNTIME_RELATIVE_PATH);
+  const manifestRelativePath = resourceRelativePath(layout, UI_DESIGNER_RUNTIME_MANIFEST_RELATIVE_PATH);
   const pluginConfigRelativePath = resourceRelativePath(layout, 'js/plugins.js');
   const runtimePath = path.join(project, ...runtimeRelativePath.split('/'));
+  const manifestPath = path.join(project, ...manifestRelativePath.split('/'));
   const pluginConfigPath = path.join(project, ...pluginConfigRelativePath.split('/'));
   const affectedFiles: string[] = [];
-  if (fs.existsSync(runtimePath)) {
-    const current = fs.readFileSync(runtimePath);
-    const currentDigest = sha256(current);
-    const currentVersion = runtimeVersion(runtimePath);
-    if (currentDigest !== BUNDLED_RUNTIME_DIGEST && currentVersion === UI_DESIGNER_RUNTIME_VERSION && !options.forceModifiedRuntime) {
-      throw new UiDesignerRuntimeModifiedError();
-    }
-  }
+  let backupRelativePath: string | undefined;
+  const currentRuntime = fs.existsSync(runtimePath) ? fs.readFileSync(runtimePath) : null;
+  const currentDigest = currentRuntime ? runtimeContentDigest(currentRuntime) : null;
   const parsed = fs.existsSync(pluginConfigPath)
     ? parsePlugins(fs.readFileSync(pluginConfigPath, 'utf8'))
     : { entries: [], parseError: null };
   if (parsed.parseError) throw new Error(`Cannot install MZUI runtime while plugins.js is invalid: ${parsed.parseError}`);
+  if (currentRuntime && inspectRuntimeManagement(currentDigest, manifestPath) === 'modified') {
+    if (!options.forceModifiedRuntime) throw new UiDesignerRuntimeModifiedError(runtimeRelativePath, currentDigest as string);
+    backupRelativePath = backupRuntime(project, runtimeRelativePath, currentRuntime);
+    affectedFiles.push(backupRelativePath);
+  }
   const existing = parsed.entries.find((entry) => entry.name === UI_DESIGNER_RUNTIME_PLUGIN_NAME);
   const runtimeEntry = {
     name: UI_DESIGNER_RUNTIME_PLUGIN_NAME,
@@ -184,7 +202,7 @@ export function installUiDesignerRuntime(
   if (existingIndex >= 0) entries[existingIndex] = runtimeEntry;
   else entries.push(runtimeEntry);
   const runtimeBody = Buffer.from(BUNDLED_RUNTIME_SOURCE, 'utf8');
-  if (!fs.existsSync(runtimePath) || sha256(fs.readFileSync(runtimePath)) !== BUNDLED_RUNTIME_DIGEST) {
+  if (!fs.existsSync(runtimePath) || runtimeContentDigest(fs.readFileSync(runtimePath)) !== BUNDLED_RUNTIME_DIGEST) {
     writeFileAtomically(runtimePath, runtimeBody);
     affectedFiles.push(runtimeRelativePath);
   }
@@ -193,11 +211,17 @@ export function installUiDesignerRuntime(
     writeFileAtomically(pluginConfigPath, pluginBody);
     affectedFiles.push(pluginConfigRelativePath);
   }
+  const manifestBody = serializeRuntimeManifest(BUNDLED_RUNTIME_DIGEST);
+  if (!fs.existsSync(manifestPath) || !fs.readFileSync(manifestPath).equals(manifestBody)) {
+    writeFileAtomically(manifestPath, manifestBody);
+    affectedFiles.push(manifestRelativePath);
+  }
   return {
     status: 'installed',
     affectedFiles,
     runtime: inspectUiDesignerRuntime(workflowRoot, project),
     digest: BUNDLED_RUNTIME_DIGEST,
+    ...(backupRelativePath ? { backupRelativePath } : {}),
   };
 }
 
@@ -254,10 +278,59 @@ function runtimeMessage(state: UiDesignerRuntimeInspectionState): string {
     'file-unconfigured': 'MZ UI runtime file exists but is not configured in plugins.js.',
     'configured-disabled': 'MZ UI runtime is installed but disabled.',
     'enabled-compatible': 'MZ UI runtime is installed and enabled.',
+    'managed-update-available': 'A managed MZ UI runtime update is available.',
     'version-too-old': 'MZ UI runtime is older than the bundled runtime.',
     'content-mismatch': 'MZ UI runtime differs from the bundled runtime.',
     error: 'MZ UI runtime status could not be inspected.',
   }[state];
+}
+
+type RuntimeManagement = 'missing' | 'current' | 'managed-previous' | 'modified';
+
+function inspectRuntimeManagement(digest: string | null, manifestPath: string): RuntimeManagement {
+  if (!digest) return 'missing';
+  if (digest === BUNDLED_RUNTIME_DIGEST) return 'current';
+  if (runtimeManifestDigest(manifestPath) === digest || isLegacyManagedUiDesignerRuntimeDigest(digest)) return 'managed-previous';
+  return 'modified';
+}
+
+function runtimeManifestDigest(filePath: string): string | null {
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return null;
+  try {
+    const value = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, unknown>;
+    return value.schemaVersion === UI_DESIGNER_RUNTIME_MANIFEST_VERSION
+      && typeof value.digest === 'string'
+      && /^[a-f0-9]{64}$/.test(value.digest)
+      ? value.digest
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function serializeRuntimeManifest(digest: string): Buffer {
+  return Buffer.from(`${JSON.stringify({
+    schemaVersion: UI_DESIGNER_RUNTIME_MANIFEST_VERSION,
+    runtimeVersion: UI_DESIGNER_RUNTIME_VERSION,
+    digest,
+  }, null, 2)}\n`, 'utf8');
+}
+
+function backupRuntime(project: string, runtimeRelativePath: string, source: Buffer): string {
+  const rawDigest = sha256(source);
+  const backupRelativePath = `${runtimeRelativePath}.${rawDigest.slice(0, 12)}.bak`;
+  const backupPath = path.join(project, ...backupRelativePath.split('/'));
+  if (fs.existsSync(backupPath)) {
+    if (!fs.readFileSync(backupPath).equals(source)) throw new Error(`Runtime backup path is already occupied: ${backupRelativePath}`);
+    return backupRelativePath;
+  }
+  writeFileAtomically(backupPath, source);
+  return backupRelativePath;
+}
+
+function runtimeContentDigest(value: Buffer): string {
+  const normalized = value.toString('utf8').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  return sha256(Buffer.from(normalized, 'utf8'));
 }
 
 function sha256(value: Buffer): string {

@@ -3,6 +3,7 @@ export const UI_DESIGNER_MENU_COMMAND_EVENT = 'agent-rpg:ui-designer-menu-comman
 export type UiDesignerMenuCommand =
   | 'new'
   | 'open'
+  | 'import'
   | 'save'
   | 'saveAs'
   | 'editorPreview'
@@ -22,6 +23,7 @@ export function uiDesignerMenuCommandFromEvent(event: Event): UiDesignerMenuComm
   return [
     'new',
     'open',
+    'import',
     'save',
     'saveAs',
     'editorPreview',

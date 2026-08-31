@@ -130,6 +130,7 @@ const menus = computed<{ key: string; label: string; items: TopBarMenuItem[] }[]
     items.push({ key: 'ui-designer', label: t('topbar.menu.uiDesigner'), items: [
       { key: 'new-scene', label: t('topbar.menu.uiDesignerNew'), shortcut: 'Ctrl+N', action: () => dispatchUiDesignerMenuCommand('new') },
       { key: 'open-scene', label: t('topbar.menu.uiDesignerOpen'), shortcut: 'Ctrl+O', action: () => dispatchUiDesignerMenuCommand('open') },
+      { key: 'import-scene', label: t('topbar.menu.uiDesignerImport'), action: () => dispatchUiDesignerMenuCommand('import') },
       { key: 'save-scene', label: t('topbar.menu.uiDesignerSave'), shortcut: shortcuts.bindingLabel('app.save'), action: () => dispatchUiDesignerMenuCommand('save') },
       { key: 'save-as-scene', label: t('topbar.menu.uiDesignerSaveAs'), action: () => dispatchUiDesignerMenuCommand('saveAs') },
       { key: 'separator-preview', separator: true },

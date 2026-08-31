@@ -118,6 +118,18 @@ export interface UiDesignerPreferences {
   [key: string]: unknown
 }
 
+interface UiDesignerSaveOptions {
+  force?: boolean
+  sceneName?: string
+  replaceModifiedRuntime?: boolean
+}
+
+interface UiDesignerRuntimeReplacementRequest {
+  sceneId: string
+  mode: 'save' | 'saveAs'
+  options: UiDesignerSaveOptions
+}
+
 export interface UseUiDesignerOptions {
   adapters?: UiDesignerAdapterBundle
   projectPath?: string
@@ -211,6 +223,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const actionError = ref('')
   const fileConflict = ref<UiDesignerFileConflict | null>(null)
   const pendingSaveAsName = ref<string | null>(null)
+  const runtimeReplacementRequest = ref<UiDesignerRuntimeReplacementRequest | null>(null)
   const previewDisposers = new Set<(reason: UiDesignerPreviewDisposeReason) => Promise<boolean>>()
   const resourceMutationHandlers = new Set<(manifest: ProjectAssetChangeManifest) => Promise<void> | void>()
   let previewDisposePromise: Promise<boolean> | null = null
@@ -272,6 +285,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     : null)
   const canCreateScene = computed(() => Boolean(newSceneCanvasSize.value))
   const saveAsConflict = computed(() => Boolean(fileConflict.value && pendingSaveAsName.value))
+  const runtimeReplacementPending = computed(() => Boolean(runtimeReplacementRequest.value))
 
   const persistenceOperations = createUiDesignerPersistenceOperations({
     getFile: () => adapters.file,
@@ -444,6 +458,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     sceneFiles.value = []
     fileConflict.value = null
     pendingSaveAsName.value = null
+    runtimeReplacementRequest.value = null
     runtimeStatus.value = { state: 'unknown', message: 'Runtime has not been inspected.' }
     projectProfile.value = null
     projectProfileStatus.value = nextProjectPath?.trim() ? 'busy' : 'idle'
@@ -1257,7 +1272,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     return cleared
   }
 
-  const saveScene = async (sceneId: string, mode: 'save' | 'saveAs' = 'save', options: { force?: boolean; sceneName?: string } = {}) => {
+  const saveScene = async (sceneId: string, mode: 'save' | 'saveAs' = 'save', options: UiDesignerSaveOptions = {}) => {
     if (!canSave.value) {
       fileStatus.value = 'unavailable'
       fileMessage.value = 'File adapter is not connected; no project file was written.'
@@ -1265,6 +1280,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     }
     fileStatus.value = 'busy'
     fileConflict.value = null
+    runtimeReplacementRequest.value = null
     try {
       const scene = scenes.value.find((item) => item.id === sceneId)
       if (!scene) return false
@@ -1291,9 +1307,16 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
         thumbnailDataUrl: sceneThumbnailProvider?.(scene.id),
         expected: mode === 'saveAs' || !scene?.openedMetadata ? undefined : { digest: scene.openedMetadata.digest, mtimeMs: scene.openedMetadata.mtimeMs },
         force: options.force,
+        replaceModifiedRuntime: options.replaceModifiedRuntime,
       }
       const result = mode === 'saveAs' ? await adapters.file.saveAs(savedDocument, request) : await adapters.file.save(savedDocument, request)
       if (generation !== projectGeneration.value) return false
+      if (result.code === 'UI_DESIGNER_RUNTIME_MODIFIED') {
+        runtimeReplacementRequest.value = { sceneId: capturedSceneId, mode, options: { force: options.force, sceneName: mode === 'saveAs' ? savedDocument.meta.sceneName : undefined } }
+        fileStatus.value = 'idle'
+        fileMessage.value = result.message
+        return false
+      }
       fileStatus.value = result.status
       fileMessage.value = result.message
       if (result.conflict) fileConflict.value = result.conflict
@@ -1337,7 +1360,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     }
   }
 
-  const save = async (mode: 'save' | 'saveAs' = 'save', options: { force?: boolean; sceneName?: string } = {}) => {
+  const save = async (mode: 'save' | 'saveAs' = 'save', options: UiDesignerSaveOptions = {}) => {
     const scene = activeScene.value
     return scene ? saveScene(scene.id, mode, options) : false
   }
@@ -1549,6 +1572,59 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const clearFileConflict = () => {
     pendingSaveAsName.value = null
     fileConflict.value = null
+  }
+
+  const importSceneFile = async () => {
+    if (!canSave.value || !hasProject.value) {
+      fileStatus.value = 'unavailable'
+      fileMessage.value = 'Select a project before importing a custom scene.'
+      return false
+    }
+    fileStatus.value = 'busy'
+    const generation = projectGeneration.value
+    try {
+      const result = await adapters.file.importScene()
+      if (generation !== projectGeneration.value) return false
+      if (!result || result.status === 'idle') {
+        fileStatus.value = 'idle'
+        fileMessage.value = result?.message ?? 'Scene import was canceled.'
+        return false
+      }
+      fileStatus.value = result.status
+      fileMessage.value = result.message
+      if (result.status !== 'success' || !result.value) return false
+      const parsed = parseUiDocument(result.value)
+      if (!parsed.ok) {
+        fileStatus.value = 'error'
+        fileMessage.value = parsed.issues.map((issue) => issue.message).join(' ')
+        return false
+      }
+      const report = validateDocument(parsed.document)
+      if (!report.valid) {
+        fileStatus.value = 'error'
+        fileMessage.value = report.errors.map((issue) => issue.message).join(' ')
+        return false
+      }
+      const scene = createSceneState(createUiDocument(parsed.document.meta.sceneName), `scene_tab_${++sceneSequence}`, {}, historyLimit())
+      scene.document = scene.history.commit(parsed.document, 'Import custom scene file')
+      scenes.value.push(scene)
+      activateScene(scene.id)
+      scheduleRecovery(scene)
+      void loadReferencedResources(parsed.document)
+      return true
+    } catch (error) {
+      fileStatus.value = 'error'
+      fileMessage.value = error instanceof Error ? error.message : String(error)
+      return false
+    } finally {
+      if (fileStatus.value === 'busy') fileStatus.value = 'error'
+    }
+  }
+  const resolveRuntimeReplacement = async (choice: 'cancel' | 'replace') => {
+    const pending = runtimeReplacementRequest.value
+    runtimeReplacementRequest.value = null
+    if (!pending || choice === 'cancel') return false
+    return saveScene(pending.sceneId, pending.mode, { ...pending.options, replaceModifiedRuntime: true })
   }
 
   const loadResources = async (request: UiDesignerResourceRequest = {}) => {
@@ -2043,6 +2119,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     fileConflict,
     pendingSaveAsName,
     saveAsConflict,
+    runtimeReplacementPending,
     recentFiles,
     sceneFiles,
     recoveryRecords,
@@ -2123,6 +2200,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     saveScene,
     discardScene,
     open,
+    importSceneFile,
     loadWelcomeRecords,
     removeRecentFile,
     removeRecovery,
@@ -2147,6 +2225,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     reloadConflict,
     resolveFileConflict,
     clearFileConflict,
+    resolveRuntimeReplacement,
     loadResources,
     importSceneData,
     checkRuntime,

@@ -29,6 +29,7 @@ test('scene IPC saves directly in the current project and keeps overwrite semant
   const recent: string[] = []
   const removedRecent: string[] = []
   let runtimeInstalls = 0
+  let selectedImportPath: string | null = null
   const store = {
     isWorkingDocumentPath: () => false,
     saveWorkingDocument: () => { throw new Error('Working-document storage is not part of project scene saves.') },
@@ -43,7 +44,11 @@ test('scene IPC saves directly in the current project and keeps overwrite semant
     writePreferences: () => undefined,
   }
 
-  registerUiDesignerIpcHandlers(ipcMain, { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) }, {
+  registerUiDesignerIpcHandlers(ipcMain, {
+    showOpenDialog: async () => selectedImportPath
+      ? ({ canceled: false, filePaths: [selectedImportPath] })
+      : ({ canceled: true, filePaths: [] }),
+  }, {
     workflowRoot: path.join(project, 'install'),
     resolveProject: (requested) => requested ? path.resolve(requested) : project,
     file: {
@@ -88,6 +93,13 @@ test('scene IPC saves directly in the current project and keeps overwrite semant
   fs.writeFileSync(outside, JSON.stringify({ meta: { sceneName: 'Scene_Outside' } }), 'utf8')
   const outsideResult = await handlers.get('ui-designer:file:open')!(null, { project, path: outside })
   assert.equal(outsideResult.code, 'UI_DESIGNER_PROJECT_SCENE_REQUIRED')
+
+  selectedImportPath = outside
+  const imported = await handlers.get('ui-designer:file:import')!({ sender: null }, { project })
+  assert.equal(imported.status, 'success')
+  assert.equal(imported.value.meta.sceneName, 'Scene_Outside')
+  assert.equal(imported.sourcePath, undefined)
+  selectedImportPath = null
 
   writeScene('Scene_Sample', 'original')
   const opened = await handlers.get('ui-designer:file:open')!(null, { project, path: scenePath('Scene_Sample') })
@@ -134,6 +146,7 @@ test('scene IPC saves directly in the current project and keeps overwrite semant
   const removed: string[] = []
   cleanupUiDesignerIpcHandlers({ removeHandler: (name: string) => { removed.push(name) } })
   assert.equal(removed.includes('ui-designer:file:save-as'), true)
+  assert.equal(removed.includes('ui-designer:file:import'), true)
   assert.equal(removed.includes('ui-designer:global-data:save'), true)
   assert.equal(removed.includes('ui-designer:scene:stage'), false)
   fs.rmSync(project, { recursive: true, force: true })

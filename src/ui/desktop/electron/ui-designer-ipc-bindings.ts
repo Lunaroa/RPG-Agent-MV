@@ -97,6 +97,10 @@ export function uiDesignerOperationError(operation: string, error: unknown): Rec
     : typeof error === 'object' && error && 'message' in error && typeof (error as { message?: unknown }).message === 'string' && (error as { message: string }).message.trim()
       ? (error as { message: string }).message.trim()
       : 'UI designer operation failed. Review the details and choose a recovery action.'
+  const declaredChoices = typeof error === 'object' && error && 'choices' in error && Array.isArray((error as { choices?: unknown }).choices)
+    ? (error as { choices: unknown[] }).choices.filter((choice): choice is string => typeof choice === 'string')
+    : undefined
+  const choices = declaredChoices?.length ? declaredChoices : recoverable ? ['retry', 'reload', 'save-as'] : ['retry']
   const errorPath = typeof error === 'object' && error
     ? ('path' in error && typeof (error as { path?: unknown }).path === 'string'
         ? (error as { path: string }).path
@@ -109,8 +113,8 @@ export function uiDesignerOperationError(operation: string, error: unknown): Rec
     operation,
     code,
     recoverable,
-    choices: recoverable ? ['retry', 'reload', 'save-as'] : ['retry'],
-    error: { code, operation, recoverable, choices: recoverable ? ['retry', 'reload', 'save-as'] : ['retry'] },
+    choices,
+    error: { code, operation, recoverable, choices },
     message,
     ...(errorPath ? { path: errorPath } : {}),
     ...(typeof error === 'object' && error && ('actual' in error || 'expected' in error)
@@ -158,6 +162,30 @@ export function registerUiDesignerIpcHandlers(
     } catch (error) { return uiDesignerOperationError('open', error) }
   })
 
+  ipcMain.handle('ui-designer:file:import', async (event, request: UiDesignerProjectRequest = {}) => {
+    try {
+      if (typeof request?.project !== 'string' || !request.project.trim()) {
+        throw Object.assign(new Error('A selected RPG Maker project is required for scene import.'), { code: 'UI_DESIGNER_PROJECT_REQUIRED' })
+      }
+      dependencies.resolveProject(request.project)
+      const selected = await dialog.showOpenDialog(dependencies.dialogParent?.(event.sender), {
+        title: 'Import Custom Scene',
+        properties: ['openFile'],
+        filters: [{ name: 'Custom scene', extensions: ['mzui'] }],
+      })
+      if (selected.canceled || !selected.filePaths[0]) {
+        return { status: 'idle', operation: 'import', message: 'Canceled.' }
+      }
+      const result = dependencies.file.readUiDesignerFile(selected.filePaths[0])
+      return {
+        status: 'success',
+        operation: 'import',
+        value: result.document,
+        message: 'Scene imported as an unsaved project scene.',
+      }
+    } catch (error) { return uiDesignerOperationError('import', error) }
+  })
+
   const save = async (event: { sender: unknown }, request: UiDesignerFileRequest, document: UiDesignerDocument, mode: 'save' | 'saveAs') => {
     try {
       void event
@@ -189,7 +217,10 @@ export function registerUiDesignerIpcHandlers(
           actual: existing.metadata,
         })
       }
-      dependencies.runtime.installUiDesignerRuntime(dependencies.workflowRoot, project, { enable: true })
+      const runtimeInstall = dependencies.runtime.installUiDesignerRuntime(dependencies.workflowRoot, project, {
+        enable: true,
+        forceModifiedRuntime: request.replaceModifiedRuntime === true,
+      }) as { affectedFiles?: unknown; backupRelativePath?: unknown }
       const store = dependencies.userDataStore()
       const metadata = dependencies.file.saveUiDesignerFile(targetPath, document, {
         expected: mode === 'save' && sourcePath === targetPath ? request.expected : undefined,
@@ -210,7 +241,16 @@ export function registerUiDesignerIpcHandlers(
         projectPath: project,
         thumbnailDataUrl,
       })
-      return { status: 'success', operation: mode, metadata, sourcePath: metadata.path, message: 'Saved.' }
+      const backupPath = typeof runtimeInstall.backupRelativePath === 'string' ? runtimeInstall.backupRelativePath : undefined
+      return {
+        status: 'success',
+        operation: mode,
+        metadata,
+        sourcePath: metadata.path,
+        message: backupPath ? `Saved. The previous runtime was backed up to ${backupPath}.` : 'Saved.',
+        ...(Array.isArray(runtimeInstall.affectedFiles) ? { affectedFiles: runtimeInstall.affectedFiles } : {}),
+        ...(backupPath ? { backupPath } : {}),
+      }
     } catch (error) { return uiDesignerOperationError(mode, error) }
   }
   ipcMain.handle('ui-designer:file:save', (event, request: UiDesignerFileRequest, document: UiDesignerDocument) => save(event, request || {}, document, 'save'))
@@ -291,12 +331,23 @@ export function registerUiDesignerIpcHandlers(
         throw Object.assign(new Error('A selected RPG Maker project is required.'), { code: 'UI_DESIGNER_PROJECT_REQUIRED' })
       }
       const project = dependencies.resolveProject(request.project)
-      dependencies.runtime.installUiDesignerRuntime(dependencies.workflowRoot, project, { enable: true })
+      const runtimeInstall = dependencies.runtime.installUiDesignerRuntime(dependencies.workflowRoot, project, {
+        enable: true,
+        forceModifiedRuntime: request.replaceModifiedRuntime === true,
+      }) as { affectedFiles?: unknown; backupRelativePath?: unknown }
       const metadata = dependencies.file.saveProjectUiDesignerGlobalData(project, data as UiDesignerGlobalDataValue, {
         expected: request.expected,
         force: request.force,
       })
-      return { status: 'success', operation: 'global-data:save', metadata, message: 'Saved.' }
+      const backupPath = typeof runtimeInstall.backupRelativePath === 'string' ? runtimeInstall.backupRelativePath : undefined
+      return {
+        status: 'success',
+        operation: 'global-data:save',
+        metadata,
+        message: backupPath ? `Saved. The previous runtime was backed up to ${backupPath}.` : 'Saved.',
+        ...(Array.isArray(runtimeInstall.affectedFiles) ? { affectedFiles: runtimeInstall.affectedFiles } : {}),
+        ...(backupPath ? { backupPath } : {}),
+      }
     } catch (error) { return uiDesignerOperationError('global-data:save', error) }
   })
   ipcMain.handle('ui-designer:renderer:start', async (_event, request?: UiDesignerProjectRequest & { generation?: number }) => {
@@ -380,7 +431,7 @@ function safeStoreCall(
 
 export function cleanupUiDesignerIpcHandlers(ipcMain: Pick<IpcMain, 'removeHandler'>): void {
   for (const channel of [
-    'ui-designer:file:open', 'ui-designer:file:save', 'ui-designer:file:save-as', 'ui-designer:file:reveal-source',
+    'ui-designer:file:open', 'ui-designer:file:import', 'ui-designer:file:save', 'ui-designer:file:save-as', 'ui-designer:file:reveal-source',
     'ui-designer:project:profile', 'ui-designer:scenes:list',
     'ui-designer:resources:list', 'ui-designer:resources:references', 'ui-designer:resources:read-scene-data', 'ui-designer:file:select-frame-folder', 'ui-designer:runtime:check',
     'ui-designer:global-data:read', 'ui-designer:global-data:save', 'ui-designer:recovery:list', 'ui-designer:recovery:write', 'ui-designer:recovery:read',

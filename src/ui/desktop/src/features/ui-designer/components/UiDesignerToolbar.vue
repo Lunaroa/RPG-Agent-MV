@@ -5,6 +5,7 @@ import { useUiDesignerI18n } from '../i18n'
 const props = defineProps<{ designer: UiDesignerController }>()
 const emit = defineEmits<{
   open: []
+  import: []
   'save-as': []
   'scene-settings': []
   'global-data': []
@@ -33,6 +34,7 @@ const selectEditingMode = (mode: 'design' | 'code' | 'json') => {
       <el-button data-testid="ui-designer-home" data-ui-id="ui-designer-home" size="small" text @click="emit('home')">{{ t('home') }}</el-button>
       <el-button-group>
         <el-button data-testid="ui-designer-open" size="small" :disabled="!designer.canSave || !designer.hasProject" @click="emit('open')">{{ t('open') }}</el-button>
+        <el-button data-testid="ui-designer-import" size="small" :disabled="!designer.canSave || !designer.hasProject" @click="emit('import')">{{ t('importSceneFile') }}</el-button>
         <el-button data-testid="ui-designer-save" size="small" type="primary" :disabled="!designer.canSave || !designer.isDirty" @click="void designer.save()">{{ t('save') }}</el-button>
         <el-button data-testid="ui-designer-save-as" size="small" :disabled="!designer.canSave || !designer.hasProject" @click="emit('save-as')">{{ t('saveAs') }}</el-button>
       </el-button-group>

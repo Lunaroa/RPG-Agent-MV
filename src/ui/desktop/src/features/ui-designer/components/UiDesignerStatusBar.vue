@@ -7,7 +7,7 @@ const props = defineProps<{ designer: UiDesignerController }>()
 const designer = props.designer
 const { t } = useUiDesignerI18n()
 const runtimeLabels: Record<UiRuntimeStatus['state'], UiDesignerMessageKey> = {
-  unknown: 'runtimeUnknown', missing: 'runtimeMissing', 'file-unconfigured': 'runtimeFileUnconfigured', 'configured-disabled': 'runtimeConfiguredDisabled', 'enabled-compatible': 'runtimeEnabledCompatible', 'version-too-old': 'runtimeVersionTooOld', 'content-mismatch': 'runtimeContentMismatch', error: 'runtimeError',
+  unknown: 'runtimeUnknown', missing: 'runtimeMissing', 'file-unconfigured': 'runtimeFileUnconfigured', 'configured-disabled': 'runtimeConfiguredDisabled', 'enabled-compatible': 'runtimeEnabledCompatible', 'managed-update-available': 'runtimeManagedUpdateAvailable', 'version-too-old': 'runtimeVersionTooOld', 'content-mismatch': 'runtimeContentMismatch', error: 'runtimeError',
 }
 const previewLabels: Record<UiPreviewState, UiDesignerMessageKey> = { idle: 'previewIdle', unavailable: 'previewUnavailable', preparing: 'previewPreparing', running: 'previewRunning', stopped: 'previewStopped', error: 'previewError' }
 const runtimeLabel = (state: UiRuntimeStatus['state']) => t(runtimeLabels[state])

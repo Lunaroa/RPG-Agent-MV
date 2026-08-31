@@ -945,6 +945,23 @@ test('scene data import creates a dirty editor copy that can be saved as a new s
   assert.equal(scene.history.isDirty, false)
 })
 
+test('external custom scene import opens a validated dirty copy without binding the source file', async () => {
+  const imported = createUiDocument('Scene_Imported_File')
+  imported.meta.description = 'Imported from an external custom scene file'
+  const file = {
+    async importScene() {
+      return success(imported)
+    },
+  } as unknown as UiDesignerPersistenceAdapter
+  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { file } })
+
+  assert.equal(await designer.importSceneFile(), true)
+  assert.equal(designer.document.value.meta.sceneName, 'Scene_Imported_File')
+  assert.equal(designer.document.value.meta.description, 'Imported from an external custom scene file')
+  assert.equal(designer.activeScene.value.sourcePath, undefined)
+  assert.equal(designer.activeScene.value.history.isDirty, true)
+})
+
 test('save as keeps the proposed scene name across one overwrite confirmation', async () => {
   const calls: Array<{ sceneName: string; force?: boolean }> = []
   const file = {
@@ -983,6 +1000,47 @@ test('save as keeps the proposed scene name across one overwrite confirmation', 
   assert.equal(designer.document.value.meta.sceneName, 'Scene_Replacement')
   assert.equal(designer.activeScene.value.sourcePath, 'data/ui-scenes/Scene_Replacement.mzui')
   assert.equal(designer.pendingSaveAsName.value, null)
+})
+
+test('runtime replacement confirmation resumes the interrupted scene save', async () => {
+  const calls: Array<boolean | undefined> = []
+  const file = {
+    async save(document: ReturnType<typeof createUiDocument>, request?: { replaceModifiedRuntime?: boolean }) {
+      calls.push(request?.replaceModifiedRuntime)
+      if (!request?.replaceModifiedRuntime) {
+        return {
+          status: 'error' as const,
+          code: 'UI_DESIGNER_RUNTIME_MODIFIED',
+          recoverable: true,
+          message: 'runtime replacement confirmation required',
+        }
+      }
+      return {
+        status: 'success' as const,
+        message: 'saved after runtime backup',
+        value: document,
+        sourcePath: 'data/ui-scenes/Scene_New.mzui',
+        metadata: { path: 'data/ui-scenes/Scene_New.mzui', digest: 'saved', mtimeMs: 20, size: 1 },
+      }
+    },
+  } as unknown as UiDesignerPersistenceAdapter
+  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { file } })
+  designer.setSceneMeta('description', 'dirty scene')
+
+  assert.equal(await designer.save(), false)
+  assert.equal(designer.runtimeReplacementPending.value, true)
+  assert.equal(designer.fileStatus.value, 'idle')
+  assert.equal(designer.activeScene.value.history.isDirty, true)
+
+  assert.equal(await designer.resolveRuntimeReplacement('cancel'), false)
+  assert.equal(designer.runtimeReplacementPending.value, false)
+  assert.equal(designer.activeScene.value.history.isDirty, true)
+
+  assert.equal(await designer.save(), false)
+  assert.equal(await designer.resolveRuntimeReplacement('replace'), true)
+  assert.deepEqual(calls, [undefined, undefined, true])
+  assert.equal(designer.runtimeReplacementPending.value, false)
+  assert.equal(designer.activeScene.value.history.isDirty, false)
 })
 
 test('switching scenes flushes the single-file source draft to its captured scene', () => {

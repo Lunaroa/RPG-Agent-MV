@@ -660,7 +660,7 @@ export interface UiSnapResult extends UiPoint {
 }
 
 export interface UiRuntimeStatus {
-  state: 'unknown' | 'missing' | 'file-unconfigured' | 'configured-disabled' | 'enabled-compatible' | 'version-too-old' | 'content-mismatch' | 'error'
+  state: 'unknown' | 'missing' | 'file-unconfigured' | 'configured-disabled' | 'enabled-compatible' | 'managed-update-available' | 'version-too-old' | 'content-mismatch' | 'error'
   version?: string
   requiredVersion?: string
   message: string
@@ -720,6 +720,7 @@ export interface UiFileResult<T> {
   affectedFiles?: string[]
   digest?: string
   mtimeMs?: number
+  backupPath?: string
 }
 
 export type UiPreviewState = 'idle' | 'unavailable' | 'preparing' | 'running' | 'stopped' | 'error'
@@ -820,6 +821,7 @@ export interface UiDesignerFileRequest {
   expected?: Pick<UiDesignerFileMetadata, 'digest' | 'mtimeMs'>
   force?: boolean
   overwrite?: boolean
+  replaceModifiedRuntime?: boolean
 }
 
 export interface UiDesignerProjectRequest {
@@ -833,6 +835,7 @@ export type UiDesignerGlobalDataValue = Record<string, unknown> | unknown[]
 export interface UiDesignerGlobalDataRequest extends UiDesignerProjectRequest {
   expected?: Pick<UiDesignerFileMetadata, 'digest' | 'mtimeMs'>
   force?: boolean
+  replaceModifiedRuntime?: boolean
 }
 
 export interface UiDesignerGlobalDataReadResult {
@@ -894,6 +897,7 @@ export interface UiDesignerSaveResult<T> extends UiFileResult<T> {
 
 export interface UiDesignerPersistenceAdapter {
   open(request?: UiDesignerFileRequest): Promise<UiDesignerSaveResult<UiDesignerDocument> | null>
+  importScene(): Promise<UiDesignerSaveResult<UiDesignerDocument> | null>
   save(document: UiDesignerDocument, request?: UiDesignerFileRequest): Promise<UiDesignerSaveResult<UiDesignerDocument>>
   saveAs(document: UiDesignerDocument, request?: UiDesignerFileRequest): Promise<UiDesignerSaveResult<UiDesignerDocument>>
   listRecentFiles(): Promise<UiFileResult<UiDesignerRecentFileRecord[]>>

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,12 +7,14 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 
 import { RPG_MAKER_MZ_ENGINE_FILES, SUPPORTED_RPG_MAKER_MZ_VERSION } from '../rmmv/rpg-maker-engine.ts';
 import {
+  UI_DESIGNER_RUNTIME_MANIFEST_RELATIVE_PATH,
   UI_DESIGNER_RUNTIME_VERSION,
   UiDesignerRuntimeEnableRequiredError,
   UiDesignerRuntimeModifiedError,
   inspectUiDesignerRuntime,
   installUiDesignerRuntime,
 } from './ui-designer-runtime-service.ts';
+import { isLegacyManagedUiDesignerRuntimeDigest } from './ui-designer-managed-runtime-revisions.ts';
 
 let tempRoot = '';
 
@@ -29,13 +32,14 @@ describe('ui designer runtime direct installation', () => {
     const project = makeMvProject();
     const before = inspectUiDesignerRuntime(tempRoot, project);
     assert.equal(before.state, 'missing');
-    assert.deepEqual(before.affectedFiles.sort(), ['js/plugins.js', 'js/plugins/MZUIRuntime.js'].sort());
+    assert.deepEqual(before.affectedFiles.sort(), ['data/ui-scenes/MZUIRuntime.manifest.json', 'js/plugins.js', 'js/plugins/MZUIRuntime.js'].sort());
 
     const result = installUiDesignerRuntime(tempRoot, project, { enable: true });
 
     assert.equal(result.status, 'installed');
-    assert.deepEqual(result.affectedFiles.sort(), ['js/plugins.js', 'js/plugins/MZUIRuntime.js'].sort());
+    assert.deepEqual(result.affectedFiles.sort(), ['data/ui-scenes/MZUIRuntime.manifest.json', 'js/plugins.js', 'js/plugins/MZUIRuntime.js'].sort());
     assert.equal(fs.existsSync(path.join(project, 'js', 'plugins', 'MZUIRuntime.js')), true);
+    assert.equal(fs.existsSync(path.join(project, ...UI_DESIGNER_RUNTIME_MANIFEST_RELATIVE_PATH.split('/'))), true);
     const plugins = parsePlugins(path.join(project, 'js', 'plugins.js'));
     assert.equal(plugins.find((entry) => entry.name === 'OtherPlugin')?.status, true);
     assert.deepEqual(plugins.find((entry) => entry.name === 'OtherPlugin')?.parameters, { x: '1' });
@@ -49,6 +53,7 @@ describe('ui designer runtime direct installation', () => {
     installUiDesignerRuntime(tempRoot, project, { enable: true });
     const runtimeBefore = fs.readFileSync(path.join(project, 'js', 'plugins', 'MZUIRuntime.js'));
     const pluginsBefore = fs.readFileSync(path.join(project, 'js', 'plugins.js'));
+    const manifestBefore = fs.readFileSync(path.join(project, ...UI_DESIGNER_RUNTIME_MANIFEST_RELATIVE_PATH.split('/')));
 
     const second = installUiDesignerRuntime(tempRoot, project, { enable: true });
 
@@ -56,6 +61,7 @@ describe('ui designer runtime direct installation', () => {
     assert.equal(second.runtime.state, 'enabled-compatible');
     assert.deepEqual(fs.readFileSync(path.join(project, 'js', 'plugins', 'MZUIRuntime.js')), runtimeBefore);
     assert.deepEqual(fs.readFileSync(path.join(project, 'js', 'plugins.js')), pluginsBefore);
+    assert.deepEqual(fs.readFileSync(path.join(project, ...UI_DESIGNER_RUNTIME_MANIFEST_RELATIVE_PATH.split('/'))), manifestBefore);
   });
 
   test('requires an explicit enable request before changing project files', () => {
@@ -76,13 +82,54 @@ describe('ui designer runtime direct installation', () => {
     fs.mkdirSync(path.dirname(runtimePath), { recursive: true });
     fs.writeFileSync(runtimePath, `var VERSION = "${UI_DESIGNER_RUNTIME_VERSION}"; // project edit`, 'utf8');
 
-    assert.equal(inspectUiDesignerRuntime(tempRoot, project).state, 'file-unconfigured');
+    const original = fs.readFileSync(runtimePath);
+    assert.equal(inspectUiDesignerRuntime(tempRoot, project).state, 'content-mismatch');
     assert.throws(
       () => installUiDesignerRuntime(tempRoot, project, { enable: true }),
       (error: unknown) => error instanceof UiDesignerRuntimeModifiedError,
     );
     const forced = installUiDesignerRuntime(tempRoot, project, { enable: true, forceModifiedRuntime: true });
     assert.equal(forced.runtime.state, 'enabled-compatible');
+    assert.ok(forced.backupRelativePath);
+    assert.deepEqual(fs.readFileSync(path.join(project, ...forced.backupRelativePath!.split('/'))), original);
+  });
+
+  test('automatically upgrades a runtime recorded by the project manifest', () => {
+    const project = makeMvProject();
+    installUiDesignerRuntime(tempRoot, project, { enable: true });
+    const runtimePath = path.join(project, 'js', 'plugins', 'MZUIRuntime.js');
+    const manifestPath = path.join(project, ...UI_DESIGNER_RUNTIME_MANIFEST_RELATIVE_PATH.split('/'));
+    const previousManagedSource = Buffer.from('var VERSION = "1.0.0"; // managed previous runtime\n', 'utf8');
+    const previousDigest = crypto.createHash('sha256').update(previousManagedSource).digest('hex');
+    fs.writeFileSync(runtimePath, previousManagedSource);
+    fs.writeFileSync(manifestPath, `${JSON.stringify({ schemaVersion: '1.0.0', runtimeVersion: '1.0.0', digest: previousDigest }, null, 2)}\n`, 'utf8');
+
+    const before = inspectUiDesignerRuntime(tempRoot, project);
+    assert.equal(before.state, 'managed-update-available');
+    assert.equal(before.needsConfirmation, false);
+
+    const upgraded = installUiDesignerRuntime(tempRoot, project, { enable: true });
+    assert.equal(upgraded.runtime.state, 'enabled-compatible');
+    assert.equal(upgraded.backupRelativePath, undefined);
+  });
+
+  test('normalizes line endings when checking a managed runtime', () => {
+    const project = makeMvProject();
+    installUiDesignerRuntime(tempRoot, project, { enable: true });
+    const runtimePath = path.join(project, 'js', 'plugins', 'MZUIRuntime.js');
+    const source = fs.readFileSync(runtimePath, 'utf8');
+    const alternateLineEndings = source.includes('\r\n')
+      ? source.replace(/\r\n/g, '\n')
+      : source.replace(/\n/g, '\r\n');
+    fs.writeFileSync(runtimePath, alternateLineEndings, 'utf8');
+
+    assert.equal(inspectUiDesignerRuntime(tempRoot, project).state, 'enabled-compatible');
+    assert.deepEqual(installUiDesignerRuntime(tempRoot, project, { enable: true }).affectedFiles, []);
+  });
+
+  test('recognizes exact pre-manifest first-party runtime revisions', () => {
+    assert.equal(isLegacyManagedUiDesignerRuntimeDigest('bf3b1315dab0d498c9f30e3628d3838636d7c3310e4aaeb49ad9559a68a2cdfc'), true);
+    assert.equal(isLegacyManagedUiDesignerRuntimeDigest('0'.repeat(64)), false);
   });
 
   test('installs into the MZ project resource root', () => {

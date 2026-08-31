@@ -48,6 +48,9 @@ export const unavailableFileAdapter: UiDesignerPersistenceAdapter = {
   async open() {
     return unavailable('File adapter is not connected; editing remains in memory.')
   },
+  async importScene() {
+    return unavailable('File adapter is not connected; scene import is unavailable.')
+  },
   async save() {
     return unavailable('File adapter is not connected; no source file was written.')
   },
@@ -148,6 +151,7 @@ function asResult<T>(value: unknown, fallbackMessage: string): UiFileResult<T> {
       affectedFiles: Array.isArray(result.affectedFiles) ? result.affectedFiles.filter((item): item is string => typeof item === 'string') : undefined,
       digest: typeof result.digest === 'string' ? result.digest : undefined,
       mtimeMs: typeof result.mtimeMs === 'number' ? result.mtimeMs : undefined,
+      backupPath: typeof result.backupPath === 'string' ? result.backupPath : undefined,
     }
   }
   return { status: 'error', message: fallbackMessage }
@@ -168,6 +172,7 @@ function asSaveResult<T>(value: unknown, fallbackMessage: string): UiDesignerSav
 export function createDesktopUiDesignerAdapters(projectPath?: string, lifecycle?: UiDesignerAdapterBundle['lifecycle']): UiDesignerAdapterBundle {
   const file: UiDesignerPersistenceAdapter = {
     async open(request) { return asSaveResult(await api.uiDesigner.open({ ...request, project: projectPath }), 'The UI designer source file could not be opened.') },
+    async importScene() { return asSaveResult(await api.uiDesigner.importScene({ project: projectPath }), 'The custom scene file could not be imported.') },
     async save(document, request) { return asSaveResult(await api.uiDesigner.save({ ...request, project: projectPath }, document), 'The UI designer source file could not be saved.') },
     async saveAs(document, request) { return asSaveResult(await api.uiDesigner.saveAs({ ...request, project: projectPath }, document), 'The UI designer source file could not be saved as.') },
     async revealSource(sourcePath) { return asResult(await api.uiDesigner.revealSource(sourcePath), 'The source file could not be revealed.') },

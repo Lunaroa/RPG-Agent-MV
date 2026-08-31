@@ -158,6 +158,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   uiDesigner: {
     open: (request?: Pick<UiDesignerFileRequest, 'path' | 'project'>) => ipcRenderer.invoke('ui-designer:file:open', request),
+    importScene: (request?: UiDesignerProjectRequest) => ipcRenderer.invoke('ui-designer:file:import', request),
     save: (request: UiDesignerFileRequest, document: UiDesignerDocument) => ipcRenderer.invoke('ui-designer:file:save', request, document),
     saveAs: (request: UiDesignerFileRequest, document: UiDesignerDocument) => ipcRenderer.invoke('ui-designer:file:save-as', request, document),
     revealSource: (sourcePath: string) => ipcRenderer.invoke('ui-designer:file:reveal-source', sourcePath),

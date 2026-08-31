@@ -177,6 +177,7 @@ declare global {
       };
       uiDesigner: {
         open(request?: Pick<UiDesignerFileRequest, 'path' | 'project'>): Promise<UiDesignerSaveResult<UiDesignerDocument>>;
+        importScene(request?: UiDesignerProjectRequest): Promise<UiDesignerSaveResult<UiDesignerDocument>>;
         save(request: UiDesignerFileRequest, document: UiDesignerDocument): Promise<UiDesignerSaveResult<UiDesignerDocument>>;
         saveAs(request: UiDesignerFileRequest, document: UiDesignerDocument): Promise<UiDesignerSaveResult<UiDesignerDocument>>;
         revealSource(sourcePath: string): Promise<UiFileResult<null>>;
@@ -645,6 +646,7 @@ export const versionWindow = {
 
 export const uiDesigner = {
   open(request?: Pick<UiDesignerFileRequest, 'path' | 'project'>) { return desktopApi().uiDesigner.open(request) },
+  importScene(request?: UiDesignerProjectRequest) { return desktopApi().uiDesigner.importScene(request) },
   save(request: UiDesignerFileRequest, document: UiDesignerDocument) { return desktopApi().uiDesigner.save(toPlain(request), toPlain(document)) },
   saveAs(request: UiDesignerFileRequest, document: UiDesignerDocument) { return desktopApi().uiDesigner.saveAs(toPlain(request), toPlain(document)) },
   revealSource(sourcePath: string) { return desktopApi().uiDesigner.revealSource(sourcePath) },

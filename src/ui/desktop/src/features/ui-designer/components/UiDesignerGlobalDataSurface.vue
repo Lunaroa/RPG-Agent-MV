@@ -5,6 +5,7 @@ import type { UiDesignerController } from '../composables/useUiDesigner'
 import type { UiDesignerFileMetadata, UiDesignerGlobalDataValue } from '@contract/ui-designer'
 import { useUiDesignerI18n } from '../i18n'
 import UiCodeMirrorEditor from './UiCodeMirrorEditor.vue'
+import UiDesignerRuntimeReplacementDialog from './UiDesignerRuntimeReplacementDialog.vue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -18,6 +19,7 @@ const draft = ref('')
 const busy = ref(false)
 const loadError = ref('')
 const saveError = ref('')
+const runtimeReplacementPending = ref(false)
 const savedMetadata = ref<Pick<UiDesignerFileMetadata, 'digest' | 'mtimeMs'> | null>(null)
 
 onMounted(async () => {
@@ -35,7 +37,7 @@ onMounted(async () => {
   }
 })
 
-const save = async () => {
+const save = async (replaceModifiedRuntime = false) => {
   if (busy.value) return
   saveError.value = ''
   let parsed: UiDesignerGlobalDataValue
@@ -51,7 +53,12 @@ const save = async () => {
   try {
     const result = await props.designer.adapters.file.saveGlobalData(parsed, {
       ...(savedMetadata.value ? { expected: savedMetadata.value } : {}),
+      replaceModifiedRuntime,
     })
+    if (result.code === 'UI_DESIGNER_RUNTIME_MODIFIED') {
+      runtimeReplacementPending.value = true
+      return
+    }
     if (result.status !== 'success') {
       saveError.value = result.message || t('operationError')
       return
@@ -61,6 +68,10 @@ const save = async () => {
   } finally {
     busy.value = false
   }
+}
+const replaceRuntimeAndSave = async () => {
+  runtimeReplacementPending.value = false
+  await save(true)
 }
 const close = (visible: boolean) => emit('update:modelValue', visible)
 </script>
@@ -82,6 +93,7 @@ const close = (visible: boolean) => emit('update:modelValue', visible)
       <el-button data-testid="ui-designer-global-data-save" type="primary" :loading="busy" :disabled="Boolean(loadError) || !unwrap(designer.hasProject)" @click="void save()">{{ t('save') }}</el-button>
     </template>
   </el-dialog>
+  <UiDesignerRuntimeReplacementDialog :model-value="runtimeReplacementPending" :busy="busy" @cancel="runtimeReplacementPending = false" @confirm="void replaceRuntimeAndSave()" />
 </template>
 
 <style scoped>

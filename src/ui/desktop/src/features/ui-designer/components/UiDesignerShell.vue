@@ -24,6 +24,7 @@ import UiDesignerSaveAsSurface from './UiDesignerSaveAsSurface.vue'
 import UiDesignerGlobalDataSurface from './UiDesignerGlobalDataSurface.vue'
 import UiDesignerNewSceneSurface from './UiDesignerNewSceneSurface.vue'
 import UiDesignerHelpSurface from './UiDesignerHelpSurface.vue'
+import UiDesignerRuntimeReplacementDialog from './UiDesignerRuntimeReplacementDialog.vue'
 
 const props = withDefaults(defineProps<{
   adapters?: UiDesignerAdapterBundle
@@ -143,6 +144,11 @@ const openProjectScene = async (sourcePath: string) => {
   surface.value = null
   showWelcome.value = false
 }
+const importSceneFile = async () => {
+  if (!(await rawDesigner.importSceneFile())) return
+  surface.value = null
+  showWelcome.value = false
+}
 const openSaveAs = () => {
   if (!rawDesigner.activeScene.value || !rawDesigner.hasProject.value) return
   saveAsInitialName.value = rawDesigner.document.value.meta.sceneName
@@ -192,6 +198,7 @@ const onUiDesignerMenuCommand = (event: Event) => {
   if (!command) return
   if (command === 'new') openNewScene()
   else if (command === 'open') void openScenePicker()
+  else if (command === 'import') void importSceneFile()
   else if (command === 'save') saveCurrentCanvas()
   else if (command === 'saveAs') openSaveAs()
   else if (command === 'editorPreview') { showEditingMode(); toggleEditorPreview() }
@@ -322,7 +329,7 @@ onBeforeUnmount(() => {
 
 <template>
     <section class="ui-designer-shell" :class="{ 'code-mode-active': designer.editingMode === 'code' || designer.editingMode === 'json' }" data-ui-id="ui-designer-shell">
-    <UiDesignerToolbar :designer="designer" @home="showWelcome = true" @open="void openScenePicker()" @save-as="openSaveAs" @editing-mode="showEditingMode" @scene-settings="surface = 'sceneSettings'" @global-data="surface = 'globalData'" />
+    <UiDesignerToolbar :designer="designer" @home="showWelcome = true" @open="void openScenePicker()" @import="void importSceneFile()" @save-as="openSaveAs" @editing-mode="showEditingMode" @scene-settings="surface = 'sceneSettings'" @global-data="surface = 'globalData'" />
     <UiDesignerSceneTabs :designer="designer" @new-scene="openNewScene" />
     <div class="designer-workspace" :class="{ 'welcome-active': showWelcome }" :style="workspaceStyle">
       <aside v-if="!showWelcome" class="left-pane">
@@ -347,6 +354,7 @@ onBeforeUnmount(() => {
     <UiDesignerSaveAsSurface v-if="surface === 'saveAs'" :model-value="true" :initial-name="saveAsInitialName" :busy="saveAsBusy" @update:model-value="closeSurface" @save="void saveAsScene($event)" />
     <UiDesignerGlobalDataSurface v-if="surface === 'globalData'" :model-value="true" :designer="designer" @update:model-value="closeSurface" />
     <UiDesignerHelpSurface v-if="surface === 'about' || surface === 'shortcuts' || surface === 'tour'" :model-value="true" :surface="surface" :tour-step="tourStep" :shortcut-bindings="shortcutBindings" @update:model-value="closeSurface" @update:tour-step="tourStep = $event" @complete="void completeTour()" />
+    <UiDesignerRuntimeReplacementDialog :model-value="designer.runtimeReplacementPending" :busy="designer.fileStatus === 'busy'" @cancel="void designer.resolveRuntimeReplacement('cancel')" @confirm="void designer.resolveRuntimeReplacement('replace')" />
 
     <el-dialog :model-value="Boolean(designer.fileConflict)" :title="t(designer.saveAsConflict ? 'sceneNameConflictTitle' : 'conflictTitle')" width="min(470px, 92vw)" :close-on-click-modal="false" :show-close="false">
       <p class="dialog-copy">{{ t(designer.saveAsConflict ? 'sceneNameConflictBody' : 'conflictBody') }}</p>

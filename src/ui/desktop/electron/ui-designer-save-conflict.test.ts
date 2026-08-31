@@ -48,3 +48,26 @@ test('save-as overwrite errors retain their actionable reason and target path', 
   assert.equal(result.code, error.code)
   assert.equal(result.recoverable, true)
 })
+
+test('modified runtime errors retain the backup-and-replace recovery action', () => {
+  const choices = ['backup-and-replace', 'cancel']
+  const error = Object.assign(new Error('Runtime replacement confirmation required.'), {
+    code: 'UI_DESIGNER_RUNTIME_MODIFIED',
+    recoverable: true,
+    choices,
+    affectedFiles: ['js/plugins/MZUIRuntime.js'],
+  })
+
+  const result = uiDesignerOperationError('save', error) as {
+    code: string
+    recoverable: boolean
+    choices: string[]
+    error: { choices: string[] }
+    affectedFiles: string[]
+  }
+  assert.equal(result.code, error.code)
+  assert.equal(result.recoverable, true)
+  assert.deepEqual(result.choices, choices)
+  assert.deepEqual(result.error.choices, choices)
+  assert.deepEqual(result.affectedFiles, error.affectedFiles)
+})

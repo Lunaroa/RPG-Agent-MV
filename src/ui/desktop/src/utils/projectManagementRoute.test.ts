@@ -60,14 +60,16 @@ describe('database route state', () => {
   })
 
   it('declares the standalone product plugin routes', () => {
+    expect(routerSource).not.toMatch(/path:\s*['"]\/project-collaboration['"]/)
     expect(routerSource).toMatch(/path:\s*['"]\/plugin-marketplace['"]/)
+    expect(routerSource).toMatch(/path:\s*['"]\/map-overview['"][\s\S]*?productPluginDisabledRedirect\('map-overview'/)
     expect(routerSource).toMatch(/path:\s*['"]\/ui-designer['"][\s\S]*?component:\s*UiDesignerView/)
     expect(routerSource).toMatch(/productPluginDisabledRedirect\('ui-designer'/)
     expect(appSource).toMatch(/KeepAlive[^>]*exclude=\"\['UiDesignerView'\]\"/)
   })
 
   it('keeps the marketplace deep-link and hidden-control selectors constrained', () => {
-    expect(marketplaceSource).toMatch(/parsed\.pathname !== '\/ui-designer'/)
+    expect(marketplaceSource).toMatch(/parsed\.pathname !== definition\.route/)
     expect(marketplaceSource).toMatch(/plugin-marketplace-enable-\$\{plugin\.id\}/)
     expect(marketplaceSource).toMatch(/plugin-marketplace-open-\$\{plugin\.id\}/)
     expect(marketplaceSource).toMatch(/plugin-marketplace-retry/)

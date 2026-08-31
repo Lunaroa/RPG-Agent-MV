@@ -8,7 +8,7 @@ import {
 
 describe('product plugin registry', () => {
   it('ships disabled-by-default designer and unlimited-layer entries', () => {
-    expect(PRODUCT_PLUGIN_REGISTRY).toHaveLength(2)
+    expect(PRODUCT_PLUGIN_REGISTRY).toHaveLength(3)
     expect(getProductPluginDefinition('ui-designer')).toMatchObject({
       id: 'ui-designer',
       route: '/ui-designer',
@@ -20,6 +20,12 @@ describe('product plugin registry', () => {
       defaultEnabled: false,
     })
     expect(isRegisteredProductPlugin('unlimited-map-layers')).toBe(true)
+    expect(getProductPluginDefinition('map-overview')).toMatchObject({
+      id: 'map-overview',
+      route: '/map-overview',
+      defaultEnabled: false,
+    })
+    expect(isRegisteredProductPlugin('map-overview')).toBe(true)
     expect(isRegisteredProductPlugin('missing')).toBe(false)
   })
 })

@@ -1441,8 +1441,6 @@ function resizeKeydown(event: KeyboardEvent): void {
               </span>
               <span class="plugin-main">
                 <span class="plugin-title-line">
-                  <PluginEngineTags :targets="plugin.header.target" />
-                  <strong>{{ plugin.name || `#${plugin.index + 1}` }}</strong>
                   <el-popover
                     v-if="plugin.name"
                     placement="bottom"
@@ -1474,6 +1472,8 @@ function resizeKeydown(event: KeyboardEvent): void {
                       </button>
                     </div>
                   </el-popover>
+                  <PluginEngineTags :targets="plugin.header.target" />
+                  <strong>{{ plugin.name || `#${plugin.index + 1}` }}</strong>
                 </span>
                 <small v-if="plugin.name.includes('/')">{{ plugin.fileRelativePath }}</small>
                 <small>{{ plugin.header.plugindesc || plugin.description || t('plugins.noDescription') }}</small>

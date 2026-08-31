@@ -27,7 +27,6 @@ const items = computed(() => {
       icon: Folder,
       uiId: 'nav-project-assets',
     },
-    { id: 'map-overview', to: '/map-overview', label: t('app.nav.mapOverview'), icon: MapLocation, uiId: 'nav-map-overview' },
     {
       id: 'plugins',
       to: '/console?page=plugins',
@@ -44,8 +43,19 @@ const items = computed(() => {
     },
     { id: 'console', to: '/console', label: t('app.nav.console'), icon: Monitor, uiId: 'nav-console' },
   ]
+  if (productPlugins.isEnabled('map-overview')) {
+    const pluginsIndex = base.findIndex((item) => item.id === 'plugins')
+    base.splice(pluginsIndex, 0, {
+      id: 'map-overview',
+      to: '/map-overview',
+      label: t('app.nav.mapOverview'),
+      icon: MapLocation,
+      uiId: 'nav-map-overview',
+    })
+  }
   if (productPlugins.isEnabled('ui-designer')) {
-    base.splice(4, 0, {
+    const pluginsIndex = base.findIndex((item) => item.id === 'plugins')
+    base.splice(pluginsIndex, 0, {
       id: 'ui-designer',
       to: '/ui-designer',
       label: t('app.nav.uiDesigner'),

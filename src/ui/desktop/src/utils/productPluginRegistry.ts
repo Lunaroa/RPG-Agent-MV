@@ -25,6 +25,11 @@ export const PRODUCT_PLUGIN_REGISTRY = [
     titleKey: 'productPlugin.unlimitedMapLayers.title',
     descriptionKey: 'productPlugin.unlimitedMapLayers.description',
   },
+  {
+    ...PRODUCT_PLUGIN_DESCRIPTORS[2],
+    titleKey: 'productPlugin.mapOverview.title',
+    descriptionKey: 'productPlugin.mapOverview.description',
+  },
 ] as const satisfies readonly ProductPluginDefinition[]
 
 function validSemverRange(value: string): boolean {

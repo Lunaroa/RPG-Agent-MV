@@ -61,6 +61,10 @@ describe('plugin manager structure', () => {
     assert.match(paneSource, /grid-template-columns: 22px minmax\(0, 1fr\) 36px/);
     assert.match(paneSource, /<PluginEngineTags :targets="plugin\.header\.target"/);
     assert.match(paneSource, /<PluginEngineTags :targets="selectedHeader\.target"/);
+    const colorSwatchIndex = paneSource.indexOf('class="plugin-color-swatch"');
+    const engineTagsIndex = paneSource.indexOf('<PluginEngineTags :targets="plugin.header.target"');
+    assert.ok(colorSwatchIndex >= 0);
+    assert.ok(colorSwatchIndex < engineTagsIndex);
     assert.match(engineTagsSource, /class="plugin-engine-tag"/);
     assert.match(engineTagsSource, /plugin-engine-tag\.mv/);
     assert.match(engineTagsSource, /plugin-engine-tag\.mz/);

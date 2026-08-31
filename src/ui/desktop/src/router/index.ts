@@ -35,7 +35,15 @@ const router = createRouter({
     {
       path: '/map-overview',
       name: 'map-overview',
-      component: MapOverviewView
+      component: MapOverviewView,
+      beforeEnter: async (to) => {
+        const productPlugins = useProductPluginsStore()
+        await productPlugins.load()
+        if (!productPlugins.isEnabled('map-overview')) {
+          return productPluginDisabledRedirect('map-overview', to.fullPath)
+        }
+        return true
+      },
     },
     {
       path: '/plugin-marketplace',

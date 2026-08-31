@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Brush, Edit, Picture } from '@element-plus/icons-vue'
+import { Brush, Edit, MapLocation, Picture } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -20,17 +20,20 @@ const error = ref('')
 const errorTitle = ref('')
 
 const definitions = computed(() => productPlugins.definitions)
-const iconMap = { Brush, Edit, Picture }
+const iconMap = { Brush, Edit, MapLocation, Picture }
 const disabledRedirect = computed(() => (
   route.query.reason === 'disabled'
-  && route.query.plugin === 'ui-designer'
+  && typeof route.query.plugin === 'string'
+  && Boolean(getProductPluginDefinition(route.query.plugin))
 ))
 
-function safeUiDesignerRedirect(value: unknown): string | null {
+function safeProductPluginRedirect(value: unknown, pluginId: string): string | null {
+  const definition = getProductPluginDefinition(pluginId)
+  if (!definition) return null
   if (typeof value !== 'string' || !value.trim()) return null
   try {
     const parsed = new URL(value, window.location.origin)
-    if (parsed.origin !== window.location.origin || parsed.pathname !== '/ui-designer') return null
+    if (parsed.origin !== window.location.origin || parsed.pathname !== definition.route) return null
     return `${parsed.pathname}${parsed.search}${parsed.hash}`
   } catch {
     return null
@@ -99,7 +102,7 @@ async function toggle(pluginId: string): Promise<void> {
     if (enabled) {
       await router.replace({ path: '/plugin-marketplace', query: { changed: 'disabled' } })
     } else {
-      const redirect = safeUiDesignerRedirect(route.query.from)
+      const redirect = safeProductPluginRedirect(route.query.from, pluginId)
       if (redirect) await router.replace(redirect)
       else ElMessage.success(t('productPlugin.status.enabled'))
     }

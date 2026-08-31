@@ -70,8 +70,8 @@ export interface LunaRpgProjectConfig {
   search?: LunaRpgSearchSettings;
   /**
    * Per-plugin color overrides keyed by plugin name. Values are `#RRGGBB` hex
-   * strings. Plugins absent from this map fall back to a deterministic hash
-   * color in the editor UI; entries here are the user's manual overrides only.
+   * strings. Plugins absent from this map use white in the editor UI; entries
+   * here are the user's manual overrides only.
    */
   pluginColors?: Record<string, string>;
 }

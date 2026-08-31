@@ -935,6 +935,7 @@ button.danger {
   flex-direction: row;
   width: calc(100% - 10px);
   margin: 5px 5px;
+  row-gap: 6px;
 }
 .cmd-sub.cmd-descriptions.is-many {
   flex-wrap: wrap;
@@ -946,7 +947,7 @@ button.danger {
   width: 100%;
 }
 .cmd-sub.cmd-descriptions.is-table > .cmd-description-item {
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
 }
 .cmd-sub.cmd-descriptions.is-many > .cmd-description-item {
@@ -958,17 +959,17 @@ button.danger {
   background-color: var(--app-bg);
   border-radius: 4px;
   color: var(--app-tone-text-strong);
-  text-align: center;
   font-size: 10px;
-  height: 16px;
-  line-height: 16px;
-  width: calc(100% - 10px);
-  text-align: center;
+  min-width: 80px;
+  text-align: right;
+  margin-right: 10px;
+  padding: 0px 10px;
 }
 .cmd-sub.cmd-descriptions > .cmd-description-item > .cmd-description-value {
-  text-align: center;
-}
-.cmd-sub.cmd-descriptions > .cmd-description-item:nth-child(n + 5) > .cmd-description-label {
-  border-top: none;
+  text-align: left;
+  display: inline-block;
+  word-wrap: break-word;
+  white-space: normal;
+  max-width: calc(100% - 100px);
 }
 </style>

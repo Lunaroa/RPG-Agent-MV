@@ -102,12 +102,11 @@
                 <button type="button" :disabled="!findMatches.length" :aria-label="t('cmdList.findNext')" :title="t('cmdList.findNext')" @click="moveFind(1)">↓</button>
                 <button type="button" :aria-label="t('cmdList.findClose')" :title="t('cmdList.findClose')" @click="closeFind">×</button>
               </div>
-              <div ref="listHost" class="command-list" @scroll.passive="onListScroll" @contextmenu.prevent="openCommandContext($event, null)">
+              <div ref="listHost" class="command-list" @contextmenu.prevent="openCommandContext($event, null)">
                 <div v-if="!spans.length" class="command-empty">
                   {{ t('eventEditorDialog.emptyHint') }}
                 </div>
-                <div class="cmd-virtual-pad" :style="{ height: `${virtualWindow.top}px` }" />
-                <template v-for="row in virtualWindow.rows" :key="row.key">
+                <template v-for="row in commandRows" :key="row.key">
                   <button
                     v-if="row.kind === 'blank'"
                     type="button"
@@ -187,7 +186,6 @@
                   </template>
                 </button>
                 </template>
-                <div class="cmd-virtual-pad" :style="{ height: `${virtualWindow.bottom}px` }" />
               </div>
             </section>
           </div>
@@ -1586,6 +1584,7 @@ defineExpose({ markSaved });
   flex-direction: row;
   width: calc(100% - 10px);
   margin: 5px 5px;
+  row-gap: 6px;
 }
 .cmd-sub.cmd-descriptions.is-many {
   flex-wrap: wrap;
@@ -1597,7 +1596,7 @@ defineExpose({ markSaved });
   width: 100%;
 }
 .cmd-sub.cmd-descriptions.is-table > .cmd-description-item {
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
 }
 .cmd-sub.cmd-descriptions.is-many > .cmd-description-item {
@@ -1609,18 +1608,18 @@ defineExpose({ markSaved });
   background-color: var(--app-bg);
   border-radius: 4px;
   color: var(--app-tone-text-strong);
-  text-align: center;
   font-size: 10px;
-  height: 16px;
-  line-height: 16px;
-  width: calc(100% - 10px);
-  text-align: center;
+  min-width: 80px;
+  text-align: right;
+  margin-right: 10px;
+  padding: 0px 10px;
 }
 .cmd-sub.cmd-descriptions > .cmd-description-item > .cmd-description-value {
-  text-align: center;
-}
-.cmd-sub.cmd-descriptions > .cmd-description-item:nth-child(n + 5) > .cmd-description-label {
-  border-top: none;
+  text-align: left;
+  display: inline-block;
+  word-wrap: break-word;
+  white-space: normal;
+  max-width: calc(100% - 100px);
 }
 
 .cmd-row.role-terminator > .cmd-head::before {

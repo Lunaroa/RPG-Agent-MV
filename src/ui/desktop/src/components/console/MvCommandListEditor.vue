@@ -611,7 +611,23 @@ function onCommandKeyDown(event: KeyboardEvent): void {
           />
           <span v-if="view.role === 'head' && pluginColorForSpan(slot.spanIndex)" class="cmd-plugin-stripe" :style="{ background: pluginColorForSpan(slot.spanIndex) }" />
           <span class="cmd-line cmd-head">{{ view.head }}</span>
-          <span v-for="(line, lineIndex) in view.lines" :key="lineIndex" class="cmd-line cmd-sub">{{ line }}</span>
+          <span v-if="view.lines.length > 1" class="cmd-line cmd-sub cmd-descriptions" :class="{
+              'is-table': view.lines[0].split('=').length > 1,
+              'is-many': view.lines.length > 4
+            }">
+            <template v-for="(line, lineIndex) in view.lines" :key="lineIndex">
+              <div class="cmd-description-item" v-if="line.split('=').length == 1">
+                <div class="cmd-description-content">{{ line }}</div>
+              </div>
+              <div class="cmd-description-item" v-else>
+                <div class="cmd-description-label">{{ line.split('=')[0].trim() }}</div>
+                <div class="cmd-description-value">{{ line.split('=')[1].trim() }}</div>
+              </div>
+            </template>
+          </span>
+          <template v-else>
+            <span v-for="(line, lineIndex) in view.lines" :key="lineIndex" class="cmd-line cmd-sub">{{ line }}</span>
+          </template>
         </button>
       </template>
     </div>
@@ -894,4 +910,65 @@ button.danger {
 }
 .cmd-context-menu button:hover:not(:disabled) { background: var(--console-accent-soft,#f6e3d7); }
 .cmd-context-menu button:disabled { color: var(--console-text-muted,#9a8e7e); }
+
+.cmd-sub.cmd-descriptions:not(.is-table) > .cmd-description-item::before {
+  content: ':';
+  color: var(--app-ink);
+  display: inline-block;
+  width: 20px;
+  text-align: center;
+}
+.cmd-sub:not(.cmd-descriptions)::before {
+  content: ':';
+  color: var(--app-ink);
+  display: inline-block;
+  width: 20px;
+  text-align: center;
+}
+.cmd-sub.cmd-descriptions {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  flex-direction: column;
+}
+.cmd-sub.cmd-descriptions.is-table {
+  flex-direction: row;
+  width: calc(100% - 10px);
+  margin: 5px 5px;
+}
+.cmd-sub.cmd-descriptions.is-many {
+  flex-wrap: wrap;
+}
+
+.cmd-sub.cmd-descriptions > .cmd-description-item {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+}
+.cmd-sub.cmd-descriptions.is-table > .cmd-description-item {
+  flex-direction: column;
+  align-items: center;
+}
+.cmd-sub.cmd-descriptions.is-many > .cmd-description-item {
+  flex-wrap: wrap;
+  min-width: 25%;
+  width: auto;
+}
+.cmd-sub.cmd-descriptions > .cmd-description-item > .cmd-description-label {
+  background-color: var(--app-bg);
+  border-radius: 4px;
+  color: var(--app-tone-text-strong);
+  text-align: center;
+  font-size: 10px;
+  height: 16px;
+  line-height: 16px;
+  width: calc(100% - 10px);
+  text-align: center;
+}
+.cmd-sub.cmd-descriptions > .cmd-description-item > .cmd-description-value {
+  text-align: center;
+}
+.cmd-sub.cmd-descriptions > .cmd-description-item:nth-child(n + 5) > .cmd-description-label {
+  border-top: none;
+}
 </style>

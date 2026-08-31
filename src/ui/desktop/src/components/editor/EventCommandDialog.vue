@@ -1380,7 +1380,9 @@ defineExpose({openPicker,openEditor});
 .plugin-arg-key code{font:inherit;overflow-wrap:anywhere}
 .plugin-arg-type{width:12%;color:var(--app-ink-muted);vertical-align: middle;}
 .plugin-arg-value{color:var(--app-ink)}.plugin-arg-value .plugin-arg-preview{display:inline-block;max-width:calc(100% - 40px);overflow:hidden;font-family:var(--app-font-mono);text-overflow:ellipsis;vertical-align:middle;white-space:nowrap}.plugin-arg-edit{min-width:28px;margin-left:6px;padding:1px 6px}
-.plugin-option-name{float:left;max-width:55%;overflow:hidden;text-overflow:ellipsis}.plugin-option-desc{float:right;max-width:42%;overflow:hidden;color:var(--app-ink-muted);font-size:12px;text-overflow:ellipsis}.plugin-option-color{float:left;display:inline-block;width:10px;height:10px;margin:5px 6px 0 0;border-radius:2px;border:1px solid var(--app-ink-faint,rgba(0,0,0,.15));background-clip:padding-box}
+.plugin-option-name{float:left;max-width:55%;overflow:hidden;text-overflow:ellipsis}
+.plugin-option-desc{float:right;max-width:42%;overflow:hidden;color:var(--app-ink-muted);font-size:12px;text-overflow:ellipsis}
+.plugin-option-color{vertical-align: middle;float:left;width:10px;height:10px;margin:12px 6px 0 0;border-radius:2px;border:1px solid var(--app-ink-faint,rgba(0,0,0,.15));background-clip:padding-box}
 .text-cmd-layout{
   width:100%;
   display:grid;

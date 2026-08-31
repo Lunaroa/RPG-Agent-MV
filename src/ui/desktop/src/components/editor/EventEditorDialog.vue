@@ -420,7 +420,7 @@ watch(findMatches, (matches) => {
 // Virtualized command list. Every span row has a deterministic height
 // (line-height 20px per command line + 8px row chrome), so we window by
 // prefix-summed pixel offsets and only localize the spans in the viewport.
-const CMD_LINE_H = 20, CMD_ROW_CHROME = 8, CMD_BLANK_H = 22, CMD_OVERSCAN = 8;
+const CMD_LINE_H = 20, CMD_ROW_CHROME = 8, CMD_BLANK_H = 22;
 const listHost = ref<HTMLElement>();
 const listScrollTop = ref(0), listViewportH = ref(0);
 function buildSpanView(span: Parameters<typeof commandSpanDisplay>[0]): MvCommandSpanView {
@@ -493,31 +493,6 @@ const rowOffsets = computed(() => {
   }
   return offsets;
 });
-// Last rendered row whose top offset is at or before `y`.
-function rowAtOffset(y: number): number {
-  const offsets = rowOffsets.value;
-  let lo = 0, hi = commandRows.value.length;
-  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (offsets[mid] <= y) lo = mid; else hi = mid - 1; }
-  return lo;
-}
-const virtualWindow = computed(() => {
-  const total = commandRows.value.length;
-  const offsets = rowOffsets.value;
-  const totalHeight = offsets[total];
-  const rows: CommandRenderRow[] = [];
-  if (!total) return { rows, top: 0, bottom: 0 };
-  const viewport = listViewportH.value || 400;
-  const top = Math.max(0, Math.min(listScrollTop.value, Math.max(0, totalHeight - viewport)));
-  let start = rowAtOffset(top) - CMD_OVERSCAN;
-  if (start < 0) start = 0;
-  let end = rowAtOffset(top + viewport) + CMD_OVERSCAN + 1;
-  if (end > total) end = total;
-  for (let index = start; index < end; index += 1) {
-    rows.push(commandRows.value[index]);
-  }
-  return { rows, top: offsets[start], bottom: totalHeight - offsets[end] };
-});
-function onListScroll() { if (listHost.value) listScrollTop.value = listHost.value.scrollTop; }
 function measureListViewport() { if (listHost.value) listViewportH.value = listHost.value.clientHeight; }
 // Scroll the container so span `index` is visible, without relying on a rendered node.
 function scrollSpanIntoView(index: number) {

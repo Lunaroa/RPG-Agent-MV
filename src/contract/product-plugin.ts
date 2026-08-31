@@ -28,12 +28,12 @@ export const PRODUCT_PLUGIN_DESCRIPTORS = [
     version: '1.0.0',
     route: '/ui-designer',
     icon: 'Brush',
-    name: { 'en-US': 'UI Designer', 'zh-CN': '界面设计器' },
+    name: { 'en-US': 'Custom Scenes', 'zh-CN': '自定义场景' },
     description: {
-      'en-US': 'Design RPG Maker MV/MZ scenes locally.',
-      'zh-CN': '在本地设计 RPG Maker MV/MZ 界面场景。',
+      'en-US': 'Design custom RPG Maker MV/MZ scenes locally.',
+      'zh-CN': '在本地设计 RPG Maker MV/MZ 自定义场景。',
     },
-    compatibleProductVersion: '^0.7.1',
+    compatibleProductVersion: '^0.8.0',
     defaultEnabled: false,
   },
   {
@@ -46,7 +46,20 @@ export const PRODUCT_PLUGIN_DESCRIPTORS = [
       'en-US': 'Edit and preview ULDS layers in the map editor and map overview.',
       'zh-CN': '在地图编辑器与地图总览中编辑和预览 ULDS 无限图层。',
     },
-    compatibleProductVersion: '^0.7.1',
+    compatibleProductVersion: '^0.8.0',
+    defaultEnabled: false,
+  },
+  {
+    id: 'map-overview',
+    version: '1.0.0',
+    route: '/map-overview',
+    icon: 'MapLocation',
+    name: { 'en-US': 'Global Map', 'zh-CN': '全局地图' },
+    description: {
+      'en-US': 'Inspect and arrange the project-wide map relationship graph.',
+      'zh-CN': '查看并整理整个工程的地图关系。',
+    },
+    compatibleProductVersion: '^0.8.0',
     defaultEnabled: false,
   },
 ] as const satisfies readonly ProductPluginDescriptor[]

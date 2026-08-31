@@ -216,3 +216,45 @@ export function projectGitFailed(output: string, fallback: string, language?: Pr
     'en-US': `Git command failed: ${detail}`,
   });
 }
+
+export function projectGitLfsMissing(language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': '缺少 Git LFS 组件：素材文件需要 Git LFS 管理。请安装带 LFS 的 Git 后重试。',
+    'en-US': 'Git LFS is required to manage asset files. Install Git with LFS support and try again.',
+  });
+}
+
+export function projectGitRemoteInvalid(language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': '远端仓库地址无效：只支持 https 地址，例如 https://github.com/账号/仓库.git',
+    'en-US': 'Invalid remote URL. Only https URLs are supported, for example https://github.com/account/repository.git',
+  });
+}
+
+export function projectGitRemoteMissing(language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': '尚未设置远端仓库，请先填写仓库地址',
+    'en-US': 'No remote repository is configured. Set the repository URL first.',
+  });
+}
+
+export function projectGitPullConflict(language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': '拉取时发生冲突，请在版本管理中逐个处理后再继续',
+    'en-US': 'The pull caused conflicts. Resolve them in version management before continuing.',
+  });
+}
+
+export function projectGitNotMerging(language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': '当前没有进行中的合并',
+    'en-US': 'There is no merge in progress.',
+  });
+}
+
+export function projectGitChangePathRequired(language?: ProductLanguage | null): string {
+  return pickByLocale(resolveLanguage(language), {
+    'zh-CN': '请选择要处理的文件',
+    'en-US': 'Select a file to process.',
+  });
+}

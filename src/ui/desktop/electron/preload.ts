@@ -22,6 +22,15 @@ import type {
   UiDesignerRendererResourceSyncRequest,
   UiDesignerProjectRequest,
 } from '../../../contract/ui-designer.ts';
+import type {
+  ProjectGitCommitRequest,
+  ProjectGitDiffRequest,
+  ProjectGitPathRequest,
+  ProjectGitProjectRequest,
+  ProjectGitRemoteRequest,
+  ProjectGitResolveRequest,
+  ProjectGitSyncRequest,
+} from '../../../contract/project-git.ts';
 
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
@@ -115,6 +124,37 @@ contextBridge.exposeInMainWorld('api', {
     list: () => ipcRenderer.invoke('product-plugin:list'),
     snapshot: () => ipcRenderer.invoke('product-plugin:snapshot'),
     setEnabled: (request: unknown) => ipcRenderer.invoke('product-plugin:set-enabled', request),
+  },
+  projectGit: {
+    status: (request?: ProjectGitProjectRequest) => ipcRenderer.invoke('projectGit:status', request),
+    enable: (request?: ProjectGitProjectRequest) => ipcRenderer.invoke('projectGit:enable', request),
+    commit: (request: ProjectGitCommitRequest) => ipcRenderer.invoke('projectGit:commit', request),
+    log: (request?: ProjectGitProjectRequest) => ipcRenderer.invoke('projectGit:log', request),
+    discard: (request: ProjectGitPathRequest) => ipcRenderer.invoke('projectGit:discard', request),
+    setRemote: (request: ProjectGitRemoteRequest) => ipcRenderer.invoke('projectGit:setRemote', request),
+    push: (request: ProjectGitSyncRequest) => ipcRenderer.invoke('projectGit:push', request),
+    pull: (request: ProjectGitSyncRequest) => ipcRenderer.invoke('projectGit:pull', request),
+    conflicts: (request?: ProjectGitProjectRequest) => ipcRenderer.invoke('projectGit:conflicts', request),
+    resolve: (request: ProjectGitResolveRequest) => ipcRenderer.invoke('projectGit:resolve', request),
+    abortMerge: (request?: ProjectGitProjectRequest) => ipcRenderer.invoke('projectGit:abortMerge', request),
+    diff: (request: ProjectGitDiffRequest) => ipcRenderer.invoke('projectGit:diff', request),
+    downloadGit: () => ipcRenderer.invoke('projectGit:downloadGit'),
+    backup: (request?: ProjectGitProjectRequest) => ipcRenderer.invoke('projectGit:backup', request),
+  },
+  versionWindow: {
+    open: () => ipcRenderer.invoke('versionWindow:open'),
+    notifyStatusChanged: (status: unknown) => ipcRenderer.invoke('versionWindow:status-changed', status),
+    notifyProjectChanged: (project: string) => ipcRenderer.invoke('versionWindow:project-changed', project),
+    onStatusChanged: (handler: (status: unknown) => void) => {
+      const listener = (_event: unknown, status: unknown) => handler(status);
+      ipcRenderer.on('projectGit:statusChanged', listener);
+      return () => ipcRenderer.removeListener('projectGit:statusChanged', listener);
+    },
+    onProjectChanged: (handler: (project: string) => void) => {
+      const listener = (_event: unknown, project: unknown) => handler(typeof project === 'string' ? project : '');
+      ipcRenderer.on('projectGit:projectChanged', listener);
+      return () => ipcRenderer.removeListener('projectGit:projectChanged', listener);
+    },
   },
   uiDesigner: {
     open: (request?: Pick<UiDesignerFileRequest, 'path' | 'project'>) => ipcRenderer.invoke('ui-designer:file:open', request),

@@ -1,20 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile, type ExecFileException } from 'node:child_process';
-import { promisify } from 'node:util';
 
 import type { ProjectGitBaselineResult, ProjectInfo, ProjectVersionSaveOptions } from '../../../../contract/types.ts';
 import { inspectRmmvProject, type RmmvLayoutKind, type RmmvProjectManifest } from '../rmmv/rmmv-layout.ts';
 import { SUPPORTED_RPG_MAKER_MZ_VERSION } from '../rmmv/rpg-maker-engine.ts';
 import {
-  projectCheckGitDependency,
   projectDataDirMissing,
   projectDefaultVersionCommitMessage,
   projectDirectoryMissing,
-  projectGitFailed,
-  projectGitMissing,
   projectGitRootMismatch,
-  projectGitTimeout,
   projectInvalidMapId,
   projectJsonParseFailed,
   projectMapInfosEmpty,
@@ -38,10 +32,7 @@ import {
   projectWorkspaceRemoveForbidden,
 } from './projectServiceLocalization.ts';
 import { projectAssetUrl } from './asset-service.ts';
-
-const execFileAsync = promisify(execFile);
-const DEFAULT_GIT_READ_TIMEOUT_MS = 30_000;
-const DEFAULT_GIT_WRITE_TIMEOUT_MS = 300_000;
+import { assertGitAvailable, runGit } from './git-runner.ts';
 
 interface RegisteredProject {
   path: string;
@@ -531,7 +522,7 @@ async function commitProjectChanges(
   };
 }
 
-function normalizeVersionCommitMessage(value: string | undefined): string {
+export function normalizeVersionCommitMessage(value: string | undefined): string {
   const trimmed = typeof value === 'string' ? value.trim() : '';
   const message = trimmed || projectDefaultVersionCommitMessage();
   if (message.includes('\0')) {
@@ -547,10 +538,6 @@ function normalizeVersionCommitMessage(value: string | undefined): string {
   return singleLine;
 }
 
-async function assertGitAvailable(cwd: string): Promise<void> {
-  await runGit(cwd, ['--version'], projectCheckGitDependency());
-}
-
 function assertProjectDirectory(projectPath: string): void {
   if (!fs.existsSync(projectPath) || !fs.statSync(projectPath).isDirectory()) {
     throw new Error(projectDirectoryMissing(projectPath));
@@ -561,68 +548,9 @@ function samePath(a: string, b: string): boolean {
   return path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
 }
 
-async function runGit(cwd: string, args: string[], label = `git ${args.join(' ')}`): Promise<{ stdout: string; stderr: string }> {
-  const timeoutMs = gitCommandTimeoutMs(args);
-  const invocation = gitInvocation(args);
-  try {
-    const result = await execFileAsync(invocation.command, invocation.args, {
-      cwd,
-      encoding: 'utf8',
-      windowsHide: true,
-      timeout: timeoutMs,
-      maxBuffer: 20 * 1024 * 1024,
-    });
-    return {
-      stdout: stringOutput(result.stdout),
-      stderr: stringOutput(result.stderr),
-    };
-  } catch (error) {
-    const err = error as ExecFileException & {
-      stdout?: string | Buffer;
-      stderr?: string | Buffer;
-      code?: string | number;
-      killed?: boolean;
-      signal?: NodeJS.Signals;
-    };
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      throw new Error(projectGitMissing());
-    }
-    if (err.killed || err.signal === 'SIGTERM' || /timed out/i.test(err.message || '')) {
-      throw new Error(projectGitTimeout(label, Math.max(1, Math.round(timeoutMs / 1000))));
-    }
-    const output = `${stringOutput(err.stderr)}${stringOutput(err.stdout)}`.trim();
-    throw new Error(projectGitFailed(output, err.message || `git ${args.join(' ')}`));
-  }
-}
-
-function gitCommandTimeoutMs(args: readonly string[]): number {
-  const raw = Number(process.env.RMMV_GIT_TIMEOUT_MS || '');
-  if (Number.isFinite(raw) && raw > 0) return raw;
-  return args[0] === 'add' || args[0] === 'commit'
-    ? DEFAULT_GIT_WRITE_TIMEOUT_MS
-    : DEFAULT_GIT_READ_TIMEOUT_MS;
-}
-
 function projectIconUrl(validation: ProjectValidation): string | null {
   const iconPath = path.join(validation.resourceRoot, 'icon', 'icon.png');
   if (!fs.existsSync(iconPath) || !fs.statSync(iconPath).isFile()) return null;
   const relative = path.relative(validation.projectPath, iconPath).replace(/\\/g, '/');
   return projectAssetUrl(validation.projectPath, relative);
-}
-
-function gitInvocation(args: string[]): { command: string; args: string[] } {
-  const configured = process.env.RMMV_GIT_COMMAND?.trim();
-  if (!configured) return { command: 'git', args };
-  if (process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(configured)) {
-    return {
-      command: process.env.ComSpec || 'cmd.exe',
-      args: ['/d', '/c', [configured, ...args].join(' ')],
-    };
-  }
-  return { command: configured, args };
-}
-
-function stringOutput(value: string | Buffer | undefined): string {
-  if (!value) return '';
-  return Buffer.isBuffer(value) ? value.toString('utf8') : value;
 }

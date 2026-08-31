@@ -15,7 +15,6 @@ import ConsoleHome from '../components/console/ConsoleHome.vue';
 import ConsoleLogsPane from '../components/console/ConsoleLogsPane.vue';
 import ConsolePluginsPane from '../components/console/ConsolePluginsPane.vue';
 import ConsoleSettingsPane from '../components/console/ConsoleSettingsPane.vue';
-import StoryProjectIdentityControl from '../components/console/StoryProjectIdentityControl.vue';
 import ProjectAccessControl from '../components/console/ProjectAccessControl.vue';
 import { useI18n, type MessageKey } from '../i18n';
 import { formatUserFacingErrorMessage } from '../utils/user-facing-error';
@@ -138,7 +137,6 @@ onDeactivated(() => {
         <h2>{{ t(titleKeys[currentPage]) }}</h2>
         <div class="project-control">
           <ProjectAccessControl compact @changed="reloadProjectBoundData" />
-          <StoryProjectIdentityControl v-if="projectStore.currentProject" :project="projectStore.currentProject" />
         </div>
       </header>
       <ConsoleAssetsPane v-if="currentPage === 'assets'" :catalog="catalog" :loading="assetsLoading" :error="assetsError" />

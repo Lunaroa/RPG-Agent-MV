@@ -3,7 +3,6 @@ import { type Component } from 'vue';
 import { Document, Setting } from '@element-plus/icons-vue';
 import { useProjectStore } from '../../stores/project';
 import type { ConsolePage } from '../../stores/workbenchUi';
-import StoryProjectIdentityControl from './StoryProjectIdentityControl.vue';
 import ProjectAccessControl from './ProjectAccessControl.vue';
 import { useI18n, type MessageKey } from '../../i18n';
 
@@ -47,7 +46,6 @@ const cards = [
       <div class="home-actions">
         <div class="engine-pill"><span />{{ t('console.home.engineReady') }}</div>
         <ProjectAccessControl />
-        <StoryProjectIdentityControl v-if="projectStore.currentProject" :project="projectStore.currentProject" />
       </div>
     </header>
 

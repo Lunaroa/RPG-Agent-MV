@@ -8,6 +8,19 @@ import type {
   ProductPluginSetEnabledResult,
 } from '@contract/product-plugin';
 import type {
+  ProjectGitCommit,
+  ProjectGitCommitRequest,
+  ProjectGitDiffRequest,
+  ProjectGitFileDiff,
+  ProjectGitFileResult,
+  ProjectGitPathRequest,
+  ProjectGitProjectRequest,
+  ProjectGitRemoteRequest,
+  ProjectGitResolveRequest,
+  ProjectGitStatus,
+  ProjectGitSyncRequest,
+} from '@contract/project-git';
+import type {
   UiDesignerDocument,
   UiDesignerFileRequest,
   UiDesignerFrameFolderRequest,
@@ -138,6 +151,29 @@ declare global {
         list(): Promise<ProductPluginListResult>;
         snapshot(): Promise<ProductPluginSnapshotResult>;
         setEnabled(request: ProductPluginSetEnabledRequest): Promise<ProductPluginSetEnabledResult>;
+      };
+      projectGit: {
+        status(request?: ProjectGitProjectRequest): Promise<ProjectGitFileResult<ProjectGitStatus>>;
+        enable(request?: ProjectGitProjectRequest): Promise<ProjectGitFileResult<ProjectGitStatus>>;
+        commit(request: ProjectGitCommitRequest): Promise<ProjectGitFileResult<{ committed: boolean; commitHash?: string; message: string }>>;
+        log(request?: ProjectGitProjectRequest): Promise<ProjectGitFileResult<ProjectGitCommit[]>>;
+        discard(request: ProjectGitPathRequest): Promise<ProjectGitFileResult<null>>;
+        setRemote(request: ProjectGitRemoteRequest): Promise<ProjectGitFileResult<string>>;
+        push(request: ProjectGitSyncRequest): Promise<ProjectGitFileResult<{ ahead: number; behind: number }>>;
+        pull(request: ProjectGitSyncRequest): Promise<ProjectGitFileResult<{ ahead: number; behind: number; merging: boolean }>>;
+        conflicts(request?: ProjectGitProjectRequest): Promise<ProjectGitFileResult<string[]>>;
+        resolve(request: ProjectGitResolveRequest): Promise<ProjectGitFileResult<{ merged: boolean; remaining: string[] }>>;
+        abortMerge(request?: ProjectGitProjectRequest): Promise<ProjectGitFileResult<null>>;
+        diff(request: ProjectGitDiffRequest): Promise<ProjectGitFileResult<ProjectGitFileDiff>>;
+        downloadGit(): Promise<ProjectGitFileResult<{ path: string; name: string }>>;
+        backup(request?: ProjectGitProjectRequest): Promise<ProjectGitFileResult<{ path: string; fileCount: number; totalBytes: number }>>;
+      };
+      versionWindow: {
+        open(): Promise<{ ok: boolean }>;
+        notifyStatusChanged(status: unknown): Promise<{ ok: boolean }>;
+        notifyProjectChanged(project: string): Promise<{ ok: boolean }>;
+        onStatusChanged(handler: (status: ProjectGitStatus | null) => void): () => void;
+        onProjectChanged(handler: (project: string) => void): () => void;
       };
       uiDesigner: {
         open(request?: Pick<UiDesignerFileRequest, 'path' | 'project'>): Promise<UiDesignerSaveResult<UiDesignerDocument>>;
@@ -541,6 +577,69 @@ export const productPlugin = {
   },
   setEnabled(request: ProductPluginSetEnabledRequest) {
     return desktopApi().productPlugin.setEnabled(toPlain(request)) as Promise<ProductPluginSetEnabledResult>;
+  },
+};
+
+export const projectGit = {
+  status(request?: ProjectGitProjectRequest) {
+    return desktopApi().projectGit.status(toPlain(request ?? {}));
+  },
+  enable(request?: ProjectGitProjectRequest) {
+    return desktopApi().projectGit.enable(toPlain(request ?? {}));
+  },
+  commit(request: ProjectGitCommitRequest) {
+    return desktopApi().projectGit.commit(toPlain(request));
+  },
+  log(request?: ProjectGitProjectRequest) {
+    return desktopApi().projectGit.log(toPlain(request ?? {}));
+  },
+  discard(request: ProjectGitPathRequest) {
+    return desktopApi().projectGit.discard(toPlain(request));
+  },
+  setRemote(request: ProjectGitRemoteRequest) {
+    return desktopApi().projectGit.setRemote(toPlain(request));
+  },
+  push(request: ProjectGitSyncRequest) {
+    return desktopApi().projectGit.push(toPlain(request));
+  },
+  pull(request: ProjectGitSyncRequest) {
+    return desktopApi().projectGit.pull(toPlain(request));
+  },
+  conflicts(request?: ProjectGitProjectRequest) {
+    return desktopApi().projectGit.conflicts(toPlain(request ?? {}));
+  },
+  resolve(request: ProjectGitResolveRequest) {
+    return desktopApi().projectGit.resolve(toPlain(request));
+  },
+  abortMerge(request?: ProjectGitProjectRequest) {
+    return desktopApi().projectGit.abortMerge(toPlain(request ?? {}));
+  },
+  diff(request: ProjectGitDiffRequest) {
+    return desktopApi().projectGit.diff(toPlain(request));
+  },
+  downloadGit() {
+    return desktopApi().projectGit.downloadGit();
+  },
+  backup(request?: ProjectGitProjectRequest) {
+    return desktopApi().projectGit.backup(toPlain(request ?? {}));
+  },
+};
+
+export const versionWindow = {
+  open() {
+    return desktopApi().versionWindow.open();
+  },
+  notifyStatusChanged(status: ProjectGitStatus | null) {
+    return desktopApi().versionWindow.notifyStatusChanged(toPlain(status));
+  },
+  notifyProjectChanged(project: string) {
+    return desktopApi().versionWindow.notifyProjectChanged(project);
+  },
+  onStatusChanged(handler: (status: ProjectGitStatus | null) => void) {
+    return desktopApi().versionWindow.onStatusChanged(handler);
+  },
+  onProjectChanged(handler: (project: string) => void) {
+    return desktopApi().versionWindow.onProjectChanged(handler);
   },
 };
 

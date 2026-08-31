@@ -18,6 +18,10 @@ import { electronText, stagingCloseButtons } from './electronLocalization.js';
 import { toIpcPayload } from './ipc-serialize.js';
 import { cleanupSessionIpcHandlers, registerSessionIpcHandlers } from './session-ipc-bindings.js';
 import { cleanupProductPluginIpcHandlers, registerProductPluginIpcHandlers } from './product-plugin-ipc-bindings.ts';
+import {
+  cleanupProjectGitIpcHandlers,
+  registerProjectGitIpcHandlers,
+} from './project-git-ipc-bindings.ts';
 import { cleanupUiDesignerIpcHandlers, registerUiDesignerIpcHandlers } from './ui-designer-ipc-bindings.ts';
 import { parseAssetRangeHeader, withAssetCanvasCors } from './asset-protocol-policy.js';
 import { ensureProjectAssetThumbnail } from './project-asset-thumbnail-cache.js';
@@ -474,6 +478,9 @@ async function loadBackendModules(roots: AppRoots) {
     assetAnnotations: await import(new URL('desktop/asset-annotation-service.ts', coreUrl).href),
     projectAssetBrowser: await import(new URL('desktop/project-asset-browser-service.ts', coreUrl).href),
     projectManagement: await import(new URL('desktop/project-management-service.ts', coreUrl).href),
+    projectGit: await import(new URL('desktop/project-git-service.ts', coreUrl).href),
+    projectBackup: await import(new URL('desktop/project-backup.ts', coreUrl).href),
+    gitInstaller: await import(new URL('desktop/git-installer.ts', coreUrl).href),
     projectConfig: await import(new URL('desktop/project-config-service.ts', coreUrl).href),
     projectSearch: await import(new URL('desktop/project-search-service.ts', coreUrl).href),
     pluginTranslation: await import(new URL('desktop/plugin-translation-service.ts', coreUrl).href),
@@ -564,6 +571,15 @@ async function loadBackendModules(roots: AppRoots) {
     runtime: desktop.uiDesigner.runtime,
     rendererHost: uiDesignerRendererHostService,
     userDataStore: () => new desktop.uiDesigner.file.UiDesignerUserDataStore(roots.userDataRoot),
+  });
+  registerProjectGitIpcHandlers(ipcMain, dialog, {
+    dialogParent: (sender) => BrowserWindow.fromWebContents(sender as Electron.WebContents) || undefined,
+    resolveProject: (project?: string) => desktop.project.resolveProjectPath(roots.installRoot, project),
+    git: desktop.projectGit,
+    backup: desktop.projectBackup,
+    installer: desktop.gitInstaller,
+    productLanguage: currentProductLanguage,
+    withProductLanguage: withBackendProductLanguage,
   });
   mapPreviewService = new desktop.mapPreview.MapPreviewIframeService(
     roots.userDataRoot,
@@ -2282,6 +2298,7 @@ export function cleanupIpcHandlers(): void {
   }
   cleanupSessionIpcHandlers(ipcMain);
   cleanupProductPluginIpcHandlers(ipcMain);
+  cleanupProjectGitIpcHandlers(ipcMain);
   cleanupUiDesignerIpcHandlers(ipcMain);
   cleanupMapIpcHandlers(ipcMain);
   cleanupInteractivePlaytestIpcHandlers(ipcMain);

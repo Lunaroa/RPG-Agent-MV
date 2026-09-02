@@ -103,6 +103,7 @@
 <script setup lang="ts">
 import { computed, ref, shallowRef, watch } from 'vue';
 import { LAYER_Z } from '../../constants/layerZIndex';
+import { appTitlebarHeight } from '../../utils/appTitlebar';
 import ImageAssetPickerDialog from './ImageAssetPickerDialog.vue';
 import { useI18n } from '../../i18n';
 import type { EditorProjectCatalog } from '../../api/client';
@@ -225,7 +226,7 @@ function onDragMove(event: PointerEvent) {
   if (!dragOffset || !panelPosition.value) return;
   panelPosition.value = {
     x: Math.min(Math.max(0, event.clientX - dragOffset.x), window.innerWidth - 120),
-    y: Math.min(Math.max(0, event.clientY - dragOffset.y), window.innerHeight - 48),
+    y: Math.min(Math.max(appTitlebarHeight(), event.clientY - dragOffset.y), window.innerHeight - 48),
   };
 }
 function onDragEnd() { dragOffset = null; }

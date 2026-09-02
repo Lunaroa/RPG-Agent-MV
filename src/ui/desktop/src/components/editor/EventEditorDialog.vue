@@ -220,7 +220,7 @@
       </div>
     </div>
   </teleport>
-  <EventImagePickerDialog ref="imagePicker" :catalog="catalog" :tileset-images="tilesetImages" :load-image="loadImage" @commit="setImage" />
+  <EventImagePickerDialog ref="imagePicker" :catalog="catalog" :tileset-images="tilesetImages" :extended-tileset-sheets="extendedTilesetSheets" :load-image="loadImage" @commit="setImage" />
   <MoveRouteDialog ref="routeDialog" :preview-x="draft?.x" :preview-y="draft?.y" :catalog="catalog" @commit="setPageRoute" />
   <EventCommandDialog ref="commandDialog" :map-id="mapId" :catalog="catalog" :load-image="loadImage" :event-x="draft?.x" :event-y="draft?.y" :current-events="currentEvents" @commit="commitCommand" @catalog-changed="emit('catalog-changed')" />
   <EventTextPasteDialog ref="textPasteDialog" @confirm="applyPastedCommandsText" />
@@ -232,6 +232,7 @@ import { ElMessage } from 'element-plus';
 import { LAYER_Z } from '../../constants/layerZIndex';
 import { useI18n } from '../../i18n';
 import { confirmAboveModal } from '../../utils/confirmAboveModal';
+import { appTitlebarHeight } from '../../utils/appTitlebar';
 import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
 import { clipboard as clipboardApi, projectConfig as projectConfigApi, type EditorProjectCatalog, type StoryEventOverview, type StoryEventPageOverview } from '../../api/client';
 import { useProjectStore } from '../../stores/project';
@@ -239,6 +240,7 @@ import { commandDefinition, normalizeEventCommandParameters } from '../../compos
 import ConditionSelect from './EventConditionSelect.vue';
 import EventCommandDialog from './EventCommandDialog.vue';
 import EventImagePickerDialog from './EventImagePickerDialog.vue';
+import type { ExtendedTilesetSheetDescriptor } from '@contract/types';
 import EventTextPasteDialog from './EventTextPasteDialog.vue';
 import MoveRouteDialog from './MoveRouteDialog.vue';
 import { SELF_SWITCH_CHANNELS, clone, commandBlockSpanIndices, commandBranchScope, commandInsertionSlots, commandSpanDisplay, commandStructureBlocks, defaultPage, dropCommandSpanBlocks, editableCommandSpans, ensureTerminator, imageSummary, moveCommandSpanBlock, skipTerminatorIndices, type MvCommandInsertionSlot, type MvCommandSpanView, type MvEditorEvent, type MvEventImage, type MvEventPage, type MvMoveRoute, type MvCommand } from '../../composables/useEventEditor';
@@ -247,7 +249,7 @@ import { eventEditorText } from '../../utils/eventEditorLocalization';
 import { resolvePluginColor } from '../../utils/pluginColor';
 import { findCommandSpanIndices, nextCommandFindCursor } from '../console/command-list-find';
 import type { EditorEventListItem } from './editorTypes';
-const props = withDefaults(defineProps<{ visible: boolean; draft: MvEditorEvent | null; saving: boolean; mapId: number | null; systemData: { switches: string[]; variables: string[] } | null; catalog: EditorProjectCatalog | null; tilesetImages: (HTMLImageElement | null)[]; loadImage: (url: string) => Promise<HTMLImageElement | null>; overview?: StoryEventOverview | null; currentEvents?: EditorEventListItem[]; modeless?: boolean }>(), { currentEvents: () => [], modeless: false });
+const props = withDefaults(defineProps<{ visible: boolean; draft: MvEditorEvent | null; saving: boolean; mapId: number | null; systemData: { switches: string[]; variables: string[] } | null; catalog: EditorProjectCatalog | null; tilesetImages: (HTMLImageElement | null)[]; extendedTilesetSheets: ExtendedTilesetSheetDescriptor[]; loadImage: (url: string) => Promise<HTMLImageElement | null>; overview?: StoryEventOverview | null; currentEvents?: EditorEventListItem[]; modeless?: boolean }>(), { currentEvents: () => [], extendedTilesetSheets: () => [], modeless: false });
 const emit = defineEmits<{ close: []; save: [closeAfterSave: boolean]; 'catalog-changed': [] }>();
 const { language, t } = useI18n();
 const projectStore = useProjectStore();
@@ -277,10 +279,10 @@ function onDragMove(event: PointerEvent) {
   const rect = shell.getBoundingClientRect();
   const current = dragOffset.value || { x: 0, y: 0 };
   const baseLeft = rect.left - current.x, baseTop = rect.top - current.y;
-  // Keep the title bar reachable: never above the viewport, always 48px visible.
+  // Keep the title bar reachable: never under the OS-drag title strip, always 48px visible.
   const minVisible = 48;
   const nx = Math.min(Math.max(dragStart.ox + (event.clientX - dragStart.x), minVisible - baseLeft - rect.width), window.innerWidth - baseLeft - minVisible);
-  const ny = Math.min(Math.max(dragStart.oy + (event.clientY - dragStart.y), -baseTop), window.innerHeight - baseTop - minVisible);
+  const ny = Math.min(Math.max(dragStart.oy + (event.clientY - dragStart.y), appTitlebarHeight() - baseTop), window.innerHeight - baseTop - minVisible);
   dragOffset.value = { x: Math.round(nx), y: Math.round(ny) };
 }
 function onDragEnd(event: PointerEvent) { if (dragStart?.pointer === event.pointerId) dragStart = null; }
@@ -920,7 +922,7 @@ function isFindShortcutTarget(target: EventTarget | null): boolean {
 function setImage(image: MvEventImage) { if (currentPage.value && !currentPageLocked.value) { currentPage.value.image = image; markDirty(); } }
 function openImagePicker() { if (currentPage.value && !currentPageLocked.value) imagePicker.value?.open(currentPage.value.image); }
 function setPageRoute(route: MvMoveRoute) { if (currentPage.value && !currentPageLocked.value) { currentPage.value.moveRoute = route; markDirty(); } }
-async function paintPreview() { const canvas = previewCanvas.value, image = currentPage.value?.image; if (!canvas || !image) return; const context = canvas.getContext('2d')!; context.clearRect(0,0,canvas.width,canvas.height); if (image.tileId) return drawTile(context, props.tilesetImages, image.tileId, 14, 10); const asset = props.catalog?.assets.characters.find((item) => item.name === image.characterName); if (!asset) return; const bitmap = await props.loadImage(asset.url); const frame = bitmap && eventCharacterFrame(bitmap, image); if (!bitmap || !frame) return; const scale = Math.min(1, 64 / frame.sw, 88 / frame.sh); context.imageSmoothingEnabled = false; context.drawImage(bitmap, frame.sx, frame.sy, frame.sw, frame.sh, Math.round((canvas.width-frame.sw*scale)/2), Math.round((canvas.height-frame.sh*scale)/2), frame.sw*scale, frame.sh*scale); }
+async function paintPreview() { const canvas = previewCanvas.value, image = currentPage.value?.image; if (!canvas || !image) return; const context = canvas.getContext('2d')!; context.clearRect(0,0,canvas.width,canvas.height); if (image.tileId) return drawTile(context, props.tilesetImages, image.tileId, 14, 10, 48, props.extendedTilesetSheets); const asset = props.catalog?.assets.characters.find((item) => item.name === image.characterName); if (!asset) return; const bitmap = await props.loadImage(asset.url); const frame = bitmap && eventCharacterFrame(bitmap, image); if (!bitmap || !frame) return; const scale = Math.min(1, 64 / frame.sw, 88 / frame.sh); context.imageSmoothingEnabled = false; context.drawImage(bitmap, frame.sx, frame.sy, frame.sw, frame.sh, Math.round((canvas.width-frame.sw*scale)/2), Math.round((canvas.height-frame.sh*scale)/2), frame.sw*scale, frame.sh*scale); }
 function localizedImageSummary(image: MvEventImage): string {
   return imageSummary(image, language.value);
 }

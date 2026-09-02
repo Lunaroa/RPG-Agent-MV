@@ -1,6 +1,5 @@
 import { createApp } from 'vue'
 import App from './App.vue'
-import VersionWindowApp from './VersionWindowApp.vue'
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
 // 本地打包字体（离线，不走联网 CDN）
@@ -12,8 +11,7 @@ import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import { createPinia } from 'pinia'
 import router from './router'
 
-const isVersionWindow = new URLSearchParams(window.location.search).get('window') === 'version'
-const app = createApp(isVersionWindow ? VersionWindowApp : App)
+const app = createApp(App)
 
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(key, component)
@@ -21,5 +19,5 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
 
 app.use(ElementPlus)
 app.use(createPinia())
-if (!isVersionWindow) app.use(router)
+app.use(router)
 app.mount('#app')

@@ -9,6 +9,8 @@ import {
   applyRmmvMapBrushEdits,
   RMMV_INTERACTIVE_AUTOTILE_RESOLUTION,
 } from "../../../../../contract/rmmv-map-brush.ts";
+import { buildExtendedTilesetDescriptors } from "../../../../../contract/extended-tileset.ts";
+import type { ExtendedTilesetSheetDescriptor, ExtendedTilesetSheetType } from "../../../../../contract/types.ts";
 
 interface BrushEditOptions {
   project?: string;
@@ -23,6 +25,8 @@ interface BrushEditInput {
   layer?: number | "auto";
   tileId?: number;
   autotileKind?: number;
+  tilesetSlot?: number;
+  extendedTilesetType?: Extract<ExtendedTilesetSheetType, 'A1' | 'A2' | 'A3' | 'A4'>;
   preserveAutotileShape?: boolean;
   shadowBits?: number;
   regionId?: number;
@@ -95,10 +99,11 @@ function applyBrushEdit(options: BrushEditOptions): BrushEditReport {
   validateMap(map, mapId);
 
   const engine = inspectRmmvProject(project).engine;
-  const tilesetMode = readTilesetMode(dataDir, map);
+  const tileset = readTilesetContext(dataDir, map);
   const result = applyRmmvMapBrushEdits(map, edits, {
     engine,
-    tilesetMode,
+    tilesetMode: tileset.mode,
+    extendedTilesetSheets: tileset.extendedTilesetSheets,
     autotileResolution: RMMV_INTERACTIVE_AUTOTILE_RESOLUTION,
   });
   map.data = result.data;
@@ -120,14 +125,19 @@ function applyBrushEdit(options: BrushEditOptions): BrushEditReport {
   };
 }
 
-function readTilesetMode(dataDir: string, map: Record<string, unknown>): number | null {
+function readTilesetContext(dataDir: string, map: Record<string, unknown>): { mode: number | null; extendedTilesetSheets: ExtendedTilesetSheetDescriptor[] } {
   const tilesetId = Number(map.tilesetId);
   const file = path.join(dataDir, "Tilesets.json");
-  if (!Number.isInteger(tilesetId) || tilesetId <= 0 || !fs.existsSync(file)) return null;
+  if (!Number.isInteger(tilesetId) || tilesetId <= 0 || !fs.existsSync(file)) return { mode: null, extendedTilesetSheets: [] };
   const tilesets = readJson(file);
-  if (!Array.isArray(tilesets) || !tilesets[tilesetId] || typeof tilesets[tilesetId] !== "object") return null;
-  const mode = Number((tilesets[tilesetId] as Record<string, unknown>).mode);
-  return Number.isInteger(mode) ? mode : null;
+  if (!Array.isArray(tilesets) || !tilesets[tilesetId] || typeof tilesets[tilesetId] !== "object") return { mode: null, extendedTilesetSheets: [] };
+  const record = tilesets[tilesetId] as Record<string, unknown>;
+  const mode = Number(record.mode);
+  const names = Array.isArray(record.tilesetNames) ? record.tilesetNames : [];
+  return {
+    mode: Number.isInteger(mode) ? mode : null,
+    extendedTilesetSheets: buildExtendedTilesetDescriptors(names, record.rpgAgentExtendedTilesetTypes),
+  };
 }
 
 function validateMap(map: unknown, mapId: number): asserts map is { width: number; height: number; data: number[] } {

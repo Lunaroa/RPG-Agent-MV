@@ -76,12 +76,18 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import type { ExtendedTilesetSheetDescriptor } from '@contract/types';
+import {
+  EXTENDED_TILESET_SHAPE_COUNT,
+  findExtendedTilesetDescriptor,
+  isExtendedAutotileDescriptor,
+} from '@contract/extended-tileset';
 import { LAYER_Z } from '../../constants/layerZIndex';
 import { useI18n } from '../../i18n';
 import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
 import type { EditorProjectCatalog } from '../../api/client';
 import { clone, defaultImage, imageSummary, type MvEventImage } from '../../composables/useEventEditor';
-import { TILE_ID_A5, eventCharacterFrame, isBigCharacterName } from '../../composables/useMapRenderer';
+import { TILE_ID_A5, drawTile, eventCharacterFrame, isBigCharacterName } from '../../composables/useMapRenderer';
 import CharacterAssetBrowser from './CharacterAssetBrowser.vue';
 import {
   getRuntimeCharacterAssetViewMode,
@@ -94,7 +100,12 @@ const CHARACTER_CANVAS_HEIGHT = 580;
 const PREVIEW_ZOOM_MIN = 0.25;
 const PREVIEW_ZOOM_MAX = 4;
 
-const props = defineProps<{ catalog: EditorProjectCatalog | null; tilesetImages: (HTMLImageElement | null)[]; loadImage: (url: string) => Promise<HTMLImageElement | null> }>();
+const props = defineProps<{
+  catalog: EditorProjectCatalog | null;
+  tilesetImages: (HTMLImageElement | null)[];
+  extendedTilesetSheets: ExtendedTilesetSheetDescriptor[];
+  loadImage: (url: string) => Promise<HTMLImageElement | null>;
+}>();
 const emit = defineEmits<{ commit: [image: MvEventImage] }>();
 const { language, t } = useI18n();
 const subDialogZ = String(LAYER_Z.subDialog);
@@ -112,12 +123,24 @@ const tileNaturalWidth = ref(768);
 const tileNaturalHeight = ref(768);
 const summary = computed(() => imageSummary(draft.value, language.value));
 const tileSize = computed(() => Math.max(1, Number(props.catalog?.tileSize) || 48));
-const tileTabs = computed(() => [
+interface TileTabEntry {
+  label: string;
+  image: HTMLImageElement | null | undefined;
+  base: number;
+  descriptor?: ExtendedTilesetSheetDescriptor;
+}
+const tileTabs = computed<TileTabEntry[]>(() => [
   { label: 'A5', image: props.tilesetImages[4], base: TILE_ID_A5 },
   { label: 'B', image: props.tilesetImages[5], base: 0 },
   { label: 'C', image: props.tilesetImages[6], base: 256 },
   { label: 'D', image: props.tilesetImages[7], base: 512 },
   { label: 'E', image: props.tilesetImages[8], base: 768 },
+  ...props.extendedTilesetSheets.map((descriptor) => ({
+    label: `${descriptor.label} · ${descriptor.type}`,
+    image: props.tilesetImages[descriptor.slotIndex],
+    base: descriptor.firstTileId,
+    descriptor,
+  })),
 ]);
 watch([tab, tileTab, previewZoom], () => void nextTick(paint));
 function onKeyDown(event: KeyboardEvent) {
@@ -299,14 +322,41 @@ async function confirmCharacterCell(event: MouseEvent): Promise<void> {
 function paintTileSheet() {
   const canvas = tileCanvas.value, entry = tileTabs.value.find((item) => item.label === tileTab.value);
   if (!canvas || !entry?.image) return;
-  canvas.width = entry.image.naturalWidth; canvas.height = entry.image.naturalHeight;
+  const autoDescriptor = entry.descriptor && isExtendedAutotileDescriptor(entry.descriptor)
+    ? entry.descriptor
+    : null;
+  if (autoDescriptor) {
+    const kindCount = autoDescriptor.capacity / EXTENDED_TILESET_SHAPE_COUNT;
+    canvas.width = 8 * tileSize.value;
+    canvas.height = Math.ceil(kindCount / 8) * tileSize.value;
+  } else {
+    canvas.width = entry.image.naturalWidth;
+    canvas.height = entry.image.naturalHeight;
+  }
   tileNaturalWidth.value = canvas.width;
   tileNaturalHeight.value = canvas.height;
-  const context = canvas.getContext('2d')!; context.drawImage(entry.image, 0, 0);
+  const context = canvas.getContext('2d')!;
+  context.imageSmoothingEnabled = false;
+  if (autoDescriptor) {
+    const kindCount = autoDescriptor.capacity / EXTENDED_TILESET_SHAPE_COUNT;
+    for (let kind = 0; kind < kindCount; kind += 1) {
+      drawTile(
+        context,
+        props.tilesetImages,
+        autoDescriptor.firstTileId + kind * EXTENDED_TILESET_SHAPE_COUNT,
+        (kind % 8) * tileSize.value,
+        Math.floor(kind / 8) * tileSize.value,
+        tileSize.value,
+        props.extendedTilesetSheets,
+      );
+    }
+  } else {
+    context.drawImage(entry.image, 0, 0);
+  }
   context.strokeStyle = 'rgba(255,255,255,.4)';
   for (let x = 0; x <= canvas.width / tileSize.value; x++) { context.beginPath(); context.moveTo(x * tileSize.value + .5, 0); context.lineTo(x * tileSize.value + .5, canvas.height); context.stroke(); }
   for (let y = 0; y <= canvas.height / tileSize.value; y++) { context.beginPath(); context.moveTo(0, y * tileSize.value + .5); context.lineTo(canvas.width, y * tileSize.value + .5); context.stroke(); }
-  const selected = selectedTileCell(entry.label, entry.base, Number(draft.value.tileId || 0));
+  const selected = selectedTileCell(entry, Number(draft.value.tileId || 0));
   if (selected) {
     const x = selected.col * tileSize.value, y = selected.row * tileSize.value;
     context.strokeStyle = 'rgba(0,0,0,.9)'; context.lineWidth = 5; context.strokeRect(x + 2.5, y + 2.5, tileSize.value - 5, tileSize.value - 5);
@@ -321,7 +371,16 @@ function pickTileCell(event: MouseEvent): boolean {
   const y = (event.clientY - rect.top) * canvas.height / rect.height;
   if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return false;
   const col = Math.floor(x / tileSize.value), row = Math.floor(y / tileSize.value);
-  const tileId = entry.label === 'A5' ? entry.base + row * 8 + col : entry.base + (col < 8 ? 0 : 128) + row * 8 + col % 8;
+  let tileId: number;
+  if (entry.descriptor && isExtendedAutotileDescriptor(entry.descriptor)) {
+    const kind = row * 8 + col;
+    if (kind >= entry.descriptor.capacity / EXTENDED_TILESET_SHAPE_COUNT) return false;
+    tileId = entry.descriptor.firstTileId + kind * EXTENDED_TILESET_SHAPE_COUNT;
+  } else if (entry.descriptor?.type === 'A5' || entry.label === 'A5') {
+    tileId = entry.base + row * 8 + col;
+  } else {
+    tileId = entry.base + (col < 8 ? 0 : 128) + row * 8 + col % 8;
+  }
   Object.assign(draft.value, { tileId, characterName: '', characterIndex: 0, pattern: 1, direction: 2 });
   paintTileSheet();
   return true;
@@ -330,16 +389,24 @@ function confirmTileCell(event: MouseEvent): void {
   if (pickTileCell(event)) commit();
 }
 function tileTabForId(tileId: number): string {
+  const descriptor = findExtendedTilesetDescriptor(props.extendedTilesetSheets, tileId);
+  if (descriptor) return `${descriptor.label} · ${descriptor.type}`;
   if (tileId >= TILE_ID_A5) return 'A5';
   if (tileId >= 768) return 'E';
   if (tileId >= 512) return 'D';
   if (tileId >= 256) return 'C';
   return 'B';
 }
-function selectedTileCell(label: string, base: number, tileId: number): { col: number; row: number } | null {
-  if (!tileId || tileTabForId(tileId) !== label) return null;
-  const local = tileId - base;
-  if (label === 'A5') return { col: local % 8, row: Math.floor(local / 8) };
+function selectedTileCell(entry: TileTabEntry, tileId: number): { col: number; row: number } | null {
+  if (!tileId || tileTabForId(tileId) !== entry.label) return null;
+  const local = tileId - entry.base;
+  if (entry.descriptor && isExtendedAutotileDescriptor(entry.descriptor)) {
+    const kind = Math.floor(local / EXTENDED_TILESET_SHAPE_COUNT);
+    return { col: kind % 8, row: Math.floor(kind / 8) };
+  }
+  if (entry.descriptor?.type === 'A5' || entry.label === 'A5') {
+    return { col: local % 8, row: Math.floor(local / 8) };
+  }
   return { col: local < 128 ? local % 8 : 8 + (local % 8), row: Math.floor((local % 128) / 8) };
 }
 function commit() { emit('commit', clone(draft.value)); close(); }

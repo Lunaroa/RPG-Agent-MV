@@ -8,6 +8,8 @@
 import { flagSummaryTokens, summarizeTileStackFlags, type MvTileFlagStackSummary } from '../utils/mvTileFlags.ts';
 import { drawMvRegionFill, drawMvRegionMarker } from '../utils/mvRegionPalette.ts';
 import { ULDS_TILE_Z_THRESHOLD } from '@contract/ulds';
+import type { ExtendedTilesetSheetDescriptor, ExtendedTilesetSheetType } from '@contract/types';
+import { findExtendedTilesetDescriptor } from '@contract/extended-tileset';
 
 export const TILE_SIZE = 48;
 export const TILE_ID_A5 = 1536;
@@ -80,8 +82,14 @@ export interface UldsDrawLayer {
   anchorY: number;
 }
 
+/** One unlimited-tile-layers record resolved for drawing: a flat width*height tile id grid. */
+export interface ExtraTileDrawLayer {
+  tiles: number[];
+}
+
 export interface DrawOptions {
   tilesetImages: (HTMLImageElement | null)[];
+  extendedTilesetSheets?: ExtendedTilesetSheetDescriptor[];
   parallaxImage?: HTMLImageElement | null;
   tileSize?: number;
   tilesetFlags?: number[];
@@ -97,6 +105,8 @@ export interface DrawOptions {
   defaultPage?: () => MvEventPage;
   getCharacterImage?: (name: string) => HTMLImageElement | null;
   uldsLayers?: UldsDrawLayer[];
+  extraTileLayers?: readonly ExtraTileDrawLayer[];
+  activeExtraLayer?: number | null;
 }
 
 const FLOOR_AUTOTILE_TABLE: ShapeTable = [
@@ -143,17 +153,42 @@ export function drawMapContent(context: CanvasRenderingContext2D, map: MvMap, op
     for (let y = 0; y < map.height; y += 1) {
       for (let x = 0; x < map.width; x += 1) {
         const tileId = map.data[(z * map.height + y) * map.width + x] || 0;
-        drawTile(context, options.tilesetImages, tileId, x * tileSize, y * tileSize, tileSize);
+        drawTile(context, options.tilesetImages, tileId, x * tileSize, y * tileSize, tileSize, options.extendedTilesetSheets);
       }
     }
+    if (z === 1) drawTableEdges(context, map, options, tileSize);
     context.restore();
   }
   drawShadowLayer(context, map, tileSize);
+  drawExtraTileLayers(context, map, options, tileSize);
   drawUldsLayers(context, options.uldsLayers, canvasWidth, canvasHeight, (z) => z >= ULDS_TILE_Z_THRESHOLD);
   if (options.showRegions) drawRegionLayer(context, map, tileSize, options.showRegionLabels !== false);
   if (options.showTileFlags) drawTileFlagLayer(context, map, options.tilesetFlags || [], tileSize);
   if (options.showGrid) drawGrid(context, map.width, map.height, tileSize);
   drawEvents(context, map.events || [], options, tileSize);
+}
+
+function drawExtraTileLayers(
+  context: CanvasRenderingContext2D,
+  map: MvMap,
+  options: DrawOptions,
+  tileSize: number,
+): void {
+  const layers = options.extraTileLayers;
+  if (!layers || !layers.length) return;
+  const active = options.activeExtraLayer;
+  layers.forEach((layer, index) => {
+    if (!layer || !Array.isArray(layer.tiles)) return;
+    context.save();
+    if (active != null && index !== active) context.globalAlpha = 0.24;
+    for (let y = 0; y < map.height; y += 1) {
+      for (let x = 0; x < map.width; x += 1) {
+        const tileId = Number(layer.tiles[y * map.width + x] || 0);
+        drawTile(context, options.tilesetImages, tileId, x * tileSize, y * tileSize, tileSize, options.extendedTilesetSheets);
+      }
+    }
+    context.restore();
+  });
 }
 
 function drawUldsLayers(
@@ -258,8 +293,13 @@ export function drawTile(
   dx: number,
   dy: number,
   tileSize = TILE_SIZE,
+  extendedTilesetSheets: readonly ExtendedTilesetSheetDescriptor[] = [],
 ): void {
   if (!tileId) return;
+  if (tileId >= 8192) {
+    drawExtendedTile(context, images, extendedTilesetSheets, tileId, dx, dy, tileSize);
+    return;
+  }
   if (tileId >= TILE_ID_A1) {
     drawAutotileApprox(context, images, tileId, dx, dy, tileSize);
     return;
@@ -270,6 +310,107 @@ export function drawTile(
   }
   const sheetNumber = Math.floor(tileId / 256);
   drawNormalTile(context, images[5 + sheetNumber] || null, tileId, dx, dy, tileSize);
+}
+
+function drawTableEdges(context: CanvasRenderingContext2D, map: MvMap, options: DrawOptions, tileSize: number): void {
+  const flags = options.tilesetFlags || [];
+  if (!flags.length) return;
+  const layerSize = map.width * map.height;
+  for (let y = 1; y < map.height; y += 1) {
+    for (let x = 0; x < map.width; x += 1) {
+      const upperTileId = Number(map.data[layerSize + (y - 1) * map.width + x] || 0);
+      const currentTileId = Number(map.data[layerSize + y * map.width + x] || 0);
+      if (!(Number(flags[upperTileId] || 0) & 0x80) || (Number(flags[currentTileId] || 0) & 0x80)) continue;
+      drawTableEdge(
+        context,
+        options.tilesetImages,
+        options.extendedTilesetSheets || [],
+        upperTileId,
+        x * tileSize,
+        y * tileSize,
+        tileSize,
+      );
+    }
+  }
+}
+
+function drawTableEdge(
+  context: CanvasRenderingContext2D,
+  images: (HTMLImageElement | null)[],
+  descriptors: readonly ExtendedTilesetSheetDescriptor[],
+  tileId: number,
+  dx: number,
+  dy: number,
+  tileSize: number,
+): void {
+  let image: HTMLImageElement | null = null;
+  let localKind = 0;
+  let shape = 0;
+  const descriptor = findExtendedTilesetDescriptor(descriptors, tileId);
+  if (descriptor) {
+    if (descriptor.type !== 'A2') return;
+    const localId = tileId - descriptor.firstTileId;
+    localKind = Math.floor(localId / 48);
+    shape = localId % 48;
+    image = images[descriptor.slotIndex] || null;
+  } else {
+    if (tileId < TILE_ID_A2 || tileId >= TILE_ID_A3) return;
+    const kind = Math.floor((tileId - TILE_ID_A1) / 48);
+    localKind = kind - 16;
+    shape = (tileId - TILE_ID_A1) % 48;
+    image = images[1] || null;
+  }
+  const quarters = FLOOR_AUTOTILE_TABLE[shape];
+  if (!image || !quarters) return;
+  const half = tileSize / 2;
+  const bx = (localKind % 8) * 2;
+  const by = Math.floor(localKind / 8) * 3;
+  for (let index = 0; index < 2; index += 1) {
+    const quarter = quarters[2 + index];
+    context.drawImage(
+      image,
+      (bx * 2 + quarter[0]) * half,
+      (by * 2 + quarter[1]) * half + half / 2,
+      half,
+      half / 2,
+      dx + index * half,
+      dy,
+      half,
+      half / 2,
+    );
+  }
+}
+
+function drawExtendedTile(
+  context: CanvasRenderingContext2D,
+  images: (HTMLImageElement | null)[],
+  descriptors: readonly ExtendedTilesetSheetDescriptor[],
+  tileId: number,
+  dx: number,
+  dy: number,
+  tileSize: number,
+): void {
+  const descriptor = findExtendedTilesetDescriptor(descriptors, tileId);
+  if (!descriptor) {
+    drawFallback(context, tileId, dx, dy, tileSize);
+    return;
+  }
+  const image = images[descriptor.slotIndex] || null;
+  const localId = tileId - descriptor.firstTileId;
+  if (descriptor.type === 'normal') {
+    drawNormalTile(context, image, localId, dx, dy, tileSize);
+    return;
+  }
+  if (descriptor.type === 'A5') {
+    if (image) drawSheetTile(context, image, localId, dx, dy, tileSize);
+    else drawFallback(context, tileId, dx, dy, tileSize);
+    return;
+  }
+  if (!image) {
+    drawFallback(context, tileId, dx, dy, tileSize);
+    return;
+  }
+  drawAutotileFromImage(context, image, descriptor.type, localId, dx, dy, tileSize);
 }
 
 function drawNormalTile(context: CanvasRenderingContext2D, image: HTMLImageElement | null, tileId: number, dx: number, dy: number, tileSize: number): void {
@@ -303,6 +444,31 @@ function drawAutotileApprox(context: CanvasRenderingContext2D, images: (HTMLImag
   const tx = kind % 8;
   const ty = Math.floor(kind / 8);
   const placement = autotilePlacement(sheetInfo.index, kind, tx, ty);
+  const table = placement.table[shape % placement.table.length];
+  const half = tileSize / 2;
+  for (let index = 0; index < 4; index += 1) {
+    const [qsx, qsy] = table[index];
+    const sx = (placement.bx * 2 + qsx) * half;
+    const sy = (placement.by * 2 + qsy) * half;
+    context.drawImage(image, sx, sy, half, half, dx + (index % 2) * half, dy + Math.floor(index / 2) * half, half, half);
+  }
+}
+
+function drawAutotileFromImage(
+  context: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  type: Exclude<ExtendedTilesetSheetType, 'A5' | 'normal'>,
+  localId: number,
+  dx: number,
+  dy: number,
+  tileSize: number,
+): void {
+  const localKind = Math.floor(localId / 48);
+  const shape = localId % 48;
+  const offset = type === 'A1' ? 0 : type === 'A2' ? 16 : type === 'A3' ? 48 : 80;
+  const kind = offset + localKind;
+  const sheetIndex = type === 'A1' ? 0 : type === 'A2' ? 1 : type === 'A3' ? 2 : 3;
+  const placement = autotilePlacement(sheetIndex, kind, kind % 8, Math.floor(kind / 8));
   const table = placement.table[shape % placement.table.length];
   const half = tileSize / 2;
   for (let index = 0; index < 4; index += 1) {
@@ -453,7 +619,7 @@ function drawEvents(context: CanvasRenderingContext2D, events: (MvEvent | null)[
       const image: MvEventImage = page.image || {};
       drawEventShadow(context, x, y, tileSize);
       if (Number(image.tileId) > 0) {
-        drawTile(context, options.tilesetImages, Number(image.tileId), x, y, tileSize);
+        drawTile(context, options.tilesetImages, Number(image.tileId), x, y, tileSize, options.extendedTilesetSheets);
       } else if (image.characterName) {
         drawEventCharacter(context, image, x, y, getCharacterImage, tileSize);
       }

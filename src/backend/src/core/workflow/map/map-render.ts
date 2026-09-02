@@ -6,6 +6,11 @@ import { readJson, writeJson } from "../../rmmv/json.ts";
 import { resolveDataDir } from "../../rmmv/project-scanner.ts";
 import { inspectRmmvProject } from "../../rmmv/rmmv-layout.ts";
 import { resolveCliOutRoot, resolveWorkflowRoot } from "../../workspace-paths.ts";
+import {
+  buildExtendedTilesetDescriptors,
+  findExtendedTilesetDescriptor,
+  type ExtendedTilesetSheetDescriptor,
+} from "../../../../../contract/extended-tileset.ts";
 
 interface PngHeader {
   width: number;
@@ -34,12 +39,15 @@ interface MapData {
   height: number;
   tilesetId: number;
   data: number[];
+  extendedTilesetSheets?: ExtendedTilesetSheetDescriptor[];
+  tilesetFlags?: number[];
   [key: string]: unknown;
 }
 
 interface Tileset {
   name?: string;
   tilesetNames?: string[];
+  flags?: number[];
   [key: string]: unknown;
 }
 
@@ -116,6 +124,11 @@ function runMapRender(projectRoot: string, options: MapRenderOptions = {}): MapR
   const warnings: string[] = [];
   const imageDir = resolveTilesetImageDir(project, dataDir);
   const bitmaps = loadTilesetBitmaps(tileset, imageDir, warnings);
+  map.extendedTilesetSheets = buildExtendedTilesetDescriptors(
+    tileset.tilesetNames || [],
+    tileset.rpgAgentExtendedTilesetTypes,
+  );
+  map.tilesetFlags = Array.isArray(tileset.flags) ? tileset.flags.map((flag) => Number(flag) || 0) : [];
   const rendered = renderMapToPng(map, bitmaps, scale as number, tileSize);
 
   const outDir = path.resolve(
@@ -204,11 +217,13 @@ function renderMapToPng(
       for (let x = 0; x < width; x += 1) {
         const tileId = map.data[z * layerSize + y * width + x];
         if (!tileId || tileId <= 0) continue;
-        if (tileId >= 2048) drawAutotile(tileId, x * tileSize, y * tileSize, bitmaps, blit, tileSize);
+        if (tileId >= 8192) drawExtendedTile(tileId, x * tileSize, y * tileSize, bitmaps, map.extendedTilesetSheets || [], blit, tileSize);
+        else if (tileId >= 2048) drawAutotile(tileId, x * tileSize, y * tileSize, bitmaps, blit, tileSize);
         else drawNormalTile(tileId, x * tileSize, y * tileSize, bitmaps, blit, tileSize);
         drawnTiles += 1;
       }
     }
+    if (z === 1) drawTableEdges(map, bitmaps, blit, tileSize);
   }
 
   const scaled = scaleImage(canvas, outputWidth, outputHeight, scale);
@@ -274,11 +289,13 @@ function renderMapToFittedRgba(
       for (let x = 0; x < map.width; x += 1) {
         const tileId = map.data[z * layerSize + y * map.width + x];
         if (!tileId || tileId <= 0) continue;
-        if (tileId >= 2048) drawAutotile(tileId, x * tileSize, y * tileSize, bitmaps, blit, tileSize);
+        if (tileId >= 8192) drawExtendedTile(tileId, x * tileSize, y * tileSize, bitmaps, map.extendedTilesetSheets || [], blit, tileSize);
+        else if (tileId >= 2048) drawAutotile(tileId, x * tileSize, y * tileSize, bitmaps, blit, tileSize);
         else drawNormalTile(tileId, x * tileSize, y * tileSize, bitmaps, blit, tileSize);
         drawnTiles += 1;
       }
     }
+    if (z === 1) drawTableEdges(map, bitmaps, blit, tileSize);
   }
   return { ...viewport, rgba: canvas, drawnTiles };
 }
@@ -421,6 +438,134 @@ function drawAutotile(tileId: number, dx: number, dy: number, bitmaps: (DecodedP
   }
 }
 
+function drawExtendedTile(
+  tileId: number,
+  dx: number,
+  dy: number,
+  bitmaps: (DecodedPng | null)[],
+  descriptors: readonly ExtendedTilesetSheetDescriptor[],
+  blit: (src: DecodedPng | null, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number) => void,
+  tileSize: number,
+): void {
+  const descriptor = findExtendedTilesetDescriptor(descriptors, tileId);
+  if (!descriptor) return;
+  const localId = tileId - descriptor.firstTileId;
+  const src = bitmaps[descriptor.slotIndex];
+  if (!src) return;
+  if (descriptor.type === 'normal') {
+    const sx = (Math.floor(localId / 128) % 2 * 8 + localId % 8) * tileSize;
+    const sy = (Math.floor((localId % 256) / 8) % 16) * tileSize;
+    blit(src, sx, sy, tileSize, tileSize, dx, dy);
+    return;
+  }
+  if (descriptor.type === 'A5') {
+    blit(src, localId % 8 * tileSize, Math.floor(localId / 8) * tileSize, tileSize, tileSize, dx, dy);
+    return;
+  }
+
+  let table = FLOOR_TABLE;
+  const kind = Math.floor(localId / 48);
+  const shape = localId % 48;
+  const tx = kind % 8;
+  const ty = Math.floor(kind / 8);
+  let bx = 0;
+  let by = 0;
+  if (descriptor.type === 'A1') {
+    if (kind === 0) { bx = 0; by = 0; }
+    else if (kind === 1) { bx = 0; by = 3; }
+    else if (kind === 2) { bx = 6; by = 0; }
+    else if (kind === 3) { bx = 6; by = 3; }
+    else {
+      bx = Math.floor(tx / 4) * 8;
+      by = ty * 6 + Math.floor(tx / 2) % 2 * 3;
+      if (kind % 2 === 1) { bx += 6; table = WATERFALL_TABLE; }
+    }
+  } else if (descriptor.type === 'A2') {
+    bx = tx * 2;
+    by = ty * 3;
+  } else if (descriptor.type === 'A3') {
+    bx = tx * 2;
+    by = ty * 2;
+    table = WALL_TABLE;
+  } else {
+    bx = tx * 2;
+    by = Math.floor(ty * 2.5 + (ty % 2 === 1 ? 0.5 : 0));
+    if (ty % 2 === 1) table = WALL_TABLE;
+  }
+  const quarters = table[shape];
+  if (!quarters) return;
+  const halfTile = tileSize / 2;
+  for (let index = 0; index < 4; index += 1) {
+    const sx = (bx * 2 + quarters[index][0]) * halfTile;
+    const sy = (by * 2 + quarters[index][1]) * halfTile;
+    blit(src, sx, sy, halfTile, halfTile, dx + index % 2 * halfTile, dy + Math.floor(index / 2) * halfTile);
+  }
+}
+
+function drawTableEdges(
+  map: MapData,
+  bitmaps: (DecodedPng | null)[],
+  blit: (src: DecodedPng | null, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number) => void,
+  tileSize: number,
+): void {
+  const flags = map.tilesetFlags || [];
+  if (!flags.length) return;
+  const layerSize = map.width * map.height;
+  for (let y = 1; y < map.height; y += 1) {
+    for (let x = 0; x < map.width; x += 1) {
+      const upperTileId = Number(map.data[layerSize + (y - 1) * map.width + x] || 0);
+      const currentTileId = Number(map.data[layerSize + y * map.width + x] || 0);
+      if (!(Number(flags[upperTileId] || 0) & 0x80) || (Number(flags[currentTileId] || 0) & 0x80)) continue;
+      drawTableEdge(upperTileId, x * tileSize, y * tileSize, bitmaps, map.extendedTilesetSheets || [], blit, tileSize);
+    }
+  }
+}
+
+function drawTableEdge(
+  tileId: number,
+  dx: number,
+  dy: number,
+  bitmaps: (DecodedPng | null)[],
+  descriptors: readonly ExtendedTilesetSheetDescriptor[],
+  blit: (src: DecodedPng | null, sx: number, sy: number, sw: number, sh: number, dx: number, dy: number) => void,
+  tileSize: number,
+): void {
+  let src: DecodedPng | null = null;
+  let localKind = 0;
+  let shape = 0;
+  const descriptor = findExtendedTilesetDescriptor(descriptors, tileId);
+  if (descriptor) {
+    if (descriptor.type !== 'A2') return;
+    const localId = tileId - descriptor.firstTileId;
+    localKind = Math.floor(localId / 48);
+    shape = localId % 48;
+    src = bitmaps[descriptor.slotIndex] || null;
+  } else {
+    if (tileId < 2816 || tileId >= 4352) return;
+    const kind = Math.floor((tileId - 2048) / 48);
+    localKind = kind - 16;
+    shape = (tileId - 2048) % 48;
+    src = bitmaps[1] || null;
+  }
+  const quarters = FLOOR_TABLE[shape];
+  if (!src || !quarters) return;
+  const half = tileSize / 2;
+  const bx = (localKind % 8) * 2;
+  const by = Math.floor(localKind / 8) * 3;
+  for (let index = 0; index < 2; index += 1) {
+    const quarter = quarters[2 + index];
+    blit(
+      src,
+      (bx * 2 + quarter[0]) * half,
+      (by * 2 + quarter[1]) * half + half / 2,
+      half,
+      half / 2,
+      dx + index * half,
+      dy,
+    );
+  }
+}
+
 function blitImage(src: DecodedPng | null, sx: number, sy: number, sw: number, sh: number, dest: Buffer, destWidth: number, destHeight: number, dx: number, dy: number): void {
   if (!src) return;
   for (let y = 0; y < sh; y += 1) {
@@ -437,10 +582,15 @@ function blitImage(src: DecodedPng | null, sx: number, sy: number, sw: number, s
       const destY = dy + y;
       if (destX < 0 || destY < 0 || destX >= destWidth || destY >= destHeight) continue;
       const destIndex = (destY * destWidth + destX) * 4;
-      dest[destIndex] = Math.round(src.rgba[srcIndex] * alpha + dest[destIndex] * (1 - alpha));
-      dest[destIndex + 1] = Math.round(src.rgba[srcIndex + 1] * alpha + dest[destIndex + 1] * (1 - alpha));
-      dest[destIndex + 2] = Math.round(src.rgba[srcIndex + 2] * alpha + dest[destIndex + 2] * (1 - alpha));
-      dest[destIndex + 3] = 255;
+      const destinationAlpha = dest[destIndex + 3] / 255;
+      const outputAlpha = alpha + destinationAlpha * (1 - alpha);
+      for (let channel = 0; channel < 3; channel += 1) {
+        dest[destIndex + channel] = outputAlpha <= 0 ? 0 : Math.round((
+          src.rgba[srcIndex + channel] * alpha
+          + dest[destIndex + channel] * destinationAlpha * (1 - alpha)
+        ) / outputAlpha);
+      }
+      dest[destIndex + 3] = Math.round(outputAlpha * 255);
     }
   }
 }

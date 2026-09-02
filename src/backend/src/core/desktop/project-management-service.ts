@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -9,6 +10,12 @@ import type {
   ProjectManagedDatabaseResizeResult,
   ProjectManagedFieldDiff,
 } from '../../../../contract/types.ts';
+import {
+  EXTENDED_TILESET_FIRST_TILE_ID,
+  buildExtendedTilesetDescriptors,
+  normalizeExtendedTilesetTypes,
+  validateExtendedTilesetImageDimensions,
+} from '../../../../contract/extended-tileset.ts';
 import {
   createDefaultRmmvDatabaseEntry,
   getRmmvDatabaseSchema,
@@ -142,9 +149,13 @@ export function updateProjectManagedEntry(
   } else {
     if (!request.value || typeof request.value !== 'object' || Array.isArray(request.value)) throw new Error(projectManagedEntryInvalid());
     const schema = schemaForManagedEntry(request);
-    const engine = inspectRmmvProject(project).engine;
+    const manifest = inspectRmmvProject(project);
+    const engine = manifest.engine;
     const next = mergeRecord(isRecord(current.value) ? current.value : {}, request.value as Record<string, unknown>);
     if (schema.isArrayTable && Number(next.id) !== current.id) throw new Error(projectManagedEntryIdImmutable());
+    if (schema.group === 'Tilesets') {
+      normalizeExtendedTilesetTransition(workflowRoot, project, current.id, current.value, next, manifest.tileSize);
+    }
     if (!schema.isArrayTable) {
       assertDocumentMutationAllowed(workflowRoot, project, schema, current.value, next);
     }
@@ -160,6 +171,134 @@ export function updateProjectManagedEntry(
   }
   writeStagedProjectJson(workflowRoot, project, current.relativePath, data);
   return getProjectManagedEntry(workflowRoot, project, request);
+}
+
+function normalizeExtendedTilesetTransition(
+  workflowRoot: string,
+  project: string,
+  tilesetId: number,
+  currentValue: unknown,
+  next: Record<string, unknown>,
+  tileSize: number,
+): void {
+  const current = isRecord(currentValue) ? currentValue : {};
+  const currentNames = Array.isArray(current.tilesetNames) ? current.tilesetNames.map(String) : [];
+  const nextNames = Array.isArray(next.tilesetNames) ? next.tilesetNames.map(String) : [];
+  const currentTypes = normalizeExtendedTilesetTypes(currentNames, current.rpgAgentExtendedTilesetTypes);
+  const nextTypes = normalizeExtendedTilesetTypes(nextNames, next.rpgAgentExtendedTilesetTypes);
+  const sharedCount = Math.min(currentTypes.length, nextTypes.length);
+  for (let index = 0; index < sharedCount; index += 1) {
+    if (currentTypes[index] !== nextTypes[index]) {
+      throw new Error(`Extended tileset sheet ${index + 1} type is immutable; remove the last unused sheet and add it again.`);
+    }
+  }
+  if (nextTypes.length < currentTypes.length - 1) {
+    throw new Error('Only the last extended tileset sheet can be removed, one sheet at a time.');
+  }
+
+  const nextDescriptors = buildExtendedTilesetDescriptors(nextNames, nextTypes);
+  validateExtendedTilesetResources(workflowRoot, project, nextDescriptors, tileSize);
+  const nextEnd = nextDescriptors.length
+    ? nextDescriptors[nextDescriptors.length - 1].firstTileId + nextDescriptors[nextDescriptors.length - 1].capacity
+    : EXTENDED_TILESET_FIRST_TILE_ID;
+  const currentDescriptors = buildExtendedTilesetDescriptors(currentNames, currentTypes);
+  const currentEnd = currentDescriptors.length
+    ? currentDescriptors[currentDescriptors.length - 1].firstTileId + currentDescriptors[currentDescriptors.length - 1].capacity
+    : EXTENDED_TILESET_FIRST_TILE_ID;
+  const migrationNeedsValidation = currentTypes.length > 0 && !Array.isArray(current.rpgAgentExtendedTilesetTypes);
+  const removesSheet = nextTypes.length < currentTypes.length;
+  if (migrationNeedsValidation || removesSheet) {
+    const minimumTileId = removesSheet ? nextEnd : currentEnd;
+    const maps = findTilesetReferencesAtOrAbove(workflowRoot, project, tilesetId, minimumTileId);
+    if (maps.length) {
+      const action = removesSheet ? 'remove the last extended tileset sheet' : 'migrate legacy extended tileset data';
+      throw new Error(`Cannot ${action}; out-of-range tile ids are used by: ${maps.join(', ')}.`);
+    }
+  }
+
+  next.tilesetNames = nextNames;
+  next.rpgAgentExtendedTilesetTypes = nextTypes;
+  const flags = Array.isArray(next.flags) ? next.flags.map((value) => Number(value) || 0) : [];
+  const requiredLength = Math.max(EXTENDED_TILESET_FIRST_TILE_ID, nextEnd);
+  if (flags.length < requiredLength) {
+    const previousLength = flags.length;
+    flags.length = requiredLength;
+    flags.fill(0, previousLength);
+  }
+  if (removesSheet && flags.length > requiredLength) flags.length = requiredLength;
+  next.flags = flags;
+}
+
+export function validateExtendedTilesetResources(
+  workflowRoot: string,
+  project: string,
+  descriptors: ReturnType<typeof buildExtendedTilesetDescriptors>,
+  tileSize: number,
+): void {
+  const layout = resolveRmmvLayout(project);
+  for (const descriptor of descriptors) {
+    if (!descriptor.imageName) continue;
+    const portableName = descriptor.imageName.replace(/\\/g, '/');
+    const nameParts = portableName.split('/');
+    if (path.posix.isAbsolute(portableName)
+      || path.win32.isAbsolute(descriptor.imageName)
+      || nameParts.some((part) => !part || part === '.' || part === '..' || /[\u0000-\u001f]/.test(part))) {
+      throw new Error(`Extended tileset sheet ${descriptor.label} has an unsafe image name.`);
+    }
+    const relativePath = [layout.resourceRootRelative, 'img', 'tilesets', ...nameParts.slice(0, -1), `${nameParts.at(-1)}.png`]
+      .filter(Boolean)
+      .join('/');
+    const file = getProjectFileForRead(workflowRoot, project, relativePath)
+      || path.join(layout.resourceRoot, 'img', 'tilesets', ...nameParts.slice(0, -1), `${nameParts.at(-1)}.png`);
+    if (!exists(file)) {
+      throw new Error(`Extended tileset sheet ${descriptor.label} image is missing: ${descriptor.imageName}.png.`);
+    }
+    const { width, height } = readPngDimensions(file, descriptor.label);
+    validateExtendedTilesetImageDimensions(descriptor.type, width, height, tileSize);
+  }
+}
+
+function readPngDimensions(file: string, label: string): { width: number; height: number } {
+  const header = fs.readFileSync(file).subarray(0, 24);
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  if (header.length < 24 || !header.subarray(0, 8).equals(signature) || header.toString('ascii', 12, 16) !== 'IHDR') {
+    throw new Error(`Extended tileset sheet ${label} must use a valid PNG image.`);
+  }
+  return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) };
+}
+
+function findTilesetReferencesAtOrAbove(
+  workflowRoot: string,
+  project: string,
+  tilesetId: number,
+  minimumTileId: number,
+): string[] {
+  const layout = resolveRmmvLayout(project);
+  const infosFile = getProjectFileForRead(workflowRoot, project, dataRelativePath(layout, 'MapInfos.json'));
+  const infos = infosFile && exists(infosFile) ? readJson(infosFile) : [];
+  if (!Array.isArray(infos)) return [];
+  const referenced: string[] = [];
+  for (const info of infos) {
+    if (!isRecord(info)) continue;
+    const mapId = Number(info.id);
+    if (!Number.isInteger(mapId) || mapId <= 0) continue;
+    const fileName = `Map${String(mapId).padStart(3, '0')}.json`;
+    const mapFile = getProjectFileForRead(workflowRoot, project, dataRelativePath(layout, fileName));
+    if (!mapFile || !exists(mapFile)) continue;
+    const map = readJson(mapFile);
+    if (!isRecord(map) || Number(map.tilesetId) !== tilesetId) continue;
+    const dataUsesRange = Array.isArray(map.data)
+      && map.data.some((tileId) => Number.isSafeInteger(tileId) && Number(tileId) >= minimumTileId);
+    const eventUsesRange = Array.isArray(map.events) && map.events.some((event) => {
+      if (!isRecord(event) || !Array.isArray(event.pages)) return false;
+      return event.pages.some((page) => isRecord(page)
+        && isRecord(page.image)
+        && Number.isSafeInteger(page.image.tileId)
+        && Number(page.image.tileId) >= minimumTileId);
+    });
+    if (dataUsesRange || eventUsesRange) referenced.push(`Map${String(mapId).padStart(3, '0')} ${String(info.name || '')}`.trim());
+  }
+  return referenced;
 }
 
 export function createProjectManagedEntry(

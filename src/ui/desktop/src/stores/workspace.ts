@@ -11,7 +11,7 @@ import type {
   WorkspaceLayoutState,
   WorkspaceSettings,
 } from '@contract/types'
-import { workspace as workspaceApi } from '../api/client'
+import { plugins as pluginsApi, workspace as workspaceApi } from '../api/client'
 import {
   DEFAULT_MAP_OVERVIEW_LAYOUT_ID,
   isMapOverviewLayoutId,
@@ -201,8 +201,13 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     return settings.value.extendedTilesetProjects?.[projectPath] === true
   }
 
-  function setExtendedTilesets(projectPath: string, enabled: boolean): Promise<void> {
-    return patch({ extendedTilesetProjects: { [projectPath]: enabled } })
+  async function setExtendedTilesets(
+    projectPath: string,
+    enabled: boolean,
+    options: { backupAndReplaceModified?: boolean } = {},
+  ): Promise<void> {
+    await pluginsApi.setManagedUnlimitedTilesetsEnabled(enabled, options, projectPath)
+    await patch({ extendedTilesetProjects: { [projectPath]: enabled } })
   }
 
   function patchMapOverviewPositions(projectPath: string, positions: Record<string, { x: number; y: number }>): void {

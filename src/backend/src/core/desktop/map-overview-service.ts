@@ -23,6 +23,7 @@ import {
   staticUldsCoordinate,
   staticUldsNumber,
 } from '../../../../contract/ulds.ts';
+import { buildExtendedTilesetDescriptors } from '../../../../contract/extended-tileset.ts';
 import { readJson, writeJsonAtomic } from '../rmmv/json.ts';
 import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import { getConfiguredDatabasePath } from '../db/pool.ts';
@@ -69,6 +70,8 @@ interface MapDocument {
 
 interface TilesetDocument {
   tilesetNames?: unknown;
+  flags?: unknown;
+  rpgAgentExtendedTilesetTypes?: unknown;
 }
 
 interface OverviewBuildContext {
@@ -714,6 +717,11 @@ function renderThumbnail(
     height,
     tilesetId: integer(map.tilesetId, 0),
     data: map.data.map((value) => integer(value, 0)),
+    extendedTilesetSheets: buildExtendedTilesetDescriptors(
+      array(tileset.tilesetNames).map(String),
+      tileset.rpgAgentExtendedTilesetTypes,
+    ),
+    tilesetFlags: array(tileset.flags).map((value) => integer(value, 0)),
   };
   const outputWidth = width * (MAP_OVERVIEW_TILE_PX / THUMBNAIL_SCALE_DIVISOR);
   const outputHeight = height * (MAP_OVERVIEW_TILE_PX / THUMBNAIL_SCALE_DIVISOR);

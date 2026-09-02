@@ -29,6 +29,14 @@ import {
   extractDefaultPluginHeaderBody,
   parseDefaultPluginHeaderMetadata,
 } from './plugin-header-metadata.ts';
+import {
+  buildUnlimitedTilesetsRuntimePlugin,
+  UNLIMITED_TILESETS_PLUGIN_NAME,
+} from './unlimited-tileset-runtime-plugin.ts';
+import {
+  buildUnlimitedTileLayersRuntimePlugin,
+  UNLIMITED_TILE_LAYERS_PLUGIN_NAME,
+} from './unlimited-tile-layers-runtime-plugin.ts';
 
 interface PluginConfigEntry {
   name: string;
@@ -42,6 +50,288 @@ interface ParsedPlugins {
   exists: boolean;
   entries: PluginConfigEntry[];
   parseError?: string;
+}
+
+export interface ManagedUnlimitedTilesetsResult {
+  enabled: boolean;
+  engine: 'rpg-maker-mv' | 'rpg-maker-mz';
+  pluginName: typeof UNLIMITED_TILESETS_PLUGIN_NAME;
+  pluginRelativePath: string;
+  backupRelativePath: string | null;
+  staging: unknown;
+}
+
+export function setManagedUnlimitedTilesetsEnabled(
+  workflowRoot: string,
+  project: string,
+  enabled: boolean,
+  options: { backupAndReplaceModified?: boolean } = {},
+): ManagedUnlimitedTilesetsResult {
+  const manifest = inspectRmmvProject(project);
+  if (manifest.engine !== 'rpg-maker-mv' && manifest.engine !== 'rpg-maker-mz') {
+    throw new Error(`[UNLIMITED_TILESETS_ENGINE_UNSUPPORTED] ${String(manifest.engine)}`);
+  }
+  if (enabled && !manifest.engineVersionSupported) {
+    throw new Error(`[UNLIMITED_TILESETS_ENGINE_VERSION_UNSUPPORTED] ${manifest.engineVersion || 'unknown'}`);
+  }
+  if (enabled && !manifest.runnableStructure) {
+    throw new Error(`[UNLIMITED_TILESETS_RUNTIME_INCOMPLETE] ${manifest.missingRequired.join(', ')}`);
+  }
+  if (enabled) {
+    const issue = unlimitedTilesetsRuntimeInterfaceIssue(manifest);
+    if (issue) throw new Error(`[UNLIMITED_TILESETS_RUNTIME_INTERFACE_UNSUPPORTED] ${issue}`);
+  }
+  const parsed = requireReadablePlugins(workflowRoot, project);
+  const matches = parsed.entries
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => entry.name === UNLIMITED_TILESETS_PLUGIN_NAME);
+  if (matches.length > 1) {
+    throw new Error(`[UNLIMITED_TILESETS_PLUGIN_DUPLICATE] ${UNLIMITED_TILESETS_PLUGIN_NAME}`);
+  }
+
+  const pluginRelativePath = `${pluginDirRelativePath(project)}/${UNLIMITED_TILESETS_PLUGIN_NAME}.js`;
+  const currentPath = getProjectFileForRead(workflowRoot, project, pluginRelativePath);
+  const expectedContent = Buffer.from(buildUnlimitedTilesetsRuntimePlugin(manifest.engine), 'utf8');
+  const currentContent = currentPath && fs.existsSync(currentPath) ? fs.readFileSync(currentPath) : null;
+  const isManagedContent = currentContent ? currentContent.equals(expectedContent) : false;
+  let backupRelativePath: string | null = null;
+
+  if (enabled) {
+    if (currentContent && !isManagedContent && !options.backupAndReplaceModified) {
+      throw new Error(`[MANAGED_PLUGIN_CONFLICT] ${pluginRelativePath}`);
+    }
+    const nextEntries = clonePluginConfigEntries(parsed.entries);
+    if (matches.length) {
+      nextEntries[matches[0]!.index] = {
+        name: UNLIMITED_TILESETS_PLUGIN_NAME,
+        status: true,
+        description: 'RPG Agent Unlimited Tilesets',
+        parameters: {},
+      };
+    } else {
+      nextEntries.push({
+        name: UNLIMITED_TILESETS_PLUGIN_NAME,
+        status: true,
+        description: 'RPG Agent Unlimited Tilesets',
+        parameters: {},
+      });
+    }
+    const mutations: StagedProjectFileMutation[] = [];
+    if (currentContent && !isManagedContent) {
+      backupRelativePath = `${pluginDirRelativePath(project)}/${UNLIMITED_TILESETS_PLUGIN_NAME}.rpg-agent-backup.js`;
+      if (getProjectFileForRead(workflowRoot, project, backupRelativePath)) {
+        throw new Error(`[MANAGED_PLUGIN_BACKUP_EXISTS] ${backupRelativePath}`);
+      }
+      mutations.push({ relativePath: backupRelativePath, content: currentContent });
+    }
+    mutations.push(
+      { relativePath: pluginRelativePath, content: expectedContent },
+      { relativePath: parsed.relativePath, content: Buffer.from(serializePlugins(nextEntries), 'utf8') },
+    );
+    stageProjectFilesAtomically(workflowRoot, project, mutations);
+  } else {
+    assertUnlimitedTilesetsCanBeDisabled(workflowRoot, project);
+    if (currentContent && !isManagedContent) {
+      throw new Error(`[MANAGED_PLUGIN_CONFLICT] ${pluginRelativePath}`);
+    }
+    const nextEntries = parsed.entries.filter((entry) => entry.name !== UNLIMITED_TILESETS_PLUGIN_NAME);
+    const mutations: StagedProjectFileMutation[] = [
+      { relativePath: parsed.relativePath, content: Buffer.from(serializePlugins(nextEntries), 'utf8') },
+    ];
+    if (currentContent) mutations.unshift({ relativePath: pluginRelativePath, delete: true });
+    stageProjectFilesAtomically(workflowRoot, project, mutations);
+  }
+
+  return {
+    enabled,
+    engine: manifest.engine,
+    pluginName: UNLIMITED_TILESETS_PLUGIN_NAME,
+    pluginRelativePath,
+    backupRelativePath,
+    staging: getProjectStagingStatus(workflowRoot, project),
+  };
+}
+
+export function inspectManagedUnlimitedTilesets(
+  workflowRoot: string,
+  project: string,
+): Omit<ManagedUnlimitedTilesetsResult, 'backupRelativePath' | 'staging'> & { valid: boolean; conflict: boolean } {
+  const manifest = inspectRmmvProject(project);
+  const parsed = readPlugins(workflowRoot, project);
+  const pluginRelativePath = `${pluginDirRelativePath(project)}/${UNLIMITED_TILESETS_PLUGIN_NAME}.js`;
+  const filePath = getProjectFileForRead(workflowRoot, project, pluginRelativePath);
+  const expected = Buffer.from(buildUnlimitedTilesetsRuntimePlugin(manifest.engine), 'utf8');
+  const fileValid = Boolean(filePath && fs.existsSync(filePath) && fs.readFileSync(filePath).equals(expected));
+  const entries = parsed.entries.filter((entry) => entry.name === UNLIMITED_TILESETS_PLUGIN_NAME);
+  const enabled = entries.length === 1 && entries[0]!.status;
+  const runtimeSupported = manifest.engineVersionSupported
+    && manifest.runnableStructure
+    && !unlimitedTilesetsRuntimeInterfaceIssue(manifest);
+  return {
+    enabled,
+    engine: manifest.engine,
+    pluginName: UNLIMITED_TILESETS_PLUGIN_NAME,
+    pluginRelativePath,
+    valid: runtimeSupported && !parsed.parseError && enabled && fileValid,
+    conflict: Boolean(filePath && !fileValid) || entries.length > 1,
+  };
+}
+
+export interface ManagedUnlimitedTileLayersResult {
+  enabled: boolean;
+  engine: 'rpg-maker-mv' | 'rpg-maker-mz';
+  pluginName: typeof UNLIMITED_TILE_LAYERS_PLUGIN_NAME;
+  pluginRelativePath: string;
+  backupRelativePath: string | null;
+  staging: unknown;
+}
+
+/**
+ * Install (or verify) the managed runtime plugin that renders extra tile
+ * layers stored in map notes. Idempotent: an already-managed install is a
+ * no-op success. A foreign file at the plugin path fails fast unless the
+ * caller opts into backup-and-replace.
+ */
+export function ensureManagedUnlimitedTileLayers(
+  workflowRoot: string,
+  project: string,
+  options: { backupAndReplaceModified?: boolean } = {},
+): ManagedUnlimitedTileLayersResult {
+  const manifest = inspectRmmvProject(project);
+  if (manifest.engine !== 'rpg-maker-mv' && manifest.engine !== 'rpg-maker-mz') {
+    throw new Error(`[UNLIMITED_TILE_LAYERS_ENGINE_UNSUPPORTED] ${String(manifest.engine)}`);
+  }
+  if (!manifest.engineVersionSupported) {
+    throw new Error(`[UNLIMITED_TILE_LAYERS_ENGINE_VERSION_UNSUPPORTED] ${manifest.engineVersion || 'unknown'}`);
+  }
+  if (!manifest.runnableStructure) {
+    throw new Error(`[UNLIMITED_TILE_LAYERS_RUNTIME_INCOMPLETE] ${manifest.missingRequired.join(', ')}`);
+  }
+  const parsed = requireReadablePlugins(workflowRoot, project);
+  const matches = parsed.entries
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => entry.name === UNLIMITED_TILE_LAYERS_PLUGIN_NAME);
+  if (matches.length > 1) {
+    throw new Error(`[UNLIMITED_TILE_LAYERS_PLUGIN_DUPLICATE] ${UNLIMITED_TILE_LAYERS_PLUGIN_NAME}`);
+  }
+
+  const pluginRelativePath = `${pluginDirRelativePath(project)}/${UNLIMITED_TILE_LAYERS_PLUGIN_NAME}.js`;
+  const currentPath = getProjectFileForRead(workflowRoot, project, pluginRelativePath);
+  const expectedContent = Buffer.from(buildUnlimitedTileLayersRuntimePlugin(manifest.engine), 'utf8');
+  const currentContent = currentPath && fs.existsSync(currentPath) ? fs.readFileSync(currentPath) : null;
+  const isManagedContent = currentContent ? currentContent.equals(expectedContent) : false;
+  let backupRelativePath: string | null = null;
+
+  if (matches.length && matches[0]!.entry.status && isManagedContent) {
+    return {
+      enabled: true,
+      engine: manifest.engine,
+      pluginName: UNLIMITED_TILE_LAYERS_PLUGIN_NAME,
+      pluginRelativePath,
+      backupRelativePath: null,
+      staging: getProjectStagingStatus(workflowRoot, project),
+    };
+  }
+  if (currentContent && !isManagedContent && !options.backupAndReplaceModified) {
+    throw new Error(`[MANAGED_PLUGIN_CONFLICT] ${pluginRelativePath}`);
+  }
+  const nextEntries = clonePluginConfigEntries(parsed.entries);
+  const entry: PluginConfigEntry = {
+    name: UNLIMITED_TILE_LAYERS_PLUGIN_NAME,
+    status: true,
+    description: 'RPG Agent Unlimited Tile Layers',
+    parameters: {},
+  };
+  if (matches.length) nextEntries[matches[0]!.index] = entry;
+  else nextEntries.push(entry);
+  const mutations: StagedProjectFileMutation[] = [];
+  if (currentContent && !isManagedContent) {
+    backupRelativePath = `${pluginDirRelativePath(project)}/${UNLIMITED_TILE_LAYERS_PLUGIN_NAME}.rpg-agent-backup.js`;
+    if (getProjectFileForRead(workflowRoot, project, backupRelativePath)) {
+      throw new Error(`[MANAGED_PLUGIN_BACKUP_EXISTS] ${backupRelativePath}`);
+    }
+    mutations.push({ relativePath: backupRelativePath, content: currentContent });
+  }
+  mutations.push(
+    { relativePath: pluginRelativePath, content: expectedContent },
+    { relativePath: parsed.relativePath, content: Buffer.from(serializePlugins(nextEntries), 'utf8') },
+  );
+  stageProjectFilesAtomically(workflowRoot, project, mutations);
+
+  return {
+    enabled: true,
+    engine: manifest.engine,
+    pluginName: UNLIMITED_TILE_LAYERS_PLUGIN_NAME,
+    pluginRelativePath,
+    backupRelativePath,
+    staging: getProjectStagingStatus(workflowRoot, project),
+  };
+}
+
+
+function unlimitedTilesetsRuntimeInterfaceIssue(manifest: ReturnType<typeof inspectRmmvProject>): string | null {
+  const coreFile = path.join(
+    manifest.resourceRoot,
+    'js',
+    manifest.engine === 'rpg-maker-mz' ? 'rmmz_core.js' : 'rpg_core.js',
+  );
+  const spritesFile = path.join(
+    manifest.resourceRoot,
+    'js',
+    manifest.engine === 'rpg-maker-mz' ? 'rmmz_sprites.js' : 'rpg_sprites.js',
+  );
+  if (!fs.existsSync(coreFile)) return path.basename(coreFile);
+  if (!fs.existsSync(spritesFile)) return path.basename(spritesFile);
+  const core = fs.readFileSync(coreFile, 'utf8');
+  const sprites = fs.readFileSync(spritesFile, 'utf8');
+  const requiredCoreMembers = manifest.engine === 'rpg-maker-mz'
+    ? ['Tilemap.prototype._addTile', 'Tilemap.prototype._addTableEdge']
+    : ['Tilemap.prototype._drawTile', 'Tilemap.prototype._drawTableEdge'];
+  const missing = requiredCoreMembers.filter((member) => !core.includes(member));
+  if (!core.includes('Tilemap.FLOOR_AUTOTILE_TABLE')) missing.push('Tilemap.FLOOR_AUTOTILE_TABLE');
+  if (!core.includes('Tilemap.WALL_AUTOTILE_TABLE')) missing.push('Tilemap.WALL_AUTOTILE_TABLE');
+  if (!core.includes('Tilemap.WATERFALL_AUTOTILE_TABLE')) missing.push('Tilemap.WATERFALL_AUTOTILE_TABLE');
+  if (!sprites.includes('Sprite_Character.prototype.updateTileFrame')) missing.push('Sprite_Character.prototype.updateTileFrame');
+  return missing.length ? missing.join(', ') : null;
+}
+
+function assertUnlimitedTilesetsCanBeDisabled(workflowRoot: string, project: string): void {
+  const dataDir = resolveDataDir(project);
+  const tilesetsRelative = `${path.relative(project, dataDir).replace(/\\/g, '/')}/Tilesets.json`;
+  const tilesetsPath = getProjectFileForRead(workflowRoot, project, tilesetsRelative) || path.join(dataDir, 'Tilesets.json');
+  const tilesets = JSON.parse(fs.readFileSync(tilesetsPath, 'utf8')) as Array<Record<string, unknown> | null>;
+  const populated = tilesets.filter(Boolean).filter((tileset) => (
+    Array.isArray(tileset!.tilesetNames) && tileset!.tilesetNames.slice(9).some((name) => String(name || '').trim())
+  ));
+  if (populated.length) {
+    const ids = populated.map((tileset) => Number(tileset!.id || 0)).join(', ');
+    throw new Error(`[UNLIMITED_TILESETS_DATA_PRESENT] Tilesets: ${ids}`);
+  }
+
+  const infosPath = getProjectFileForRead(workflowRoot, project, `${path.relative(project, dataDir).replace(/\\/g, '/')}/MapInfos.json`)
+    || path.join(dataDir, 'MapInfos.json');
+  const infos = JSON.parse(fs.readFileSync(infosPath, 'utf8')) as Array<Record<string, unknown> | null>;
+  const references: number[] = [];
+  for (const info of infos.filter(Boolean)) {
+    const mapId = Number(info!.id || 0);
+    const relative = `${path.relative(project, dataDir).replace(/\\/g, '/')}/Map${String(mapId).padStart(3, '0')}.json`;
+    const mapPath = getProjectFileForRead(workflowRoot, project, relative) || path.join(dataDir, path.basename(relative));
+    if (!fs.existsSync(mapPath)) continue;
+    const map = JSON.parse(fs.readFileSync(mapPath, 'utf8')) as Record<string, unknown>;
+    const mapTiles = Array.isArray(map.data) ? map.data : [];
+    const eventTiles = Array.isArray(map.events)
+      ? map.events.flatMap((event) => {
+        if (!event || typeof event !== 'object') return [];
+        const pages = Array.isArray((event as Record<string, unknown>).pages)
+          ? (event as Record<string, unknown>).pages as Array<Record<string, unknown>> : [];
+        return pages.map((page) => Number((page.image as Record<string, unknown> | undefined)?.tileId || 0));
+      })
+      : [];
+    if ([...mapTiles, ...eventTiles].some((tileId) => Number(tileId) >= 8192)) references.push(mapId);
+  }
+  if (references.length) {
+    throw new Error(`[UNLIMITED_TILESETS_REFERENCES_PRESENT] Maps: ${references.map((id) => `MAP${String(id).padStart(3, '0')}`).join(', ')}`);
+  }
 }
 
 export function readPluginConfiguration(workflowRoot: string, project: string): PluginConfigurationResult {

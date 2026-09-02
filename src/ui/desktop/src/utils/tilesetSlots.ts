@@ -4,10 +4,6 @@
 
 export const MV_TILESET_SLOT_COUNT = 9;
 
-// Product decision: the extended-tileset entry points stay hidden for release.
-// Existing extended slot data still renders; flip this flag to bring the UI back.
-export const EXTENDED_TILESET_UI_VISIBLE = false;
-
 const STOCK_SLOT_LABELS = ['A1', 'A2', 'A3', 'A4', 'A5', 'B', 'C', 'D', 'E'] as const;
 const FIRST_EXTENDED_SLOT_INDEX = STOCK_SLOT_LABELS.length;
 const LETTERED_EXTENDED_SLOT_COUNT = 21; // F..Z

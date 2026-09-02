@@ -11,7 +11,9 @@ export const MV_TILESET_FLAG_BITS = {
   damage: 0x100,
 } as const;
 
-export type MvTilesetSheetKey = 'A1' | 'A2' | 'A3' | 'A4' | 'A5' | 'B' | 'C' | 'D' | 'E';
+import type { ExtendedTilesetSheetDescriptor, ExtendedTilesetSheetType } from '@contract/types';
+
+export type MvTilesetSheetKey = string;
 export type MvTilesetPassage = 'passable' | 'blocked' | 'star';
 export type MvTilesetAggregate<T> = T | 'mixed';
 export type MvTilesetDirectionBit =
@@ -34,6 +36,7 @@ export interface MvTilesetSheet {
   autotile: boolean;
   allowsStar: boolean;
   directionalEditable: boolean;
+  layoutType: ExtendedTilesetSheetType;
 }
 
 export interface MvTilesetFlagCell {
@@ -65,15 +68,15 @@ export type MvTilesetFlagEdit =
   | { kind: 'terrain'; value: number };
 
 export const MV_TILESET_SHEETS: readonly MvTilesetSheet[] = [
-  { key: 'A1', imageIndex: 0, columns: 8, rows: 2, baseTileId: 2048, autotile: true, allowsStar: false, directionalEditable: false },
-  { key: 'A2', imageIndex: 1, columns: 8, rows: 4, baseTileId: 2816, autotile: true, allowsStar: false, directionalEditable: false },
-  { key: 'A3', imageIndex: 2, columns: 8, rows: 4, baseTileId: 4352, autotile: true, allowsStar: false, directionalEditable: false },
-  { key: 'A4', imageIndex: 3, columns: 8, rows: 6, baseTileId: 5888, autotile: true, allowsStar: false, directionalEditable: false },
-  { key: 'A5', imageIndex: 4, columns: 8, rows: 16, baseTileId: 1536, autotile: false, allowsStar: false, directionalEditable: true },
-  { key: 'B', imageIndex: 5, columns: 16, rows: 16, baseTileId: 0, autotile: false, allowsStar: true, directionalEditable: true },
-  { key: 'C', imageIndex: 6, columns: 16, rows: 16, baseTileId: 256, autotile: false, allowsStar: true, directionalEditable: true },
-  { key: 'D', imageIndex: 7, columns: 16, rows: 16, baseTileId: 512, autotile: false, allowsStar: true, directionalEditable: true },
-  { key: 'E', imageIndex: 8, columns: 16, rows: 16, baseTileId: 768, autotile: false, allowsStar: true, directionalEditable: true },
+  { key: 'A1', imageIndex: 0, columns: 8, rows: 2, baseTileId: 2048, autotile: true, allowsStar: false, directionalEditable: false, layoutType: 'A1' },
+  { key: 'A2', imageIndex: 1, columns: 8, rows: 4, baseTileId: 2816, autotile: true, allowsStar: false, directionalEditable: false, layoutType: 'A2' },
+  { key: 'A3', imageIndex: 2, columns: 8, rows: 4, baseTileId: 4352, autotile: true, allowsStar: false, directionalEditable: false, layoutType: 'A3' },
+  { key: 'A4', imageIndex: 3, columns: 8, rows: 6, baseTileId: 5888, autotile: true, allowsStar: false, directionalEditable: false, layoutType: 'A4' },
+  { key: 'A5', imageIndex: 4, columns: 8, rows: 16, baseTileId: 1536, autotile: false, allowsStar: false, directionalEditable: true, layoutType: 'A5' },
+  { key: 'B', imageIndex: 5, columns: 16, rows: 16, baseTileId: 0, autotile: false, allowsStar: true, directionalEditable: true, layoutType: 'normal' },
+  { key: 'C', imageIndex: 6, columns: 16, rows: 16, baseTileId: 256, autotile: false, allowsStar: true, directionalEditable: true, layoutType: 'normal' },
+  { key: 'D', imageIndex: 7, columns: 16, rows: 16, baseTileId: 512, autotile: false, allowsStar: true, directionalEditable: true, layoutType: 'normal' },
+  { key: 'E', imageIndex: 8, columns: 16, rows: 16, baseTileId: 768, autotile: false, allowsStar: true, directionalEditable: true, layoutType: 'normal' },
 ] as const;
 
 const SHEET_BY_KEY = new Map(MV_TILESET_SHEETS.map((sheet) => [sheet.key, sheet]));
@@ -98,8 +101,31 @@ export function mvTilesetSheet(key: MvTilesetSheetKey): MvTilesetSheet {
 
 export function mvTilesetFlagCell(key: MvTilesetSheetKey, row: number, column: number): MvTilesetFlagCell {
   const sheet = mvTilesetSheet(key);
+  return mvTilesetFlagCellForSheet(sheet, row, column);
+}
+
+export function extendedMvTilesetSheets(
+  descriptors: readonly ExtendedTilesetSheetDescriptor[],
+): MvTilesetSheet[] {
+  return descriptors.map((descriptor) => {
+    const dimensions = flagGridDimensions(descriptor.type);
+    return {
+      key: descriptor.label,
+      imageIndex: descriptor.slotIndex,
+      columns: dimensions.columns,
+      rows: dimensions.rows,
+      baseTileId: descriptor.firstTileId,
+      autotile: descriptor.type !== 'A5' && descriptor.type !== 'normal',
+      allowsStar: descriptor.type === 'normal',
+      directionalEditable: descriptor.type === 'A5' || descriptor.type === 'normal',
+      layoutType: descriptor.type,
+    };
+  });
+}
+
+export function mvTilesetFlagCellForSheet(sheet: MvTilesetSheet, row: number, column: number): MvTilesetFlagCell {
   if (!Number.isInteger(row) || !Number.isInteger(column) || row < 0 || column < 0 || row >= sheet.rows || column >= sheet.columns) {
-    throw new Error(`Tileset cell ${key}[${row},${column}] is outside the fixed RPG Maker MV sheet layout.`);
+    throw new Error(`Tileset cell ${sheet.key}[${row},${column}] is outside the RPG Maker sheet layout.`);
   }
 
   let representativeTileId: number;
@@ -107,7 +133,7 @@ export function mvTilesetFlagCell(key: MvTilesetSheetKey, row: number, column: n
   if (sheet.autotile) {
     representativeTileId = sheet.baseTileId + (row * sheet.columns + column) * 48;
     tileIds = Array.from({ length: 48 }, (_, index) => representativeTileId + index);
-  } else if (key === 'A5') {
+  } else if (sheet.layoutType === 'A5') {
     representativeTileId = sheet.baseTileId + row * sheet.columns + column;
     tileIds = [representativeTileId];
   } else {
@@ -121,8 +147,16 @@ export function mvTilesetFlagCell(key: MvTilesetSheetKey, row: number, column: n
     column,
     representativeTileId,
     tileIds,
-    fixedPassage: key === 'B' && row === 0 && column === 0 ? 'star' : null,
+    fixedPassage: sheet.key === 'B' && row === 0 && column === 0 ? 'star' : null,
   };
+}
+
+function flagGridDimensions(type: ExtendedTilesetSheetType): { columns: number; rows: number } {
+  if (type === 'A1') return { columns: 8, rows: 2 };
+  if (type === 'A2' || type === 'A3') return { columns: 8, rows: 4 };
+  if (type === 'A4') return { columns: 8, rows: 6 };
+  if (type === 'A5') return { columns: 8, rows: 16 };
+  return { columns: 16, rows: 16 };
 }
 
 export function nextMvTilesetPassage(

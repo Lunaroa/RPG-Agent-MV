@@ -1,9 +1,14 @@
-import type { RpgMakerEngine, TileEdit } from './types.ts';
+import type { ExtendedTilesetSheetDescriptor, ExtendedTilesetSheetType, RpgMakerEngine, TileEdit } from './types.ts';
 import {
-  autotileIdForKindAndNeighbours,
+  decodeExtendedAutotileId,
+  encodeExtendedAutotileId,
+  findExtendedTilesetDescriptor,
+  isExtendedAutotileDescriptor,
+} from './extended-tileset.ts';
+import {
+  autotileShapeForKind,
   classifyAutotileKind,
   isSupportedAutotileKind,
-  resolveAutotileLayer,
 } from './rmmv-tile-autotile.ts';
 
 export const RMMV_TILE_ID_A1 = 2048;
@@ -27,6 +32,7 @@ export interface RmmvBrushContext {
   autotileResolution?: 'full' | 'affected';
   mutate?: boolean;
   collectChanges?: boolean;
+  extendedTilesetSheets?: readonly ExtendedTilesetSheetDescriptor[];
 }
 
 export interface NormalizedRmmvTileEdit {
@@ -36,6 +42,8 @@ export interface NormalizedRmmvTileEdit {
   layer: number;
   tileId?: number;
   autotileKind?: number;
+  tilesetSlot?: number;
+  extendedTilesetType?: Extract<ExtendedTilesetSheetType, 'A1' | 'A2' | 'A3' | 'A4'>;
   preserveAutotileShape?: boolean;
   shadowBits?: number;
   regionId?: number;
@@ -72,7 +80,7 @@ export function applyRmmvMapBrushEdits(
   const touchedIndices = new Set<number>();
 
   edits.forEach((edit, index) => {
-    const next = normalizeRmmvTileEdit(edit, index, placementMap, context.tilesetMode);
+    const next = normalizeRmmvTileEdit(edit, index, placementMap, context.tilesetMode, context.extendedTilesetSheets || []);
     normalizedEdits.push(...next);
     for (const normalized of next) applyPlacementValue(placementMap, normalized, context.mutate ? touchedIndices : undefined);
   });
@@ -93,22 +101,22 @@ export function applyRmmvMapBrushEdits(
   const resolvedLayers: number[] = [];
   for (const layer of [...touchedLayers].sort((left, right) => left - right)) {
     const hasAutotile = context.autotileResolution === 'affected'
-      ? affectedAreaHasSupportedAutotile(map, layer, normalizedEdits)
-      : layerHasSupportedAutotile(map, layer);
+      ? affectedAreaHasSupportedAutotile(map, layer, normalizedEdits, context.extendedTilesetSheets || [])
+      : layerHasSupportedAutotile(map, layer, context.extendedTilesetSheets || []);
     if (!autotileByLayer.has(layer) && !hasAutotile) continue;
     const preserved = new Set(normalizedEdits
       .filter((edit) => edit.layer === layer && edit.kind === 'tile' && edit.preserveAutotileShape)
       .map((edit) => edit.y * map.width + edit.x));
     if (context.autotileResolution === 'affected') {
-      resolveAffectedAutotiles(map, layer, normalizedEdits, preserved, touchedIndices);
+      resolveAffectedAutotiles(map, layer, normalizedEdits, preserved, touchedIndices, context.extendedTilesetSheets || []);
     } else {
-      resolveWholeAutotileLayer(map, layer, preserved, touchedIndices);
+      resolveWholeAutotileLayer(map, layer, preserved, touchedIndices, context.extendedTilesetSheets || []);
     }
     resolvedLayers.push(layer);
   }
 
   if (context.engine === 'rpg-maker-mz' && normalizedEdits.some((edit) => edit.layer < RMMV_PAINT_LAYERS)) {
-    updateMZAutoshadows(map, normalizedEdits, touchedIndices);
+    updateMZAutoshadows(map, normalizedEdits, touchedIndices, context.extendedTilesetSheets || []);
   }
 
   const changes: RmmvBrushChange[] = [];
@@ -137,6 +145,7 @@ export function normalizeRmmvTileEdit(
   index: number,
   map: RmmvBrushMap,
   tilesetMode: number | null,
+  extendedTilesetSheets: readonly ExtendedTilesetSheetDescriptor[] = [],
 ): NormalizedRmmvTileEdit[] {
   if (!edit || typeof edit !== 'object') throw new Error(`edits[${index}] must be an object.`);
   assertInt(edit.x, `edits[${index}].x`, 0);
@@ -166,6 +175,28 @@ export function normalizeRmmvTileEdit(
   const autoLayer = edit.layer === 'auto';
   if (kind === 'autotile') {
     assertInt(edit.autotileKind, `edits[${index}].autotileKind`, 0);
+    if (edit.tilesetSlot != null) {
+      assertInt(edit.tilesetSlot, `edits[${index}].tilesetSlot`, 9);
+      const descriptor = extendedTilesetSheets.find((sheet) => sheet.slotIndex === edit.tilesetSlot);
+      if (!descriptor || !isExtendedAutotileDescriptor(descriptor)) {
+        throw new Error(`edits[${index}].tilesetSlot ${edit.tilesetSlot} is not a configured extended autotile sheet.`);
+      }
+      if (edit.extendedTilesetType && edit.extendedTilesetType !== descriptor.type) {
+        throw new Error(`edits[${index}] extended tileset type does not match slot ${edit.tilesetSlot}.`);
+      }
+      const tileId = encodeExtendedAutotileId(descriptor, edit.autotileKind, 0);
+      const layer = autoLayer ? automaticLayerForExtendedAutotile(descriptor.type, edit.autotileKind) : normalizePaintLayer(edit.layer, index);
+      return [{
+        kind: 'autotile',
+        x: edit.x,
+        y: edit.y,
+        layer,
+        autotileKind: edit.autotileKind,
+        tileId,
+        tilesetSlot: descriptor.slotIndex,
+        extendedTilesetType: descriptor.type,
+      }];
+    }
     const classification = classifyAutotileKind(edit.autotileKind);
     if (!classification.supported) {
       throw new Error(
@@ -176,7 +207,8 @@ export function normalizeRmmvTileEdit(
     const layer = autoLayer ? automaticLayerForAutotile(edit.autotileKind) : normalizePaintLayer(edit.layer, index);
     const result: NormalizedRmmvTileEdit[] = [{ kind: 'autotile', x: edit.x, y: edit.y, layer, autotileKind: edit.autotileKind }];
     if (autoLayer && layer === 1 && tilesetMode === 0) {
-      const baseKind = supportedAutotileKindAt(map, 0, edit.x, edit.y);
+      const baseRef = supportedAutotileRefAt(map, 0, edit.x, edit.y, extendedTilesetSheets);
+      const baseKind = baseRef?.key.startsWith('stock:') ? baseRef.resolverKind : -1;
       const baseClass = classifyAutotileKind(baseKind);
       if (baseClass.tab === 'A2' && baseClass.localKind !== null && baseClass.localKind % 8 < 4
         && (baseClass.localKind % 4 === 1 || baseClass.localKind % 4 === 3)) {
@@ -187,7 +219,9 @@ export function normalizeRmmvTileEdit(
   }
 
   assertInt(edit.tileId, `edits[${index}].tileId`, 0);
-  if (edit.tileId >= RMMV_TILE_ID_MAX) throw new Error(`edits[${index}].tileId ${edit.tileId} exceeds max ${RMMV_TILE_ID_MAX}.`);
+  if (edit.tileId >= RMMV_TILE_ID_MAX && !findExtendedTilesetDescriptor(extendedTilesetSheets, edit.tileId)) {
+    throw new Error(`edits[${index}].tileId ${edit.tileId} is outside the configured extended tileset ranges.`);
+  }
   if (!autoLayer) {
     const layer = normalizePaintLayer(edit.layer, index);
     return [{
@@ -195,12 +229,16 @@ export function normalizeRmmvTileEdit(
       preserveAutotileShape: edit.preserveAutotileShape === true,
     }];
   }
-  return automaticLiteralEdits(map, edit.x, edit.y, edit.tileId, edit.preserveAutotileShape === true);
+  return automaticLiteralEdits(map, edit.x, edit.y, edit.tileId, edit.preserveAutotileShape === true, extendedTilesetSheets);
 }
 
 function automaticLayerForAutotile(kind: number): number {
   const classification = classifyAutotileKind(kind);
   return classification.tab === 'A2' && classification.localKind !== null && classification.localKind % 8 >= 4 ? 1 : 0;
+}
+
+function automaticLayerForExtendedAutotile(type: ExtendedTilesetSheetType, localKind: number): number {
+  return type === 'A2' && localKind % 8 >= 4 ? 1 : 0;
 }
 
 function automaticLiteralEdits(
@@ -209,6 +247,7 @@ function automaticLiteralEdits(
   y: number,
   tileId: number,
   preserveAutotileShape: boolean,
+  extendedTilesetSheets: readonly ExtendedTilesetSheetDescriptor[],
 ): NormalizedRmmvTileEdit[] {
   if (tileId === 0) {
     return [
@@ -216,7 +255,8 @@ function automaticLiteralEdits(
       { kind: 'tile', x, y, layer: 3, tileId: 0 },
     ];
   }
-  if (tileId < RMMV_TILE_ID_UPPER_MAX) {
+  const extended = findExtendedTilesetDescriptor(extendedTilesetSheets, tileId);
+  if (tileId < RMMV_TILE_ID_UPPER_MAX || extended?.type === 'normal') {
     const first = valueAt(map, 2, x, y);
     const second = valueAt(map, 3, x, y);
     if (first === 0) return [{ kind: 'tile', x, y, layer: 2, tileId }];
@@ -226,7 +266,11 @@ function automaticLiteralEdits(
       { kind: 'tile', x, y, layer: 3, tileId },
     ];
   }
-  if (tileId >= RMMV_TILE_ID_A1) {
+  if (extended && isExtendedAutotileDescriptor(extended)) {
+    const localKind = Math.floor((tileId - extended.firstTileId) / 48);
+    return [{ kind: 'tile', x, y, layer: automaticLayerForExtendedAutotile(extended.type, localKind), tileId, preserveAutotileShape }];
+  }
+  if (tileId >= RMMV_TILE_ID_A1 && tileId < RMMV_TILE_ID_MAX) {
     const kind = Math.floor((tileId - RMMV_TILE_ID_A1) / 48);
     return [{ kind: 'tile', x, y, layer: automaticLayerForAutotile(kind), tileId, preserveAutotileShape }];
   }
@@ -235,20 +279,27 @@ function automaticLiteralEdits(
 
 function applyPlacementValue(map: RmmvBrushMap, edit: NormalizedRmmvTileEdit, touched?: Set<number>): void {
   const index = cellIndex(map, edit.layer, edit.x, edit.y);
-  if (edit.kind === 'autotile') writeValue(map, index, RMMV_TILE_ID_A1 + edit.autotileKind! * 48, touched);
+  if (edit.kind === 'autotile') {
+    if (edit.tilesetSlot != null) {
+      const base = edit.tileId;
+      if (!Number.isSafeInteger(base)) throw new Error('Extended autotile placement is missing its encoded tile id.');
+      writeValue(map, index, base!, touched);
+    } else writeValue(map, index, RMMV_TILE_ID_A1 + edit.autotileKind! * 48, touched);
+  }
   else if (edit.kind === 'shadow') writeValue(map, index, edit.shadowBits!, touched);
   else if (edit.kind === 'region') writeValue(map, index, edit.regionId!, touched);
   else writeValue(map, index, edit.tileId!, touched);
 }
 
-function resolveWholeAutotileLayer(map: RmmvBrushMap, layer: number, preserved: ReadonlySet<number>, touched: Set<number>): void {
+function resolveWholeAutotileLayer(map: RmmvBrushMap, layer: number, preserved: ReadonlySet<number>, touched: Set<number>, descriptors: readonly ExtendedTilesetSheetDescriptor[]): void {
   const layerSize = map.width * map.height;
   const base = layer * layerSize;
-  const kindGrid = new Array<number>(layerSize).fill(-1);
-  for (let cell = 0; cell < layerSize; cell += 1) kindGrid[cell] = supportedAutotileKindOf(map.data[base + cell]);
-  const resolved = resolveAutotileLayer(kindGrid, map.width, map.height);
   for (let cell = 0; cell < layerSize; cell += 1) {
-    if (kindGrid[cell] >= 0 && !preserved.has(cell)) writeValue(map, base + cell, resolved[cell], touched);
+    if (preserved.has(cell)) continue;
+    const x = cell % map.width;
+    const y = Math.floor(cell / map.width);
+    const ref = supportedAutotileRefOf(map.data[base + cell], descriptors);
+    if (ref) writeValue(map, base + cell, resolvedAutotileIdAt(map, layer, x, y, ref, descriptors), touched);
   }
 }
 
@@ -258,6 +309,7 @@ function resolveAffectedAutotiles(
   edits: readonly NormalizedRmmvTileEdit[],
   preserved: ReadonlySet<number>,
   touched: Set<number>,
+  descriptors: readonly ExtendedTilesetSheetDescriptor[],
 ): void {
   const affected = new Set<number>();
   for (const edit of edits) {
@@ -272,21 +324,13 @@ function resolveAffectedAutotiles(
     if (preserved.has(offset)) continue;
     const x = offset % map.width;
     const y = Math.floor(offset / map.width);
-    const kind = supportedAutotileKindAt(map, layer, x, y);
-    if (kind < 0) continue;
-    const same = (nx: number, ny: number): boolean => (
-      nx < 0 || ny < 0 || nx >= map.width || ny >= map.height
-        ? true
-        : supportedAutotileKindAt(map, layer, nx, ny) === kind
-    );
-    writeValue(map, cellIndex(map, layer, x, y), autotileIdForKindAndNeighbours(kind, {
-      n: same(x, y - 1), e: same(x + 1, y), s: same(x, y + 1), w: same(x - 1, y),
-      ne: same(x + 1, y - 1), se: same(x + 1, y + 1), sw: same(x - 1, y + 1), nw: same(x - 1, y - 1),
-    }), touched);
+    const ref = supportedAutotileRefAt(map, layer, x, y, descriptors);
+    if (!ref) continue;
+    writeValue(map, cellIndex(map, layer, x, y), resolvedAutotileIdAt(map, layer, x, y, ref, descriptors), touched);
   }
 }
 
-function updateMZAutoshadows(map: RmmvBrushMap, edits: readonly NormalizedRmmvTileEdit[], touched: Set<number>): void {
+function updateMZAutoshadows(map: RmmvBrushMap, edits: readonly NormalizedRmmvTileEdit[], touched: Set<number>, descriptors: readonly ExtendedTilesetSheetDescriptor[]): void {
   const candidates = new Set<string>();
   for (const edit of edits) {
     if (edit.layer >= RMMV_PAINT_LAYERS) continue;
@@ -297,11 +341,10 @@ function updateMZAutoshadows(map: RmmvBrushMap, edits: readonly NormalizedRmmvTi
   for (const key of candidates) {
     const [x, y] = key.split(',').map(Number);
     if (x <= 0 || y <= 0) continue;
-    const leftKind = supportedAutotileKindAt(map, 0, x - 1, y);
-    const upperLeftKind = supportedAutotileKindAt(map, 0, x - 1, y - 1);
-    const leftClass = classifyAutotileKind(leftKind);
-    const shouldShadow = leftKind >= 0 && leftKind === upperLeftKind
-      && (leftClass.tab === 'A3' || leftClass.tab === 'A4')
+    const leftRef = supportedAutotileRefAt(map, 0, x - 1, y, descriptors);
+    const upperLeftRef = supportedAutotileRefAt(map, 0, x - 1, y - 1, descriptors);
+    const shouldShadow = Boolean(leftRef && upperLeftRef && leftRef.key === upperLeftRef.key
+      && (leftRef.type === 'A3' || leftRef.type === 'A4'))
       && valueAt(map, 0, x, y) !== valueAt(map, 0, x - 1, y);
     const index = cellIndex(map, RMMV_SHADOW_LAYER, x, y);
     const current = Number(map.data[index] || 0);
@@ -310,10 +353,10 @@ function updateMZAutoshadows(map: RmmvBrushMap, edits: readonly NormalizedRmmvTi
   }
 }
 
-function layerHasSupportedAutotile(map: RmmvBrushMap, layer: number): boolean {
+function layerHasSupportedAutotile(map: RmmvBrushMap, layer: number, descriptors: readonly ExtendedTilesetSheetDescriptor[]): boolean {
   const layerSize = map.width * map.height;
   const base = layer * layerSize;
-  for (let cell = 0; cell < layerSize; cell += 1) if (supportedAutotileKindOf(map.data[base + cell]) >= 0) return true;
+  for (let cell = 0; cell < layerSize; cell += 1) if (supportedAutotileRefOf(map.data[base + cell], descriptors)) return true;
   return false;
 }
 
@@ -321,26 +364,68 @@ function affectedAreaHasSupportedAutotile(
   map: RmmvBrushMap,
   layer: number,
   edits: readonly NormalizedRmmvTileEdit[],
+  descriptors: readonly ExtendedTilesetSheetDescriptor[],
 ): boolean {
   for (const edit of edits) {
     if (edit.layer !== layer) continue;
     for (let y = Math.max(0, edit.y - 1); y <= Math.min(map.height - 1, edit.y + 1); y += 1) {
       for (let x = Math.max(0, edit.x - 1); x <= Math.min(map.width - 1, edit.x + 1); x += 1) {
-        if (supportedAutotileKindAt(map, layer, x, y) >= 0) return true;
+        if (supportedAutotileRefAt(map, layer, x, y, descriptors)) return true;
       }
     }
   }
   return false;
 }
 
-function supportedAutotileKindAt(map: RmmvBrushMap, layer: number, x: number, y: number): number {
-  return supportedAutotileKindOf(valueAt(map, layer, x, y));
+interface SupportedAutotileRef {
+  key: string;
+  resolverKind: number;
+  outputBase: number;
+  type: 'A1' | 'A2' | 'A3' | 'A4';
 }
 
-function supportedAutotileKindOf(tileId: number): number {
-  if (!tileId || tileId < RMMV_TILE_ID_A1) return -1;
-  const kind = Math.floor((tileId - RMMV_TILE_ID_A1) / 48);
-  return isSupportedAutotileKind(kind) ? kind : -1;
+function supportedAutotileRefAt(map: RmmvBrushMap, layer: number, x: number, y: number, descriptors: readonly ExtendedTilesetSheetDescriptor[]): SupportedAutotileRef | null {
+  return supportedAutotileRefOf(valueAt(map, layer, x, y), descriptors);
+}
+
+function supportedAutotileRefOf(tileId: number, descriptors: readonly ExtendedTilesetSheetDescriptor[]): SupportedAutotileRef | null {
+  if (!tileId || tileId < RMMV_TILE_ID_A1) return null;
+  if (tileId < RMMV_TILE_ID_MAX) {
+    const kind = Math.floor((tileId - RMMV_TILE_ID_A1) / 48);
+    const classification = classifyAutotileKind(kind);
+    return isSupportedAutotileKind(kind) && classification.tab !== 'unknown'
+      ? { key: `stock:${kind}`, resolverKind: kind, outputBase: RMMV_TILE_ID_A1 + kind * 48, type: classification.tab }
+      : null;
+  }
+  const decoded = decodeExtendedAutotileId(descriptors, tileId);
+  if (!decoded) return null;
+  const offset = decoded.descriptor.type === 'A1' ? 0 : decoded.descriptor.type === 'A2' ? 16 : decoded.descriptor.type === 'A3' ? 48 : 80;
+  return {
+    key: `extended:${decoded.descriptor.slotIndex}:${decoded.localKind}`,
+    resolverKind: offset + decoded.localKind,
+    outputBase: decoded.descriptor.firstTileId + decoded.localKind * 48,
+    type: decoded.descriptor.type,
+  };
+}
+
+function resolvedAutotileIdAt(
+  map: RmmvBrushMap,
+  layer: number,
+  x: number,
+  y: number,
+  ref: SupportedAutotileRef,
+  descriptors: readonly ExtendedTilesetSheetDescriptor[],
+): number {
+  const same = (nx: number, ny: number): boolean => (
+    nx < 0 || ny < 0 || nx >= map.width || ny >= map.height
+      ? true
+      : supportedAutotileRefAt(map, layer, nx, ny, descriptors)?.key === ref.key
+  );
+  const shape = autotileShapeForKind(ref.resolverKind, {
+    n: same(x, y - 1), e: same(x + 1, y), s: same(x, y + 1), w: same(x - 1, y),
+    ne: same(x + 1, y - 1), se: same(x + 1, y + 1), sw: same(x - 1, y + 1), nw: same(x - 1, y - 1),
+  });
+  return ref.outputBase + shape;
 }
 
 function normalizePaintLayer(layer: unknown, index: number): number {

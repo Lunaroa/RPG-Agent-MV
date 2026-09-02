@@ -333,6 +333,7 @@ function buildMapBase() {
   drawMapContent(context, payload.map as MvMap, {
     tilesetImages: tilesetImages.value,
     tilesetFlags: payload.tileset?.flags || [],
+    extendedTilesetSheets: payload.tileset?.extendedTilesetSheets || [],
     tileSize: tileSize.value,
     parallaxImage: parallaxImage.value,
     showGrid: true,

@@ -1,16 +1,22 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import type {
   EditorProjectCatalog,
   NamedCatalogEntry,
   ProjectAssetEntry,
 } from '../../api/client';
 import type {
+  ExtendedTilesetSheetType,
   RmmvDatabaseEntrySchema,
   RmmvDatabaseFieldKind,
   RmmvDatabaseFieldSchema,
 } from '@contract/types';
+import {
+  EXTENDED_TILESET_SHEET_TYPES,
+  normalizeExtendedTilesetTypes,
+  validateExtendedTilesetImageDimensions,
+} from '@contract/extended-tileset';
 import { useI18n } from '../../i18n';
 import {
   animationFramesSummary,
@@ -111,7 +117,7 @@ import {
   RM_LAYOUT_HIDDEN_PATHS,
   type RmPanelLayout,
 } from '../../utils/databaseRmLayouts';
-import { EXTENDED_TILESET_UI_VISIBLE, canAppendTilesetSlot, tilesetSlotCount, tilesetSlotLabel } from '../../utils/tilesetSlots';
+import { canAppendTilesetSlot, tilesetSlotCount, tilesetSlotLabel } from '../../utils/tilesetSlots';
 import { useWorkspaceStore } from '../../stores/workspace';
 import { formatUserFacingErrorMessage } from '../../utils/user-facing-error';
 
@@ -971,6 +977,9 @@ const extendedTilesetsEnabled = computed(() => {
   return projectPath ? workspaceStore.readExtendedTilesets(projectPath) : false;
 });
 const extendedTilesetsBusy = ref(false);
+const extendedTilesetTypeDialogVisible = ref(false);
+const pendingExtendedTilesetType = ref<ExtendedTilesetSheetType>('normal');
+let pendingExtendedTilesetPath = 'tilesetNames';
 
 async function setExtendedTilesetsEnabled(enabled: boolean): Promise<void> {
   const projectPath = props.catalog?.project;
@@ -979,6 +988,20 @@ async function setExtendedTilesetsEnabled(enabled: boolean): Promise<void> {
   try {
     await workspaceStore.setExtendedTilesets(projectPath, enabled);
   } catch (error) {
+    if (enabled && /\[MANAGED_PLUGIN_CONFLICT\]/.test((error as Error).message)) {
+      try {
+        await ElMessageBox.confirm(
+          t('db.extendedTilesetsPluginConflictBody'),
+          t('db.extendedTilesetsPluginConflictTitle'),
+          { type: 'warning', confirmButtonText: t('db.extendedTilesetsBackupReplace') },
+        );
+        await workspaceStore.setExtendedTilesets(projectPath, true, { backupAndReplaceModified: true });
+        return;
+      } catch (confirmError) {
+        if (confirmError === 'cancel' || confirmError === 'close') return;
+        error = confirmError;
+      }
+    }
     ElMessage.error(t('db.extendedTilesetsSaveFailed', {
       message: formatUserFacingErrorMessage(error, 'general', language.value),
     }));
@@ -988,18 +1011,71 @@ async function setExtendedTilesetsEnabled(enabled: boolean): Promise<void> {
 }
 
 function appendTilesetSlot(path: string): void {
+  pendingExtendedTilesetPath = path;
+  pendingExtendedTilesetType.value = 'normal';
+  extendedTilesetTypeDialogVisible.value = true;
+}
+
+function confirmAppendTilesetSlot(): void {
+  const path = pendingExtendedTilesetPath;
   const current = arrayValue(path);
   const padded = Array.from(
     { length: tilesetSlotCount(current.length) },
     (_entry, index) => current[index] ?? '',
   );
-  writePath(path, [...padded, '']);
+  const nextIndex = padded.length;
+  const types = normalizeExtendedTilesetTypes(padded, readPath('rpgAgentExtendedTilesetTypes'));
+  extendedTilesetTypeDialogVisible.value = false;
+  openImagePicker({
+    asset: 'tilesets',
+    mode: 'plain',
+    title: t('db.chooseTilesetImage', { label: tilesetSlotLabel(nextIndex) }),
+    name: '',
+  }, async (selection) => {
+    if (!selection.name) return;
+    const image = await loadCatalogImage('tilesets', selection.name);
+    if (!image) {
+      ElMessage.error(t('db.tilesetImageLoadFailed'));
+      return;
+    }
+    try {
+      validateExtendedTilesetImageDimensions(
+        pendingExtendedTilesetType.value,
+        image.naturalWidth,
+        image.naturalHeight,
+        Math.max(1, Number(props.catalog?.tileSize) || 48),
+      );
+    } catch (error) {
+      ElMessage.error(formatUserFacingErrorMessage(error, 'general', language.value));
+      return;
+    }
+    writePaths([
+      { path, value: [...padded, selection.name] },
+      { path: 'rpgAgentExtendedTilesetTypes', value: [...types, pendingExtendedTilesetType.value] },
+    ]);
+  });
 }
 
 function canRemoveTilesetSlot(path: string, index: number): boolean {
-  if (!EXTENDED_TILESET_UI_VISIBLE) return false;
   const length = arrayValue(path).length;
   return extendedTilesetsEnabled.value && index >= 9 && index === length - 1;
+}
+
+function removeExtendedTilesetSlot(path: string, index: number): void {
+  const names = [...arrayValue(path)];
+  if (index !== names.length - 1 || index < 9) return;
+  names.splice(index, 1);
+  const types = normalizeExtendedTilesetTypes(arrayValue(path), readPath('rpgAgentExtendedTilesetTypes'));
+  types.splice(index - 9, 1);
+  writePaths([
+    { path, value: names },
+    { path: 'rpgAgentExtendedTilesetTypes', value: types },
+  ]);
+}
+
+function extendedTilesetType(index: number): ExtendedTilesetSheetType | null {
+  if (index < 9) return null;
+  return normalizeExtendedTilesetTypes(arrayValue('tilesetNames'), readPath('rpgAgentExtendedTilesetTypes'))[index - 9] || 'normal';
 }
 
 // Slot list stays data-driven so plugin-extended sheets render instead of being clipped at E.
@@ -2129,7 +2205,7 @@ function updateSound(index: number, key: string, value: unknown): void {
           <section v-else-if="field.path === 'tilesetNames'" class="field full complex-editor">
             <div class="complex-title">
               <span>{{ fieldLabel(field) }}</span>
-              <div v-if="EXTENDED_TILESET_UI_VISIBLE" class="tileset-extension-actions">
+              <div class="tileset-extension-actions">
                 <label class="inline-check">
                   <input
                     type="checkbox"
@@ -2151,7 +2227,7 @@ function updateSound(index: number, key: string, value: unknown): void {
             </div>
             <div class="complex-row param-row">
               <label v-for="index in tilesetSlotIndexes(field.path)" :key="`tileset-slot-${index}`">
-                <span>{{ tilesetSlotLabel(index) }}</span>
+                <span>{{ tilesetSlotLabel(index) }}<template v-if="extendedTilesetType(index)"> · {{ extendedTilesetType(index) }}</template></span>
                 <button type="button" class="image-picker-inline" @click="openArrayImagePicker(field.path, index, 'tilesets', t('db.chooseTilesetImage', { label: tilesetSlotLabel(index) }))">
                   {{ imageValueLabel(textValue(field.path, index)) }}
                 </button>
@@ -2159,7 +2235,7 @@ function updateSound(index: number, key: string, value: unknown): void {
                   v-if="canRemoveTilesetSlot(field.path, index)"
                   type="button"
                   class="danger tileset-slot-remove"
-                  @click="removeArrayIndex(field.path, index)"
+                  @click="removeExtendedTilesetSlot(field.path, index)"
                 >
                   {{ t('db.removeTilesetSheet') }}
                 </button>
@@ -2260,6 +2336,7 @@ function updateSound(index: number, key: string, value: unknown): void {
             <div class="complex-title"><span>{{ fieldLabel(field) }}</span></div>
             <TilesetFlagCanvasEditor
               :tileset-names="arrayValue('tilesetNames')"
+              :extended-tileset-types="normalizeExtendedTilesetTypes(arrayValue('tilesetNames'), readPath('rpgAgentExtendedTilesetTypes'))"
               :flags="arrayValue(field.path)"
               :catalog="catalog"
               :load-image="loadImage"
@@ -2598,6 +2675,15 @@ function updateSound(index: number, key: string, value: unknown): void {
       <StructuredFieldsEditor :model-value="modelValue" :label="t('sf.field')" @update:model-value="$emit('update:modelValue', $event)" />
     </section>
     <ImageAssetPickerDialog v-if="!documentPage" ref="imagePicker" :catalog="catalog" :load-image="safeLoadImage" @commit="commitImageSelection" />
+    <el-dialog v-model="extendedTilesetTypeDialogVisible" :title="t('db.chooseExtendedTilesetType')" width="420px" append-to-body>
+      <el-select v-model="pendingExtendedTilesetType" style="width: 100%">
+        <el-option v-for="type in EXTENDED_TILESET_SHEET_TYPES" :key="type" :label="t(`db.extendedTilesetType.${type}`)" :value="type" />
+      </el-select>
+      <template #footer>
+        <el-button @click="extendedTilesetTypeDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="confirmAppendTilesetSlot">{{ t('db.addTilesetSheet') }}</el-button>
+      </template>
+    </el-dialog>
     <el-dialog
       :model-value="Boolean(longTextDialog)"
       :title="longTextDialog?.label"

@@ -15,6 +15,7 @@ import type {
   ProjectAssetEntry,
   ProjectRelativeDirectoryListResult,
 } from '../../../../contract/types.ts';
+import { buildExtendedTilesetDescriptors } from '../../../../contract/extended-tileset.ts';
 import { readJson } from '../rmmv/json.ts';
 import { assetBucketRelativePath, dataRelativePath, inspectRmmvProject, resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
 import { hasStandardDualWieldTrait, standardEquipSlotTypeIds } from '../rmmv/equipment-slots.ts';
@@ -274,10 +275,12 @@ function tilesetDatabaseList(value: unknown): EditorTilesetCatalogEntry[] {
     const id = positiveInteger(record.id) ?? index;
     if (id <= 0) return [];
     const rawNames = Array.isArray(record.tilesetNames) ? record.tilesetNames : [];
+    const tilesetNames = rawNames.map((name) => stringValue(name));
     return [{
       id,
       name: stringValue(record.name) || `#${id}`,
-      tilesetNames: rawNames.map((name) => stringValue(name)),
+      tilesetNames,
+      extendedTilesetSheets: buildExtendedTilesetDescriptors(tilesetNames, record.rpgAgentExtendedTilesetTypes),
     }];
   });
 }

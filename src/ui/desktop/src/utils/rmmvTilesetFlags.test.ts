@@ -4,12 +4,15 @@ import { describe, test } from 'node:test';
 import {
   MV_TILESET_FLAG_BITS,
   applyMvTilesetFlagEdit,
+  extendedMvTilesetSheets,
   inspectMvTilesetFlagCell,
   mvTilesetFlagCell,
+  mvTilesetFlagCellForSheet,
   mvTilesetSheet,
   nextMvTilesetPassage,
   nextMvTilesetTerrainTag,
 } from './rmmvTilesetFlags.ts';
+import { buildExtendedTilesetDescriptors } from '@contract/extended-tileset';
 
 describe('RPG Maker MV tileset flag editing', () => {
   test('maps normal B-E sheet cells to RPG Maker MV tile IDs', () => {
@@ -108,5 +111,46 @@ describe('RPG Maker MV tileset flag editing', () => {
     assert.equal(state.ladder, 'mixed');
     assert.equal(state.terrainTag, 0);
     assert.equal(mvTilesetSheet('A3').directionalEditable, false);
+  });
+
+  test('aggregates every shape of an extended autotile into one editable cell', () => {
+    const [descriptor] = buildExtendedTilesetDescriptors(
+      [...Array(9).fill(''), 'ExtraGround'],
+      ['A2'],
+    );
+    const [sheet] = extendedMvTilesetSheets([descriptor]);
+    const cell = mvTilesetFlagCellForSheet(sheet, 3, 7);
+
+    assert.equal(sheet.key, 'F');
+    assert.equal(sheet.imageIndex, 9);
+    assert.equal(sheet.directionalEditable, false);
+    assert.equal(cell.tileIds.length, 48);
+    assert.equal(cell.tileIds[0], descriptor.firstTileId + 31 * 48);
+    assert.equal(cell.tileIds[47], descriptor.firstTileId + descriptor.capacity - 1);
+
+    const edited = applyMvTilesetFlagEdit([], cell, {
+      kind: 'marker',
+      bit: MV_TILESET_FLAG_BITS.bush,
+      enabled: true,
+    });
+    assert.ok(cell.tileIds.every((tileId) => (Number(edited[tileId]) & MV_TILESET_FLAG_BITS.bush) !== 0));
+  });
+
+  test('maps extended A5 and normal cells across their complete capacities', () => {
+    const descriptors = buildExtendedTilesetDescriptors(
+      [...Array(9).fill(''), 'ExtraLower', 'ExtraUpper'],
+      ['A5', 'normal'],
+    );
+    const [a5, normal] = extendedMvTilesetSheets(descriptors);
+    const lastA5 = mvTilesetFlagCellForSheet(a5, 15, 7);
+    const lastNormal = mvTilesetFlagCellForSheet(normal, 15, 15);
+
+    assert.equal(lastA5.representativeTileId, descriptors[0].firstTileId + 127);
+    assert.equal(lastNormal.representativeTileId, descriptors[1].firstTileId + 255);
+    assert.equal(lastNormal.fixedPassage, null);
+    assert.equal(normal.allowsStar, true);
+
+    const flagged = applyMvTilesetFlagEdit([], lastNormal, { kind: 'passage', value: 'star' });
+    assert.equal(Number(flagged[lastNormal.representativeTileId]) & MV_TILESET_FLAG_BITS.star, MV_TILESET_FLAG_BITS.star);
   });
 });

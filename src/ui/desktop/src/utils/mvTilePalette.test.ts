@@ -3,9 +3,11 @@
  */
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
+import { buildExtendedTilesetDescriptors } from '@contract/extended-tileset';
 import { TILE_ID_A1, TILE_ID_A2, TILE_ID_A3, TILE_ID_A4, TILE_ID_A5 } from '../composables/useMapRenderer.ts';
 import {
   MV_PALETTE_COLS,
+  paletteRowsForTab,
   palettePickForCell,
   tileIdForPalettePreview,
   tileIdToPaletteCell,
@@ -49,5 +51,45 @@ describe('mv tile palette mapping', () => {
   test('rejects cells outside the fixed MV palette grid', () => {
     assert.equal(palettePickForCell('B', MV_PALETTE_COLS, 0, allSlots), null);
     assert.equal(palettePickForCell('B', 0, 32, allSlots), null);
+  });
+
+  test('maps dynamic extended tabs by their declared sheet type', () => {
+    const descriptors = buildExtendedTilesetDescriptors(
+      [...Array(9).fill(''), 'ExtraWater', 'ExtraLower', 'ExtraUpper'],
+      ['A1', 'A5', 'normal'],
+    );
+    const [water, lower, upper] = descriptors;
+
+    assert.equal(paletteRowsForTab(water.label, descriptors), 2);
+    assert.deepEqual(palettePickForCell(water.label, 7, 1, allSlots, descriptors), {
+      tileId: water.firstTileId + 15 * 48,
+      autotileKind: 15,
+      tilesetSlot: water.slotIndex,
+      extendedTilesetType: 'A1',
+    });
+    assert.deepEqual(palettePickForCell(lower.label, 7, 15, allSlots, descriptors), {
+      tileId: lower.firstTileId + 127,
+    });
+    assert.deepEqual(palettePickForCell(upper.label, 0, 16, allSlots, descriptors), {
+      tileId: upper.firstTileId + 128,
+    });
+  });
+
+  test('round-trips extended palette highlights without losing the sheet', () => {
+    const descriptors = buildExtendedTilesetDescriptors(
+      [...Array(9).fill(''), 'ExtraWall', 'ExtraUpper'],
+      ['A4', 'normal'],
+    );
+    const [wall, upper] = descriptors;
+
+    assert.deepEqual(
+      tileIdToPaletteCell(wall.firstTileId + 47 * 48 + 31, wall.label, descriptors),
+      { col: 7, row: 5 },
+    );
+    assert.deepEqual(
+      tileIdToPaletteCell(upper.firstTileId + 255, upper.label, descriptors),
+      { col: 7, row: 31 },
+    );
+    assert.equal(tileIdToPaletteCell(wall.firstTileId, upper.label, descriptors), null);
   });
 });

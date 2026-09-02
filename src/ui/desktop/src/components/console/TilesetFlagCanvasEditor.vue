@@ -69,16 +69,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 
-import type { EditorProjectCatalog } from '../../api/client';
+import type { EditorProjectCatalog, ExtendedTilesetSheetType } from '../../api/client';
+import { buildExtendedTilesetDescriptors } from '@contract/extended-tileset';
 import { drawCheckerboard, drawTile } from '../../composables/useMapRenderer';
 import { useI18n } from '../../i18n';
 import {
   MV_TILESET_FLAG_BITS,
   MV_TILESET_SHEETS,
+  extendedMvTilesetSheets,
   applyMvTilesetFlagEdit,
   inspectMvTilesetFlagCell,
-  mvTilesetFlagCell,
-  mvTilesetSheet,
+  mvTilesetFlagCellForSheet,
   nextMvTilesetPassage,
   nextMvTilesetTerrainTag,
   type MvTilesetAggregate,
@@ -105,6 +106,7 @@ type DragPaint = {
 const props = defineProps<{
   tilesetNames: readonly unknown[];
   flags: readonly unknown[];
+  extendedTilesetTypes?: readonly ExtendedTilesetSheetType[];
   catalog: EditorProjectCatalog | null;
   loadImage?: (url: string) => Promise<HTMLImageElement | null>;
 }>();
@@ -114,14 +116,15 @@ const { t } = useI18n();
 // Tiles render 1:1 at the project's tileSize (RM standard 48); never downscale.
 const tileSize = computed(() => Math.max(1, Number(props.catalog?.tileSize) || 48));
 
-const sheets = MV_TILESET_SHEETS;
+const extendedDescriptors = computed(() => buildExtendedTilesetDescriptors(props.tilesetNames, props.extendedTilesetTypes));
+const sheets = computed(() => [...MV_TILESET_SHEETS, ...extendedMvTilesetSheets(extendedDescriptors.value)]);
 const selectedSheetKey = ref<MvTilesetSheetKey>('A1');
 const mode = ref<FlagMode>('passage');
 const selectedRow = ref(0);
 const selectedColumn = ref(0);
 const selectedDirection = ref<MvTilesetDirectionBit>(MV_TILESET_FLAG_BITS.down);
 const canvasRef = ref<HTMLCanvasElement | null>(null);
-const imageStates = ref<ImageState[]>(Array.from({ length: 9 }, () => 'empty'));
+const imageStates = ref<ImageState[]>(Array.from({ length: props.tilesetNames.length }, () => 'empty'));
 const imageRevision = ref(0);
 let tilesetImages: (HTMLImageElement | null)[] = Array.from({ length: 9 }, () => null);
 let imageRequest = 0;
@@ -137,10 +140,10 @@ const tools = computed<ToolDefinition[]>(() => [
   { key: 'terrain', symbol: '7', label: t('db.tileFlagTerrain') },
 ]);
 
-const currentSheet = computed(() => mvTilesetSheet(selectedSheetKey.value));
+const currentSheet = computed(() => sheets.value.find((sheet) => sheet.key === selectedSheetKey.value) || MV_TILESET_SHEETS[0]);
 const currentImageState = computed(() => imageStates.value[currentSheet.value.imageIndex] || 'empty');
 const currentImageName = computed(() => String(props.tilesetNames[currentSheet.value.imageIndex] || '').trim());
-const selectedCell = computed(() => mvTilesetFlagCell(selectedSheetKey.value, selectedRow.value, selectedColumn.value));
+const selectedCell = computed(() => mvTilesetFlagCellForSheet(currentSheet.value, selectedRow.value, selectedColumn.value));
 const canvasStyle = computed(() => ({
   width: `${currentSheet.value.columns * tileSize.value}px`,
   height: `${currentSheet.value.rows * tileSize.value}px`,
@@ -176,7 +179,7 @@ const selectionStatus = computed(() => {
   });
 });
 const imageSignature = computed(() => {
-  const names = Array.from({ length: 9 }, (_, index) => String(props.tilesetNames[index] || ''));
+  const names = props.tilesetNames.map((name) => String(name || ''));
   const assets = (props.catalog?.assets.tilesets || []).map((asset) => `${asset.name}:${asset.fileName}:${asset.url}`);
   return JSON.stringify([props.catalog?.project || '', names, assets]);
 });
@@ -198,14 +201,14 @@ onBeforeUnmount(() => {
 
 async function loadTilesetImages(): Promise<void> {
   const request = ++imageRequest;
-  const nextImages: (HTMLImageElement | null)[] = Array.from({ length: 9 }, () => null);
-  const nextStates: ImageState[] = Array.from({ length: 9 }, (_, index) => (
+  const nextImages: (HTMLImageElement | null)[] = Array.from({ length: props.tilesetNames.length }, () => null);
+  const nextStates: ImageState[] = Array.from({ length: props.tilesetNames.length }, (_, index) => (
     String(props.tilesetNames[index] || '').trim() ? 'loading' : 'empty'
   ));
   tilesetImages = nextImages;
   imageStates.value = [...nextStates];
 
-  await Promise.all(Array.from({ length: 9 }, async (_, index) => {
+  await Promise.all(Array.from({ length: props.tilesetNames.length }, async (_, index) => {
     const name = String(props.tilesetNames[index] || '').trim();
     if (!name) return;
     const asset = findTilesetAsset(name);
@@ -262,8 +265,8 @@ function paintCanvas(): void {
     for (let column = 0; column < sheet.columns; column += 1) {
       const x = column * tileSize.value;
       const y = row * tileSize.value;
-      const cell = mvTilesetFlagCell(sheet.key, row, column);
-      drawTile(context, tilesetImages, cell.representativeTileId, x, y, tileSize.value);
+      const cell = mvTilesetFlagCellForSheet(sheet, row, column);
+      drawTile(context, tilesetImages, cell.representativeTileId, x, y, tileSize.value, extendedDescriptors.value);
       drawModeOverlay(context, cell, inspectMvTilesetFlagCell(flags, cell), x, y);
     }
   }
@@ -381,7 +384,7 @@ function beginPointerPaint(event: PointerEvent): void {
   event.preventDefault();
   canvasRef.value?.focus();
   selectHit(hit);
-  const cell = mvTilesetFlagCell(selectedSheetKey.value, hit.row, hit.column);
+  const cell = mvTilesetFlagCellForSheet(currentSheet.value, hit.row, hit.column);
   const direction = mode.value === 'direction' ? directionFromHit(hit) : selectedDirection.value;
   selectedDirection.value = direction;
   const origin = [...(props.flags || [])];
@@ -404,7 +407,7 @@ function continuePointerPaint(event: PointerEvent): void {
   const hit = pointerHit(event);
   if (!hit) return;
   selectHit(hit);
-  const cell = mvTilesetFlagCell(selectedSheetKey.value, hit.row, hit.column);
+  const cell = mvTilesetFlagCellForSheet(currentSheet.value, hit.row, hit.column);
   const key = cellKey(cell);
   if (dragPaint.visited.has(key)) return;
   dragPaint.visited.add(key);

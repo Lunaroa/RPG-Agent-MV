@@ -17,6 +17,7 @@ import type {
   TilesetSummary,
   TileEdit,
 } from '../../../../contract/types.ts';
+import { buildExtendedTilesetDescriptors } from '../../../../contract/extended-tileset.ts';
 import { readJson } from '../rmmv/json.ts';
 import { repairMapEventChoiceSkeletons } from '../rmmv/choice-skeleton-repair.ts';
 import { validateEventCommandList } from '../rmmv/event-command-registry.ts';
@@ -57,6 +58,8 @@ import {
 import { resolveLocalSourcePath } from './local-assets-service.ts';
 import { prepareRmmvPlaytestPlan } from './runtime-deploy-service.ts';
 import { buildMapPreviewStateCatalog } from './map-preview-state-references.ts';
+import { inspectManagedUnlimitedTilesets } from './plugin-management-service.ts';
+import { validateExtendedTilesetResources } from './project-management-service.ts';
 
 interface LibraryImportContext {
   engine: RpgMakerEngine;
@@ -96,12 +99,16 @@ export function buildTilesetIndex(workflowRoot: string, project: string): { proj
   const dataDir = resolveDataDir(project);
   const file = getProjectFileForRead(workflowRoot, project, projectDataRelativePath(project, 'Tilesets.json'))
     || path.join(dataDir, 'Tilesets.json');
-  const tilesets = (readJson(file) as any[]).filter(Boolean).map((tileset) => ({
-    id: Number(tileset.id),
-    name: String(tileset.name || `Tileset ${tileset.id}`),
-    mode: Number(tileset.mode || 1),
-    tilesetNames: Array.isArray(tileset.tilesetNames) ? tileset.tilesetNames.map(String) : [],
-  }));
+  const tilesets = (readJson(file) as any[]).filter(Boolean).map((tileset) => {
+    const tilesetNames = Array.isArray(tileset.tilesetNames) ? tileset.tilesetNames.map(String) : [];
+    return {
+      id: Number(tileset.id),
+      name: String(tileset.name || `Tileset ${tileset.id}`),
+      mode: Number(tileset.mode || 1),
+      tilesetNames,
+      extendedTilesetSheets: buildExtendedTilesetDescriptors(tilesetNames, tileset.rpgAgentExtendedTilesetTypes),
+    };
+  });
   return { project, tilesets };
 }
 
@@ -160,6 +167,7 @@ export function buildMapPayload(workflowRoot: string, project: string, mapId: nu
       tilesetNames: names,
       flags: Array.isArray(tileset.flags) ? tileset.flags : [],
       imageUrls: names.map((name: string) => name ? projectTilesetImageUrl(workflowRoot, project, name) : null),
+      extendedTilesetSheets: buildExtendedTilesetDescriptors(names, tileset.rpgAgentExtendedTilesetTypes),
     } : null,
     system: {
       switches: Array.isArray(system.switches) ? system.switches : [],
@@ -359,6 +367,23 @@ export function deleteMapDraft(workflowRoot: string, project: string, mapId: num
 }
 
 export function postMapTiles(workflowRoot: string, project: string, mapId: number, edits: TileEdit[]) {
+  const writesExtendedTiles = edits.some((edit) => Number(edit.tileId) >= 8192 || Number(edit.tilesetSlot) >= 9);
+  if (writesExtendedTiles) {
+    const runtime = inspectManagedUnlimitedTilesets(workflowRoot, project);
+    if (!runtime.valid) {
+      throw new Error('[UNLIMITED_TILESETS_RUNTIME_INVALID] Enable and stage the managed unlimited tilesets runtime before painting extended tiles.');
+    }
+    const state = readExtendedTilesetPaintState(workflowRoot, project, mapId);
+    const descriptors = state.descriptors;
+    if (!descriptors.length) {
+      throw new Error('[UNLIMITED_TILESETS_DATA_INVALID] The selected map has no configured extended tileset sheets.');
+    }
+    validateExtendedTilesetResources(workflowRoot, project, descriptors, state.tileSize);
+    const end = descriptors.at(-1)!.firstTileId + descriptors.at(-1)!.capacity;
+    if (state.flags.length < end) {
+      throw new Error(`[UNLIMITED_TILESETS_DATA_INVALID] Tileset flags must contain at least ${end} entries before painting extended tiles.`);
+    }
+  }
   const staged = withStagedMapMutation(
     workflowRoot,
     project,
@@ -369,6 +394,35 @@ export function postMapTiles(workflowRoot: string, project: string, mapId: numbe
     ...staged.result,
     effectiveMapRevision: fileRevision(getMapFileForRead(workflowRoot, project, mapId)),
     staging: staged.staging,
+  };
+}
+
+function readExtendedTilesetPaintState(
+  workflowRoot: string,
+  project: string,
+  mapId: number,
+): { descriptors: ReturnType<typeof buildExtendedTilesetDescriptors>; flags: unknown[]; tileSize: number } {
+  const mapFile = getMapFileForRead(workflowRoot, project, mapId);
+  if (!mapFile || !fs.existsSync(mapFile)) throw new Error(mapNotFound(mapId));
+  const map = readJson(mapFile) as Record<string, unknown>;
+  const tilesetId = Number(map.tilesetId);
+  if (!Number.isInteger(tilesetId) || tilesetId <= 0) {
+    throw new Error('[UNLIMITED_TILESETS_DATA_INVALID] The selected map has an invalid tileset id.');
+  }
+  const dataDir = resolveDataDir(project);
+  const tilesetsFile = getProjectFileForRead(workflowRoot, project, projectDataRelativePath(project, 'Tilesets.json'))
+    || path.join(dataDir, 'Tilesets.json');
+  const tilesets = readJson(tilesetsFile);
+  const record = Array.isArray(tilesets) ? tilesets[tilesetId] : null;
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    throw new Error(`[UNLIMITED_TILESETS_DATA_INVALID] Tileset ${tilesetId} is unavailable.`);
+  }
+  const tileset = record as Record<string, unknown>;
+  const names = Array.isArray(tileset.tilesetNames) ? tileset.tilesetNames : [];
+  return {
+    descriptors: buildExtendedTilesetDescriptors(names, tileset.rpgAgentExtendedTilesetTypes),
+    flags: Array.isArray(tileset.flags) ? tileset.flags : [],
+    tileSize: inspectRmmvProject(project).tileSize,
   };
 }
 

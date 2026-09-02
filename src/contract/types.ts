@@ -1,7 +1,9 @@
 import type { ProductLanguage } from './i18n.ts';
 import type { ProductPluginSettings } from './product-plugin.ts';
 import type { UiRuntimeSceneExport } from './ui-designer.ts';
+import type { ExtendedTilesetSheetDescriptor, ExtendedTilesetSheetType } from './extended-tileset.ts';
 export type { ProductLanguage } from './i18n.ts';
+export type { ExtendedTilesetSheetDescriptor, ExtendedTilesetSheetType } from './extended-tileset.ts';
 
 // renderer ↔ 后端 的端点单一事实来源（形状侧）。
 //
@@ -304,6 +306,55 @@ export interface MapOverviewPngExportStartResult {
 
 export interface MapOverviewPngExportProgressEvent extends MapOverviewPngExportStatus {}
 
+export interface MapImageExportOptions {
+  scalePercent: number;
+  includeDefaultEventCharacters: boolean;
+  includeUnlimitedLayers: boolean;
+}
+
+export interface MapImageExportScene {
+  requestId: string;
+  project: string;
+  mapId: number;
+  mapName: string;
+  mapRevision: string;
+  tileSize: number;
+  map: {
+    width: number;
+    height: number;
+    tilesetId: number;
+    data: number[];
+    events: unknown[];
+    parallaxName?: string;
+    parallaxShow?: boolean;
+    [key: string]: unknown;
+  };
+  tileset: {
+    tilesetNames: string[];
+    flags: number[];
+    extendedTilesetSheets: ExtendedTilesetSheetDescriptor[];
+  };
+  unlimitedLayerDraft: import('./ulds.ts').UldsLayerRecord[];
+  unlimitedLayersEnabled: boolean;
+  options: MapImageExportOptions;
+}
+
+export interface MapImageExportPreviewResult {
+  requestId: string;
+  mapId: number;
+  width: number;
+  height: number;
+  maxScalePercent: number;
+  mime: 'image/png';
+  pngBase64: string;
+}
+
+export interface MapImageExportResult extends MapImageExportPreviewResult {
+  action: 'copied' | 'exported';
+  outputPath: string | null;
+  overwritten: boolean;
+}
+
 export type MapOverviewLayoutId =
   | 'layered-grid'
   | 'force-atlas2'
@@ -463,6 +514,7 @@ export interface TilesetSummary {
   name: string;
   mode: number;
   tilesetNames: string[];
+  extendedTilesetSheets: ExtendedTilesetSheetDescriptor[];
 }
 
 export interface RmmvAudioSettings {
@@ -540,6 +592,7 @@ export interface MapPayload {
     tilesetNames: string[];
     flags: number[];
     imageUrls: (string | null)[];
+    extendedTilesetSheets: ExtendedTilesetSheetDescriptor[];
   } | null;
   system: {
     switches: string[];
@@ -716,6 +769,7 @@ export interface EditorEnemyCatalogEntry extends NamedCatalogEntry {
 /** Tileset DB row; slots 0..8 map to A1–A5/B–E, with optional extended sheets after E. */
 export interface EditorTilesetCatalogEntry extends NamedCatalogEntry {
   tilesetNames: string[];
+  extendedTilesetSheets: ExtendedTilesetSheetDescriptor[];
 }
 
 /** DB rows that reference IconSet.png via iconIndex (skills/items/states). */
@@ -2043,6 +2097,10 @@ export interface TileEdit {
   layer?: number | 'auto';
   tileId?: number;
   autotileKind?: number;
+  /** Extended A1-A4 sheet slot. Omitted for stock global autotile kinds. */
+  tilesetSlot?: number;
+  /** Extended A1-A4 sheet type, used to select the stock-compatible resolver. */
+  extendedTilesetType?: Extract<ExtendedTilesetSheetType, 'A1' | 'A2' | 'A3' | 'A4'>;
   preserveAutotileShape?: boolean;
   shadowBits?: number;
   regionId?: number;

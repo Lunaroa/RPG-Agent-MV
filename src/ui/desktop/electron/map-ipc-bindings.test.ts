@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, test } from 'node:test';
 
 import { STAGING_ERROR_CODES, StagingError } from '../../../backend/src/core/desktop/staging-errors.ts';
+import { encodePng } from '../../../backend/src/core/workflow/map/map-render.ts';
 import { parseIpcStructuredError } from '../../../contract/desktop-errors.ts';
 import { registerMapIpcHandlers } from './map-ipc-bindings.ts';
 
@@ -275,6 +277,8 @@ function desktop(overrides: {
   validateWorkspaceSurface?: (...args: unknown[]) => unknown;
   listProjects?: () => Array<{ path: string }>;
   startExport?: (options: any) => unknown;
+  generateMapImageExport?: (...args: unknown[]) => unknown;
+  validateMapImageExport?: (...args: unknown[]) => unknown;
 }) {
   return {
     project: {
@@ -297,6 +301,10 @@ function desktop(overrides: {
       getMapOverviewPngExportStatus: () => null,
       cancelMapOverviewPngExport: () => undefined,
     },
+    mapImageExport: {
+      generateMapImageExportPreview: (...args: unknown[]) => overrides.generateMapImageExport?.(...args),
+      validateMapImageExportPreviewForFinalization: (...args: unknown[]) => overrides.validateMapImageExport?.(...args),
+    },
     workspaceSurfaces: {
       validateWorkspaceSurfaceVersion: (...args: unknown[]) => overrides.validateWorkspaceSurface?.(...args),
     },
@@ -306,6 +314,129 @@ function desktop(overrides: {
     projectManagement: {
       preflightProjectManagedStagingApply() {},
     },
+  };
+}
+
+describe('map image export IPC boundary', () => {
+  test('uses the main-process unlimited-layer state for preview validation', async () => {
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    let called = false;
+    registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, desktop({
+      listProjects: () => [{ path: PROJECT_PATH }],
+      generateMapImageExport: () => {
+        called = true;
+        return transparentPreview();
+      },
+    }), ipcOptions({ productPluginEnabled: () => false }));
+    const scene = {
+      requestId: 'map-image-ipc-preview',
+      project: PROJECT_PATH,
+      mapId: 1,
+      mapName: 'Sample',
+      mapRevision: 'revision',
+      tileSize: 48,
+      map: { width: 1, height: 1, tilesetId: 1, data: Array(6).fill(0), events: [null] },
+      tileset: { tilesetNames: Array(9).fill(''), flags: [], extendedTilesetSheets: [] },
+      unlimitedLayerDraft: [],
+      unlimitedLayersEnabled: true,
+      options: { scalePercent: 100, includeDefaultEventCharacters: false, includeUnlimitedLayers: true },
+    };
+
+    assert.throws(() => handlers.get('maps:imageExportPreview')!({}, scene), /MAP_IMAGE_ULDS_DISABLED/);
+    assert.equal(called, false);
+  });
+
+  test('cleans its short-lived clipboard PNG when the native write fails', async (context) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-map-image-copy-'));
+    context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    const preview = transparentPreview();
+    let temporaryPath = '';
+    registerMapIpcHandlers(registrar(handlers), root, desktop({
+      listProjects: () => [{ path: PROJECT_PATH }],
+      validateMapImageExport: () => ({ project: PROJECT_PATH, mapId: 1, mapName: 'Sample' }),
+    }), ipcOptions({
+      copyMapImagePng: (pngPath: string) => {
+        temporaryPath = pngPath;
+        assert.equal(fs.existsSync(pngPath), true);
+        throw new Error('clipboard unavailable');
+      },
+    }));
+
+    await assert.rejects(handlers.get('maps:imageExportCopy')!({}, preview), /clipboard unavailable/);
+    assert.equal(temporaryPath.length > 0, true);
+    assert.equal(fs.existsSync(temporaryPath), false);
+  });
+
+  test('sanitizes the snapshot map name and preserves an existing file when overwrite is canceled', async (context) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-map-image-write-'));
+    const outputDirectory = path.join(root, 'output');
+    fs.mkdirSync(outputDirectory);
+    context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    const preview = transparentPreview();
+    let overwritePrompts = 0;
+    registerMapIpcHandlers(registrar(handlers), root, desktop({
+      listProjects: () => [{ path: PROJECT_PATH }],
+      validateMapImageExport: () => ({ project: PROJECT_PATH, mapId: 1, mapName: 'Sample: Map' }),
+    }), ipcOptions({
+      confirmMapImageExportOverwrite: async () => {
+        overwritePrompts += 1;
+        return false;
+      },
+    }));
+
+    const write = handlers.get('maps:imageExportWrite')!;
+    const first = await write({}, { preview, directory: outputDirectory, mapId: 1, mapName: 'ignored' }) as Record<string, unknown>;
+    const outputPath = path.join(outputDirectory, 'Map001-Sample- Map.png');
+    assert.equal(first.outputPath, outputPath);
+    const original = fs.readFileSync(outputPath);
+
+    const canceled = await write({}, { preview, directory: outputDirectory, mapId: 1, mapName: 'changed' });
+    assert.equal(canceled, null);
+    assert.equal(overwritePrompts, 1);
+    assert.deepEqual(fs.readFileSync(outputPath), original);
+    assert.deepEqual(fs.readdirSync(outputDirectory), ['Map001-Sample- Map.png']);
+  });
+
+  test('atomically replaces an approved existing PNG without leaving temporary files', async (context) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-map-image-replace-'));
+    const outputDirectory = path.join(root, 'output');
+    fs.mkdirSync(outputDirectory);
+    context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const outputPath = path.join(outputDirectory, 'Map001-Sample.png');
+    fs.writeFileSync(outputPath, 'original', 'utf8');
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    const preview = transparentPreview();
+    registerMapIpcHandlers(registrar(handlers), root, desktop({
+      listProjects: () => [{ path: PROJECT_PATH }],
+      validateMapImageExport: () => ({ project: PROJECT_PATH, mapId: 1, mapName: 'Sample' }),
+    }), ipcOptions({ confirmMapImageExportOverwrite: async () => true }));
+
+    const result = await handlers.get('maps:imageExportWrite')!({}, {
+      preview,
+      directory: outputDirectory,
+      mapId: 1,
+      mapName: 'ignored',
+    }) as Record<string, unknown>;
+
+    assert.equal(result.outputPath, outputPath);
+    assert.equal(result.overwritten, true);
+    assert.deepEqual(fs.readFileSync(outputPath), Buffer.from(preview.pngBase64, 'base64'));
+    assert.deepEqual(fs.readdirSync(outputDirectory), ['Map001-Sample.png']);
+  });
+});
+
+function transparentPreview() {
+  const png = encodePng(1, 1, Buffer.from([0, 0, 0, 0]));
+  return {
+    requestId: 'map-image-ipc-test',
+    mapId: 1,
+    width: 1,
+    height: 1,
+    maxScalePercent: 100,
+    mime: 'image/png' as const,
+    pngBase64: png.toString('base64'),
   };
 }
 

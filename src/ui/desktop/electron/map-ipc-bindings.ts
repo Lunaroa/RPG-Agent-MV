@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import { normalizeProductLanguage, type ProductLanguage } from '../../../contract/i18n.ts';
 import type {
@@ -8,6 +10,9 @@ import type {
   ExternalMapReplaceScanRequest,
   MapOverviewPngExportScene,
   MapOverviewPngExportStartResult,
+  MapImageExportPreviewResult,
+  MapImageExportResult,
+  MapImageExportScene,
   MapOverviewScanProgressEvent,
   ProjectAssetBrowseOptions,
   WorkspaceSurfaceVersionRequest,
@@ -26,6 +31,10 @@ export interface ProjectIpcOptions {
   selectPluginDirectory?: (event: unknown) => Promise<string | null>;
   selectAssetFile?: (event: unknown, category: string, extensions: string[]) => Promise<string[] | null>;
   selectMapOverviewExportTarget?: (event: unknown, defaultName: string) => Promise<string | null>;
+  selectMapImageExportDirectory?: (event: unknown) => Promise<string | null>;
+  confirmMapImageExportOverwrite?: (event: unknown, fileName: string) => Promise<boolean>;
+  copyMapImagePng?: (pngPath: string) => void;
+  productPluginEnabled?: (id: string) => boolean;
   openProjectDirectory?: (projectPath: string) => Promise<void>;
   productLanguage?: () => ProductLanguage;
   withProductLanguage: <T>(language: ProductLanguage, fn: () => T) => T;
@@ -68,6 +77,11 @@ export const MAP_IPC_CHANNELS = [
   'maps:overviewExportStart',
   'maps:overviewExportStatus',
   'maps:overviewExportCancel',
+  'maps:imageExportPreview',
+  'maps:imageExportPreviewCancel',
+  'maps:imageExportSelectDirectory',
+  'maps:imageExportCopy',
+  'maps:imageExportWrite',
   'maps:create',
   'maps:importFromLibrary',
   'maps:importPackageFromLibrary',
@@ -154,6 +168,9 @@ export const MAP_IPC_CHANNELS = [
   'plugins:selectInstallFile',
   'plugins:selectInstallDirectory',
   'plugins:deleteFile',
+  'plugins:inspectManagedUnlimitedTilesets',
+  'plugins:setManagedUnlimitedTilesetsEnabled',
+  'plugins:ensureManagedUnlimitedTileLayers',
   'assetLibrary:catalog',
   'assetLibrary:detail',
   'assetLibrary:validateImport',
@@ -338,6 +355,81 @@ export function registerMapIpcHandlers(
   handle('maps:overviewExportStatus', () => desktop.mapOverviewExport.getMapOverviewPngExportStatus());
   handle('maps:overviewExportCancel', (_event, requestId: string) =>
     desktop.mapOverviewExport.cancelMapOverviewPngExport(requestId));
+  handle('maps:imageExportPreview', (_event, scene: MapImageExportScene) => {
+    if (!scene || typeof scene !== 'object') throw new Error('Map image export scene is required.');
+    const resolved = project(scene.project);
+    assertRegisteredProject(resolved);
+    const unlimitedLayersEnabled = Boolean(options.productPluginEnabled?.('unlimited-map-layers'));
+    if (scene.options?.includeUnlimitedLayers && !unlimitedLayersEnabled) {
+      throw new Error('[MAP_IMAGE_ULDS_DISABLED] Unlimited layers must be enabled before they can be exported.');
+    }
+    return desktop.mapImageExport.generateMapImageExportPreview(workflowRoot, resolved, {
+      ...scene,
+      project: resolved,
+      unlimitedLayersEnabled,
+    });
+  });
+  handle('maps:imageExportPreviewCancel', (_event, requestId: string) =>
+    desktop.mapImageExport.cancelMapImageExportPreview(requestId));
+  handle('maps:imageExportSelectDirectory', async (event) => {
+    if (!options.selectMapImageExportDirectory) throw new Error('Selecting an export directory is unavailable.');
+    return options.selectMapImageExportDirectory(event);
+  });
+  handle('maps:imageExportCopy', async (_event, preview: MapImageExportPreviewResult) => {
+    const validated = await desktop.mapImageExport.validateMapImageExportPreviewForFinalization(
+      preview,
+      Boolean(options.productPluginEnabled?.('unlimited-map-layers')),
+    );
+    assertRegisteredProject(validated.project);
+    const png = validatedExportPng(preview);
+    if (!options.copyMapImagePng) throw new Error('Copying map images is unavailable.');
+    const tempRoot = path.join(path.resolve(workflowRoot), 'runtime', 'map-image-export-clipboard');
+    fs.mkdirSync(tempRoot, { recursive: true });
+    const tempPath = path.join(tempRoot, `${crypto.randomUUID()}.png`);
+    try {
+      fs.writeFileSync(tempPath, png);
+      options.copyMapImagePng(tempPath);
+    } finally {
+      fs.rmSync(tempPath, { force: true });
+    }
+    return {
+      ...preview,
+      action: 'copied',
+      outputPath: null,
+      overwritten: false,
+    } satisfies MapImageExportResult;
+  });
+  handle('maps:imageExportWrite', async (
+    event,
+    request: { preview: MapImageExportPreviewResult; directory: string; mapId: number; mapName: string },
+  ) => {
+    const validated = await desktop.mapImageExport.validateMapImageExportPreviewForFinalization(
+      request?.preview,
+      Boolean(options.productPluginEnabled?.('unlimited-map-layers')),
+    );
+    assertRegisteredProject(validated.project);
+    if (request?.mapId !== validated.mapId) throw new Error('[MAP_IMAGE_INVALID_SCENE] Map id does not match the preview.');
+    const png = validatedExportPng(request?.preview);
+    const directory = path.resolve(String(request?.directory || ''));
+    if (!path.isAbsolute(String(request?.directory || '')) || !fs.existsSync(directory) || !fs.statSync(directory).isDirectory()) {
+      throw new Error('[MAP_IMAGE_DIRECTORY_INVALID] The selected export directory no longer exists.');
+    }
+    const fileName = mapImageExportFileName(validated.mapId, validated.mapName);
+    const outputPath = path.join(directory, fileName);
+    const overwritten = fs.existsSync(outputPath);
+    if (overwritten) {
+      if (!options.confirmMapImageExportOverwrite || !await options.confirmMapImageExportOverwrite(event, fileName)) {
+        return null;
+      }
+    }
+    writePngAtomically(outputPath, png);
+    return {
+      ...request.preview,
+      action: 'exported',
+      outputPath,
+      overwritten,
+    } satisfies MapImageExportResult;
+  });
   handle('maps:create', (_event, properties: Record<string, unknown>, value?: string) => desktop.maps.createMapDraft(workflowRoot, project(value), properties));
   handle('maps:importFromLibrary', (_event, assetId: string, parentMapId?: number | null, properties?: Record<string, unknown>, value?: string) => desktop.maps.importMapDraftFromLibrary(workflowRoot, project(value), assetId, { ...(properties || {}), parentId: parentMapId || 0 }));
   handle('maps:importPackageFromLibrary', (_event, assetIds: string[], parentMapId?: number | null, properties?: Record<string, unknown>, value?: string) =>
@@ -688,6 +780,28 @@ export function registerMapIpcHandlers(
   });
   handle('plugins:deleteFile', (_event, pluginName: string, options?: Record<string, unknown>, value?: string) =>
     desktop.pluginManagement.deletePluginFile(workflowRoot, project(value), pluginName, options || {}));
+  handle('plugins:inspectManagedUnlimitedTilesets', (_event, value?: string) =>
+    desktop.pluginManagement.inspectManagedUnlimitedTilesets(workflowRoot, project(value)));
+  handle('plugins:setManagedUnlimitedTilesetsEnabled', (
+    _event,
+    enabled: boolean,
+    runtimeOptions?: { backupAndReplaceModified?: boolean },
+    value?: string,
+  ) => desktop.pluginManagement.setManagedUnlimitedTilesetsEnabled(
+    workflowRoot,
+    project(value),
+    Boolean(enabled),
+    runtimeOptions || {},
+  ));
+  handle('plugins:ensureManagedUnlimitedTileLayers', (
+    _event,
+    runtimeOptions?: { backupAndReplaceModified?: boolean },
+    value?: string,
+  ) => desktop.pluginManagement.ensureManagedUnlimitedTileLayers(
+    workflowRoot,
+    project(value),
+    runtimeOptions || {},
+  ));
 
   handle('assetLibrary:catalog', () => desktop.assetLibrary.buildAssetLibraryCatalog(workflowRoot));
   handle('assetLibrary:detail', (_event, assetId: string) => desktop.assetLibrary.getAssetLibraryEntry(workflowRoot, assetId));
@@ -757,6 +871,50 @@ export function registerMapIpcHandlers(
 
   handle('storyOutline:get', (_event, value?: string) => desktop.outline.getStoryOutline(workflowRoot, project(value)));
   handle('storyOutline:set', (_event, payload: Record<string, unknown>, value?: string) => desktop.outline.upsertStoryOutline(workflowRoot, project(value), payload));
+}
+
+function validatedExportPng(preview: MapImageExportPreviewResult): Buffer {
+  if (!preview || preview.mime !== 'image/png' || !Number.isInteger(preview.width) || !Number.isInteger(preview.height)) {
+    throw new Error('[MAP_IMAGE_PNG_INVALID] Invalid map image result.');
+  }
+  if (preview.width <= 0 || preview.height <= 0 || preview.width > 32_767 || preview.height > 32_767
+    || preview.width * preview.height > 500_000_000) {
+    throw new Error('[MAP_IMAGE_SIZE_LIMIT] Invalid map image dimensions.');
+  }
+  const png = Buffer.from(String(preview.pngBase64 || ''), 'base64');
+  if (png.length < 24 || !png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    || png.readUInt32BE(16) !== preview.width || png.readUInt32BE(20) !== preview.height) {
+    throw new Error('[MAP_IMAGE_PNG_INVALID] Encoded PNG dimensions do not match the preview.');
+  }
+  return png;
+}
+
+function mapImageExportFileName(mapId: number, mapName: string): string {
+  if (!Number.isInteger(mapId) || mapId <= 0) throw new Error('[MAP_IMAGE_INVALID_SCENE] Invalid map id.');
+  const safeName = String(mapName || '')
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')
+    .replace(/[. ]+$/g, '')
+    .trim();
+  const prefix = `Map${String(mapId).padStart(3, '0')}`;
+  return `${safeName ? `${prefix}-${safeName}` : prefix}.png`;
+}
+
+function writePngAtomically(outputPath: string, png: Buffer): void {
+  const id = crypto.randomUUID();
+  const partialPath = `${outputPath}.rpg-agent-${id}.partial`;
+  try {
+    const handle = fs.openSync(partialPath, 'wx');
+    try {
+      fs.writeFileSync(handle, png);
+      fs.fsyncSync(handle);
+    } finally {
+      fs.closeSync(handle);
+    }
+    fs.renameSync(partialPath, outputPath);
+  } catch (error) {
+    fs.rmSync(partialPath, { force: true });
+    throw error;
+  }
 }
 
 function validateOverviewProgressSessionId(value: unknown): string | null {

@@ -1,4 +1,4 @@
-import { BrowserWindow, clipboard, dialog, ipcMain, net, protocol, screen, shell } from 'electron';
+import { BrowserWindow, clipboard, dialog, ipcMain, nativeImage, net, protocol, screen, shell } from 'electron';
 import crypto from 'node:crypto';
 import path from 'path';
 import fs from 'fs';
@@ -50,6 +50,7 @@ import {
   type WorkspaceWindowState,
 } from '../../../contract/types.ts';
 import { normalizeProductLanguage, type ProductLanguage } from '../../../contract/i18n.ts';
+import { isProductPluginEnabled } from '../../../contract/product-plugin.ts';
 import {
   DEFAULT_WINDOW_HEIGHT,
   DEFAULT_WINDOW_WIDTH,
@@ -461,6 +462,7 @@ async function loadBackendModules(roots: AppRoots) {
     externalMapImport: await import(new URL('desktop/external-map-import-service.ts', coreUrl).href),
     mapOverview: await import(new URL('desktop/map-overview-service.ts', coreUrl).href),
     mapOverviewExport: await import(new URL('desktop/map-overview-png-export-service.ts', coreUrl).href),
+    mapImageExport: await import(new URL('desktop/map-image-export-service.ts', coreUrl).href),
     workspaceSurfaces: await import(new URL('desktop/workspace-surface-version-service.ts', coreUrl).href),
     events: await import(new URL('desktop/event-service.ts', coreUrl).href),
     eventRegistry: await import(new URL('workflow/event/event-registry.ts', coreUrl).href),
@@ -1362,6 +1364,7 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
   registerMapIpcHandlers(ipcMain, workflowRoot, desktop, {
     productLanguage: currentProductLanguage,
     withProductLanguage: withBackendProductLanguage,
+    productPluginEnabled: (id: string) => isProductPluginEnabled(getWorkspaceSettings().productPlugins, id),
     shouldSuppressProjectCompatibilityWarnings: () => Boolean(
       getWorkspaceSettings().suppressProjectCompatibilityWarnings,
     ),
@@ -1435,6 +1438,40 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
         properties: ['showOverwriteConfirmation'],
       });
       return result.canceled ? null : result.filePath || null;
+    },
+    selectMapImageExportDirectory: async (event: Electron.IpcMainInvokeEvent) => {
+      const parent = BrowserWindow.fromWebContents(event.sender) || undefined;
+      const result = await dialog.showOpenDialog(parent, {
+        title: electronText(currentProductLanguage(), 'mapImageExport.selectDirectoryTitle'),
+        properties: ['openDirectory', 'createDirectory'],
+      });
+      return result.canceled ? null : result.filePaths[0] || null;
+    },
+    confirmMapImageExportOverwrite: async (event: Electron.IpcMainInvokeEvent, fileName: string) => {
+      const parent = BrowserWindow.fromWebContents(event.sender) || undefined;
+      const result = await dialog.showMessageBox(parent, {
+        type: 'warning',
+        title: electronText(currentProductLanguage(), 'mapImageExport.overwriteTitle'),
+        message: electronText(currentProductLanguage(), 'mapImageExport.overwriteMessage', { fileName }),
+        buttons: [
+          electronText(currentProductLanguage(), 'mapImageExport.overwrite'),
+          electronText(currentProductLanguage(), 'staging.cancel'),
+        ],
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true,
+      });
+      return result.response === 0;
+    },
+    copyMapImagePng: (pngPath: string) => {
+      const png = fs.readFileSync(pngPath);
+      const image = nativeImage.createFromBuffer(png);
+      if (image.isEmpty()) throw new Error('[MAP_IMAGE_CLIPBOARD_FAILED] Electron could not decode the PNG.');
+      clipboard.writeImage(image);
+      const copiedImage = clipboard.readImage();
+      if (copiedImage.isEmpty() || !copiedImage.toBitmap().equals(image.toBitmap())) {
+        throw new Error('[MAP_IMAGE_CLIPBOARD_FAILED] Clipboard image verification failed.');
+      }
     },
     openProjectDirectory: async (projectPath: string) => {
       const stat = fs.statSync(projectPath);

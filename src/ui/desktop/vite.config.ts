@@ -46,6 +46,19 @@ export default defineConfig({
           },
         },
       },
+      {
+        entry: '../../backend/src/core/desktop/map-image-export-worker.ts',
+        vite: {
+          build: {
+            rollupOptions: {
+              external: ['electron'],
+              output: {
+                entryFileNames: 'map-image-export-worker.js',
+              },
+            },
+          },
+        },
+      },
     ]),
   ],
   resolve: {

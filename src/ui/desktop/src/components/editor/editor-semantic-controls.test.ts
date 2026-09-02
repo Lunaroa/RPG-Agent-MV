@@ -73,6 +73,20 @@ describe('editor semantic controls', () => {
     assert.match(imageAssetPickerSource, /resolveCatalogImageRootSelection\(selection\)/);
   });
 
+  test('keeps unlimited tile layers behind its product-plugin switch with note persistence and a managed runtime', () => {
+    assert.match(editorViewSource, /productPlugins\.isEnabled\('unlimited-tile-layers'\)/);
+    assert.match(editorViewSource, /:extra-tile-layers-enabled="tileLayersPluginEnabled && selectedMapId != null"/);
+    assert.match(editorViewSource, /parseMapTileLayersNote\(currentMapNote\.value\)/);
+    assert.match(editorViewSource, /writeMapTileLayersNote\(currentMapNote\.value/);
+    assert.match(editorViewSource, /pluginsApi\.ensureManagedUnlimitedTileLayers/);
+    assert.match(editorToolbarSource, /data-ui-id="editor-layer-extra-add"/);
+    assert.match(editorToolbarSource, /data-ui-id="editor-layer-extra-remove"/);
+    assert.match(editorToolbarSource, /extraLayerSelection\(index\)/);
+    assert.match(mapCanvasEditorSource, /EXTRA_LAYER_SENTINEL/);
+    assert.match(mapCanvasEditorSource, /saveExtraTileLayers/);
+    assert.match(mapRendererSource, /drawExtraTileLayers\(context, map, options, tileSize\)/);
+  });
+
   test('compiles the product-gated unlimited-layer surfaces', () => {
     for (const [name, source] of [
       ['UldsPanel.vue', uldsPanelSource],

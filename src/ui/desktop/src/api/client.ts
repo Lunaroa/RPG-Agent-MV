@@ -168,13 +168,6 @@ declare global {
         downloadGit(): Promise<ProjectGitFileResult<{ path: string; name: string }>>;
         backup(request?: ProjectGitProjectRequest): Promise<ProjectGitFileResult<{ path: string; fileCount: number; totalBytes: number }>>;
       };
-      versionWindow: {
-        open(): Promise<{ ok: boolean }>;
-        notifyStatusChanged(status: unknown): Promise<{ ok: boolean }>;
-        notifyProjectChanged(project: string): Promise<{ ok: boolean }>;
-        onStatusChanged(handler: (status: ProjectGitStatus | null) => void): () => void;
-        onProjectChanged(handler: (project: string) => void): () => void;
-      };
       uiDesigner: {
         open(request?: Pick<UiDesignerFileRequest, 'path' | 'project'>): Promise<UiDesignerSaveResult<UiDesignerDocument>>;
         importScene(request?: UiDesignerProjectRequest): Promise<UiDesignerSaveResult<UiDesignerDocument>>;
@@ -279,6 +272,11 @@ declare global {
         startOverviewPngExport(scene: MapOverviewPngExportScene): Promise<unknown>;
         overviewPngExportStatus(): Promise<unknown>;
         cancelOverviewPngExport(requestId: string): Promise<unknown>;
+        imageExportPreview(scene: MapImageExportScene): Promise<unknown>;
+        cancelImageExportPreview(requestId: string): Promise<unknown>;
+        selectImageExportDirectory(): Promise<string | null>;
+        copyImageExport(preview: MapImageExportPreviewResult): Promise<unknown>;
+        writeImageExport(request: unknown): Promise<unknown>;
         onOverviewPngExportProgress(callback: (progress: MapOverviewPngExportProgressEvent) => void): () => void;
         create(properties: Record<string, unknown>, project?: string): Promise<unknown>;
         importFromLibrary(assetId: string, parentMapId?: number | null, properties?: Record<string, unknown>, project?: string): Promise<unknown>;
@@ -450,6 +448,9 @@ declare global {
         selectInstallFile(): Promise<string | null>;
         selectInstallDirectory(): Promise<string | null>;
         deleteFile(pluginName: string, options?: unknown, project?: string): Promise<unknown>;
+        inspectManagedUnlimitedTilesets(project?: string): Promise<unknown>;
+        setManagedUnlimitedTilesetsEnabled(enabled: boolean, options?: unknown, project?: string): Promise<unknown>;
+        ensureManagedUnlimitedTileLayers(options?: unknown, project?: string): Promise<unknown>;
       };
       assetLibrary: {
         catalog(): Promise<unknown>;
@@ -467,7 +468,7 @@ function desktopApi(): Window['api'] {
 
 // 端点响应/请求形状的单一事实来源（见 RPG-Agent-MV/contract/types.ts）。
 import type {
-  MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewScanProgressEvent, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
+  MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewScanProgressEvent, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, MapImageExportOptions, MapImageExportPreviewResult, MapImageExportResult, MapImageExportScene, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorMapNotes,
   ExternalProjectBrowseResult, ExternalProjectMapSummary, ExternalMapImportOptions, ExternalMapImportScanRequest, ExternalMapImportScanResult, ExternalMapImportApplyRequest, ExternalMapImportApplyResult, ExternalMapImportResourceRow, ExternalMapImportTilesetRow, ExternalMapImportMapPreview, ExternalMapImportWarning, ExternalMapResourceAction, ExternalMapResourceStatus, ExternalMapResourceResolution, ExternalMapTilesetResolution, ExternalMapReplaceOptions, ExternalMapReplaceScanRequest, ExternalMapReplaceApplyRequest,
   LunaRpgProjectConfig,
@@ -500,9 +501,10 @@ import type {
   PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
   InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewConsoleEntry, MapPreviewEventState, MapPreviewFailureDetail, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewRuntimeCommand, MapPreviewRuntimeEvent, MapPreviewSelfSwitchLetter, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewVariableValue, MapPreviewViewRequest, RpgMakerEngine,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot, WorkspaceSurfaceId, WorkspaceSurfaceVersionRequest, WorkspaceSurfaceVersionResult,
+  ExtendedTilesetSheetDescriptor, ExtendedTilesetSheetType,
 } from '@contract/types';
 export type {
-  MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
+  MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, MapImageExportOptions, MapImageExportPreviewResult, MapImageExportResult, MapImageExportScene, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorMapNotes,
   ExternalProjectBrowseResult, ExternalProjectMapSummary, ExternalMapImportOptions, ExternalMapImportScanRequest, ExternalMapImportScanResult, ExternalMapImportApplyRequest, ExternalMapImportApplyResult, ExternalMapImportResourceRow, ExternalMapImportTilesetRow, ExternalMapImportMapPreview, ExternalMapImportWarning, ExternalMapResourceAction, ExternalMapResourceStatus, ExternalMapResourceResolution, ExternalMapTilesetResolution, ExternalMapReplaceOptions, ExternalMapReplaceScanRequest, ExternalMapReplaceApplyRequest,
   LunaRpgProjectConfig,
@@ -532,6 +534,7 @@ export type {
   PluginParameterSchema, PluginParameterSchemaField, PluginValidationIssue, PluginValidationResult,
   InteractivePlaytestResult, InteractivePlaytestRun, InteractivePlaytestStartRequest, InteractivePlaytestRuntimeInfo, InteractivePlaytestRuntimeSelectionRequired, InteractivePlaytestRuntimeSelectionResult, InteractiveBattleTestBattler, InteractiveParticleAnimationPreview, MapPreviewConsoleEntry, MapPreviewEventState, MapPreviewFailureDetail, MapPreviewFrame, MapPreviewOverrides, MapPreviewResult, MapPreviewResumeRequest, MapPreviewRuntimeCommand, MapPreviewRuntimeEvent, MapPreviewSelfSwitchLetter, MapPreviewSession, MapPreviewStartRequest, MapPreviewStatus, MapPreviewVariableValue, MapPreviewViewRequest, RpgMakerEngine,
   AgentCapabilitiesSnapshot, CapabilityToolEntry, RuleSnapshot, WorkspaceSurfaceId, WorkspaceSurfaceVersionRequest, WorkspaceSurfaceVersionResult,
+  ExtendedTilesetSheetDescriptor, ExtendedTilesetSheetType,
 };
 
 export interface ProjectRegistrationResult {
@@ -623,24 +626,6 @@ export const projectGit = {
   },
   backup(request?: ProjectGitProjectRequest) {
     return desktopApi().projectGit.backup(toPlain(request ?? {}));
-  },
-};
-
-export const versionWindow = {
-  open() {
-    return desktopApi().versionWindow.open();
-  },
-  notifyStatusChanged(status: ProjectGitStatus | null) {
-    return desktopApi().versionWindow.notifyStatusChanged(toPlain(status));
-  },
-  notifyProjectChanged(project: string) {
-    return desktopApi().versionWindow.notifyProjectChanged(project);
-  },
-  onStatusChanged(handler: (status: ProjectGitStatus | null) => void) {
-    return desktopApi().versionWindow.onStatusChanged(handler);
-  },
-  onProjectChanged(handler: (project: string) => void) {
-    return desktopApi().versionWindow.onProjectChanged(handler);
   },
 };
 
@@ -983,6 +968,26 @@ export const maps = {
   },
   cancelOverviewPngExport(requestId: string) {
     return desktopApi().maps.cancelOverviewPngExport(requestId) as Promise<MapOverviewPngExportStatus>;
+  },
+  imageExportPreview(scene: MapImageExportScene) {
+    return desktopApi().maps.imageExportPreview(toPlain(scene)) as Promise<MapImageExportPreviewResult>;
+  },
+  cancelImageExportPreview(requestId: string) {
+    return desktopApi().maps.cancelImageExportPreview(requestId) as Promise<{ canceled: boolean }>;
+  },
+  selectImageExportDirectory() {
+    return desktopApi().maps.selectImageExportDirectory();
+  },
+  copyImageExport(preview: MapImageExportPreviewResult) {
+    return desktopApi().maps.copyImageExport(toPlain(preview)) as Promise<MapImageExportResult>;
+  },
+  writeImageExport(
+    preview: MapImageExportPreviewResult,
+    directory: string,
+    mapId: number,
+    mapName: string,
+  ) {
+    return desktopApi().maps.writeImageExport(toPlain({ preview, directory, mapId, mapName })) as Promise<MapImageExportResult | null>;
   },
   onOverviewPngExportProgress(callback: (progress: MapOverviewPngExportProgressEvent) => void) {
     return desktopApi().maps.onOverviewPngExportProgress(callback);
@@ -1938,6 +1943,40 @@ export const plugins = {
       relativePath: string;
       staging: unknown;
       configuration?: PluginConfigurationResult;
+    }>;
+  },
+  inspectManagedUnlimitedTilesets(project: string = DEFAULT_PROJECT) {
+    return desktopApi().plugins.inspectManagedUnlimitedTilesets(project) as Promise<{
+      enabled: boolean;
+      valid: boolean;
+      conflict: boolean;
+      engine: RpgMakerEngine;
+      pluginRelativePath: string;
+    }>;
+  },
+  setManagedUnlimitedTilesetsEnabled(
+    enabled: boolean,
+    options: { backupAndReplaceModified?: boolean } = {},
+    project: string = DEFAULT_PROJECT,
+  ) {
+    return desktopApi().plugins.setManagedUnlimitedTilesetsEnabled(enabled, toPlain(options), project) as Promise<{
+      enabled: boolean;
+      engine: RpgMakerEngine;
+      pluginRelativePath: string;
+      backupRelativePath: string | null;
+      staging: unknown;
+    }>;
+  },
+  ensureManagedUnlimitedTileLayers(
+    options: { backupAndReplaceModified?: boolean } = {},
+    project: string = DEFAULT_PROJECT,
+  ) {
+    return desktopApi().plugins.ensureManagedUnlimitedTileLayers(toPlain(options), project) as Promise<{
+      enabled: boolean;
+      engine: RpgMakerEngine;
+      pluginRelativePath: string;
+      backupRelativePath: string | null;
+      staging: unknown;
     }>;
   },
 };

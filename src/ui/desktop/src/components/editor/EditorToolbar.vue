@@ -41,7 +41,7 @@
       <div v-if="supportsLayerSelection && paintMode === 'tile'" class="layer-mode-group" :aria-label="t('editor.toolbar.layerSelection')">
         <button
           v-for="entry in layerEntries"
-          :key="entry.value"
+          :key="String(entry.value)"
           type="button"
           :data-ui-id="`editor-layer-${entry.value}`"
           :class="{ active: layer === entry.value }"
@@ -49,6 +49,25 @@
           :title="entry.title"
           @click="$emit('update:layer', entry.value)"
         >{{ entry.label }}</button>
+        <template v-if="extraTileLayersEnabled">
+          <button
+            type="button"
+            class="tool-button"
+            data-ui-id="editor-layer-extra-add"
+            :disabled="busy"
+            :title="t('editor.toolbar.extraLayerAdd')"
+            @click="$emit('add-extra-layer')"
+          ><Plus /></button>
+          <button
+            v-if="extraLayerActive"
+            type="button"
+            class="tool-button"
+            data-ui-id="editor-layer-extra-remove"
+            :disabled="busy"
+            :title="t('editor.toolbar.extraLayerRemove')"
+            @click="$emit('remove-extra-layer')"
+          ><Minus /></button>
+        </template>
       </div>
       <div class="overlay-group" :aria-label="t('editor.toolbar.overlays')">
         <button v-if="paintMode !== 'region'" type="button" data-ui-id="editor-overlay-regions" :class="{ active: showRegions }" :aria-pressed="showRegions" :disabled="busy" :title="t('editor.toolbar.showRegions')" @click="$emit('update:showRegions', !showRegions)"><Grid />{{ t('editor.toolbar.region') }}</button>
@@ -91,12 +110,13 @@
 
 <script setup lang="ts">
 import { computed, type Component } from 'vue';
-import { Brush, Crop, Delete, EditPen, Files, Grid, Location, MagicStick, RefreshLeft, RefreshRight, Setting, Sunny, VideoPlay, View } from '@element-plus/icons-vue';
+import { Brush, Crop, Delete, EditPen, Files, Grid, Location, MagicStick, Minus, Plus, RefreshLeft, RefreshRight, Setting, Sunny, VideoPlay, View } from '@element-plus/icons-vue';
 import type { EditorMode, MapLayerSelection, MapPaintMode, MapTool } from './editorTypes';
+import { extraLayerSelection, extraLayerSelectionIndex } from './editorTypes';
 import EllipseToolIcon from './EllipseToolIcon.vue';
 import { useI18n } from '../../i18n';
-defineProps<{mode:EditorMode;tool:MapTool;paintMode:MapPaintMode;layer:MapLayerSelection;supportsLayerSelection:boolean;showRegions:boolean;showTileFlags:boolean;tileFlagsAvailable:boolean;showUlds:boolean;uldsAvailable:boolean;zoom:number;undoLen:number;redoLen:number;busy:boolean;stagingDirty:boolean;stagingConflicted:boolean;previewRefreshEnabled:boolean;previewExecutionEnabled:boolean;previewExecutionAvailable:boolean}>();
-defineEmits<{'update:mode':[EditorMode];'update:layer':[MapLayerSelection];'update:showRegions':[boolean];'update:showTileFlags':[boolean];'update:showUlds':[boolean];'open-ulds':[];'update:preview-execution':[boolean];'select-tool':[MapTool];'select-tile':[];'select-shadow':[];undo:[];redo:[];'zoom-in':[];'zoom-out':[];'reset-zoom':[];apply:[];discard:[];'refresh-preview':[]}>();
+const props = defineProps<{mode:EditorMode;tool:MapTool;paintMode:MapPaintMode;layer:MapLayerSelection;supportsLayerSelection:boolean;showRegions:boolean;showTileFlags:boolean;tileFlagsAvailable:boolean;showUlds:boolean;uldsAvailable:boolean;zoom:number;undoLen:number;redoLen:number;busy:boolean;stagingDirty:boolean;stagingConflicted:boolean;previewRefreshEnabled:boolean;previewExecutionEnabled:boolean;previewExecutionAvailable:boolean;extraTileLayers?:{name:string}[];extraTileLayersEnabled?:boolean}>();
+defineEmits<{'update:mode':[EditorMode];'update:layer':[MapLayerSelection];'update:showRegions':[boolean];'update:showTileFlags':[boolean];'update:showUlds':[boolean];'open-ulds':[];'update:preview-execution':[boolean];'select-tool':[MapTool];'select-tile':[];'select-shadow':[];undo:[];redo:[];'zoom-in':[];'zoom-out':[];'reset-zoom':[];apply:[];discard:[];'refresh-preview':[];'add-extra-layer':[];'remove-extra-layer':[]}>();
 const { t } = useI18n();
 const tools = computed<{ id: MapTool; label: string; icon: Component }[]>(() => [
   { id: 'pencil', label: t('editor.toolbar.tool.pencil'), icon: EditPen },
@@ -105,9 +125,15 @@ const tools = computed<{ id: MapTool; label: string; icon: Component }[]>(() => 
   { id: 'fill', label: t('editor.toolbar.tool.fill'), icon: MagicStick },
   { id: 'eraser', label: t('editor.toolbar.tool.eraser'), icon: Delete },
 ]);
+const extraLayerActive = computed(() => extraLayerSelectionIndex(props.layer) != null);
 const layerEntries = computed<Array<{ value: MapLayerSelection; label: string; title: string }>>(() => [
   { value: 'auto', label: t('editor.toolbar.layerAutoShort'), title: t('editor.toolbar.layerAuto') },
   ...([0, 1, 2, 3] as const).map((value) => ({ value, label: String(value + 1), title: t('editor.toolbar.layerNumber', { number: value + 1 }) })),
+  ...(props.extraTileLayersEnabled ? (props.extraTileLayers || []).map((entry, index) => ({
+    value: extraLayerSelection(index) as MapLayerSelection,
+    label: `+${index + 1}`,
+    title: entry.name || t('editor.toolbar.extraLayer', { number: index + 1 }),
+  })) : []),
 ]);
 </script>
 

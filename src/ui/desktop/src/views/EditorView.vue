@@ -10,6 +10,8 @@
       v-model:show-tile-flags="showTileFlags"
       v-model:show-ulds="showUldsLayers"
       :ulds-available="uldsPluginEnabled && selectedMapId != null"
+      :extra-tile-layers="extraTileLayers"
+      :extra-tile-layers-enabled="tileLayersPluginEnabled && selectedMapId != null"
       :tile-flags-available="tileFlagsAvailable"
       :supports-layer-selection="Boolean(editorCatalog)"
       :zoom="zoom"
@@ -32,6 +34,8 @@
       @apply="applyStaging"
       @discard="discardStaging"
       @open-ulds="openUldsPanel"
+      @add-extra-layer="addExtraTileLayer"
+      @remove-extra-layer="removeExtraTileLayer"
       @refresh-preview="refreshPreview"
       @update:preview-execution="setPreviewEventExecution"
     />
@@ -237,6 +241,7 @@
       :system-data="systemData"
       :catalog="editorCatalog"
       :tileset-images="currentTilesetImages"
+      :extended-tileset-sheets="currentExtendedTilesetSheets"
       :load-image="loadImage"
       :overview="eventOverview"
       :current-events="currentEvents"
@@ -257,6 +262,10 @@
       :target-map-name="externalImportDialog.targetMapName"
       @close="externalImportDialog.open = false"
       @applied="onExternalMapImportApplied"
+    />
+    <MapImageExportDialog
+      v-model:visible="mapImageExportDialogOpen"
+      :scene="mapImageExportScene"
     />
 
     <el-dialog
@@ -288,6 +297,7 @@
           <li @click="ctxImportExternalMap">{{ t('editor.ctx.importExternalMap') }}</li>
           <li @click="ctxReplaceMap">{{ t('editor.ctx.replaceMap') }}</li>
           <li @click="ctxOpenNotes">{{ t('editor.ctx.notes') }}</li>
+          <li @click="ctxExportMapImage">{{ t('editor.ctx.exportMapImage') }}</li>
           <li class="ctx-sep" />
           <li :class="{ disabled: !stagedMapIds.has(treeContext.mapId) }" @click="ctxApplyMap">{{ t('editor.ctx.applyMapStaging') }}</li>
           <li :class="{ disabled: !stagedMapIds.has(treeContext.mapId) }" @click="ctxDiscardMap">{{ t('editor.ctx.discardMapStaging') }}</li>
@@ -347,6 +357,7 @@ import QuickObtainEventDialog from '../components/editor/QuickObtainEventDialog.
 import MapPropertiesDialog from '../components/editor/MapPropertiesDialog.vue';
 import UldsPanel from '../components/editor/UldsPanel.vue';
 import ExternalMapImportDialog from '../components/editor/ExternalMapImportDialog.vue';
+import MapImageExportDialog from '../components/editor/MapImageExportDialog.vue';
 import BottomPanel from '../components/editor/BottomPanel.vue';
 import MapRuntimePreview from '../components/editor/MapRuntimePreview.vue';
 import MapPreviewInspector from '../components/editor/MapPreviewInspector.vue';
@@ -354,7 +365,8 @@ import PreviewConsolePanel from '../components/editor/PreviewConsolePanel.vue';
 import { appendPreviewTerminalEntry, type PreviewTerminalEntry } from '../components/editor/previewTerminal';
 import { previewEventSelectionChange } from '../components/editor/previewEventSelection';
 import type { EditorEventListItem, EditorEventSearchHit, EditorMode, EditorStatusKind, MapLayerSelection, MapPaintMode, MapPropertiesForm, MapTool, TreeNode } from '../components/editor/editorTypes';
-import { clipboard as clipboardApi, eventRegistry, events as eventsApi, mapPreview, maps as mapsApi, playtest, projectAssets, resolveAssetUrl, storyPages, workspaceSurfaces, type EditorProjectCatalog, type MapPreviewConsoleEntry, type MapPreviewEventState, type MapPreviewOverrides, type MapPreviewRuntimeCommand, type MapPreviewRuntimeEvent, type MapPreviewSelfSwitchLetter, type MapPreviewSession, type MapPreviewStateEntry, type MapPreviewStatus, type MapPreviewVariableValue, type MapPreviewViewRequest, type MapTreeNode, type RmmvAudioSettings, type RmmvMapProperties, type RmmvSystemPositionTarget, type StoryEventOverview, type TilesetSummary } from '../api/client';
+import { extraLayerSelection, extraLayerSelectionIndex, isExtraLayerSelection } from '../components/editor/editorTypes';
+import { clipboard as clipboardApi, eventRegistry, events as eventsApi, mapPreview, maps as mapsApi, playtest, plugins as pluginsApi, projectAssets, resolveAssetUrl, storyPages, workspaceSurfaces, type EditorProjectCatalog, type ExtendedTilesetSheetDescriptor, type MapImageExportScene, type MapPreviewConsoleEntry, type MapPreviewEventState, type MapPreviewOverrides, type MapPreviewRuntimeCommand, type MapPreviewRuntimeEvent, type MapPreviewSelfSwitchLetter, type MapPreviewSession, type MapPreviewStateEntry, type MapPreviewStatus, type MapPreviewVariableValue, type MapPreviewViewRequest, type MapTreeNode, type RmmvAudioSettings, type RmmvMapProperties, type RmmvSystemPositionTarget, type StoryEventOverview, type TilesetSummary } from '../api/client';
 import { useMapCanvasEditor, type PlacementFlashCell } from '../composables/useMapCanvasEditor';
 import { clone, defaultEvent, quickEventTemplate, quickObtainEventTemplate, type MvEditorEvent, type MvEventImage, type QuickEventType, type QuickObtainKind } from '../composables/useEventEditor';
 import {
@@ -374,6 +386,7 @@ import { useProductPluginsStore } from '../stores/productPlugins';
 import { placeContractAtCell } from '../composables/usePlacementAtCell';
 import type { MvEvent, MvMap, UldsDrawLayer } from '../composables/useMapRenderer';
 import { ULDS_DEFAULT_Z, orderUldsLayerKeys, parseUldsNote, staticUldsBlendMode, staticUldsBoolean, staticUldsCoordinate, staticUldsNumber, writeUldsNote, type UldsLayerRecord } from '@contract/ulds';
+import { createEmptyTileLayer, parseMapTileLayersNote, writeMapTileLayersNote, type MapTileLayerRecord } from '@contract/map-tile-layers';
 import { isPlacedStatus } from '../utils/placementStatus';
 import { canActivatePlacementOnMap } from '../utils/placementMapPolicy';
 import { placementValidityHint, validatePlacementCell } from '../utils/placementCellValidity';
@@ -393,6 +406,7 @@ import {
   type MapPreviewDiagnostic,
 } from '../utils/mapPreviewDiagnostics';
 import { formatUserFacingErrorMessage } from '../utils/user-facing-error';
+import { cloneDraft } from '../utils/clone-draft';
 import { registerProductPluginLifecycleGuard } from '../utils/productPluginLifecycle';
 import { useI18n, type MessageKey } from '../i18n';
 import type {
@@ -502,11 +516,15 @@ const treeMenuEl = ref<HTMLElement | null>(null);
 const canvasMenuEl = ref<HTMLElement | null>(null);
 // Per-map notes dialog opened from the map tree context menu.
 const notesDialog = reactive({ open: false, saving: false, mapId: 0, mapName: '', mapNote: '', editorNote: '' });
+const mapImageExportDialogOpen = ref(false);
+const mapImageExportScene = shallowRef<MapImageExportScene | null>(null);
 // External-project map import dialog (a standalone popup that also hosts phase-2 replace).
 const externalImportDialog = reactive({ open: false, anchorParentId: 0, mode: 'import' as 'import' | 'replace', targetMapId: 0, targetMapName: '' });
 const systemData = ref<{ switches: string[]; variables: string[] } | null>(null);
 const editorCatalog = ref<EditorProjectCatalog | null>(null);
 const currentTilesetImages = shallowRef<(HTMLImageElement | null)[]>([]);
+const currentTilesetNames = ref<string[]>([]);
+const currentExtendedTilesetSheets = ref<ExtendedTilesetSheetDescriptor[]>([]);
 const currentParallaxImage = shallowRef<HTMLImageElement | null>(null);
 // --- ULDS (unlimited layers) panel + canvas preview state ---
 const showUldsLayers = ref(false);
@@ -541,6 +559,66 @@ watch(uldsPluginEnabled, (enabled) => {
   uldsPanelOpen.value = false;
   if (!uldsDirty.value) uldsDraftLayers.value = null;
 });
+
+// --- Unlimited tile layers (extra tile planes above the stock 4 layers) ---
+const tileLayersPluginEnabled = computed(() => productPlugins.isEnabled('unlimited-tile-layers'));
+const savedTileLayers = computed(() => parseMapTileLayersNote(currentMapNote.value));
+const extraTileLayers = shallowRef<MapTileLayerRecord[]>([]);
+const canvasExtraTileLayers = computed<MapTileLayerRecord[]>(() => (
+  tileLayersPluginEnabled.value && mode.value !== 'preview' ? extraTileLayers.value : []
+));
+
+watch(savedTileLayers, (parsed) => {
+  extraTileLayers.value = parsed.layers.map((entry) => ({ ...entry, tiles: [...entry.tiles] }));
+}, { immediate: true });
+watch(tileLayersPluginEnabled, (enabled) => {
+  if (!enabled && isExtraLayerSelection(layer.value)) layer.value = 0;
+});
+watch(extraTileLayers, (layers) => {
+  const index = extraLayerSelectionIndex(layer.value);
+  if (index != null && index >= layers.length) layer.value = 0;
+});
+
+async function saveExtraTileLayers(): Promise<void> {
+  const mapId = selectedMapId.value;
+  if (mapId == null) throw new Error(t('editor.error.noSelectedMap'));
+  const note = writeMapTileLayersNote(currentMapNote.value, extraTileLayers.value, savedTileLayers.value.invalidBlocks);
+  const saved = await saveMapNote(mapId, note);
+  if (!saved) throw new Error(t('editor.tileLayers.saveFailed'));
+  if (extraTileLayers.value.some((entry) => entry.tiles.some((tileId) => tileId > 0))) void ensureTileLayersRuntime();
+}
+
+async function ensureTileLayersRuntime(): Promise<void> {
+  try {
+    await pluginsApi.ensureManagedUnlimitedTileLayers({}, projectStore.currentProject);
+  } catch (error) {
+    ElMessage.error(t('editor.tileLayers.runtimeFailed', { message: (error as Error).message }));
+  }
+}
+
+function addExtraTileLayer(): void {
+  if (!tileLayersPluginEnabled.value || !currentMap) return;
+  const entry = createEmptyTileLayer(
+    t('editor.toolbar.extraLayer', { number: extraTileLayers.value.length + 1 }),
+    currentMap.width,
+    currentMap.height,
+  );
+  extraTileLayers.value = [...extraTileLayers.value, entry];
+  layer.value = extraLayerSelection(extraTileLayers.value.length - 1);
+  void saveExtraTileLayers().catch(() => {});
+}
+
+async function removeExtraTileLayer(): Promise<void> {
+  const index = extraLayerSelectionIndex(layer.value);
+  if (index == null || !tileLayersPluginEnabled.value) return;
+  try {
+    await ElMessageBox.confirm(t('editor.toolbar.extraLayerRemoveConfirm'), t('editor.toolbar.extraLayerRemoveTitle'), { type: 'warning' });
+  } catch { return; }
+  extraTileLayers.value = extraTileLayers.value.filter((_, entryIndex) => entryIndex !== index);
+  layer.value = 0;
+  void saveExtraTileLayers().catch(() => {});
+}
+
 
 function uldsLayerImageKey(record: UldsLayerRecord): { key: string; path: string; name: string } | null {
   const name = String(record.name || '').trim();
@@ -662,6 +740,8 @@ const canvasEditor = useMapCanvasEditor({
   tileSize: currentTileSize,
   parallaxImage: currentParallaxImage,
   uldsLayers: canvasUldsLayers,
+  extraTileLayers: canvasExtraTileLayers,
+  saveExtraTileLayers,
   engine: currentEngine,
   tilesetMode: currentTilesetMode,
   mode,
@@ -2072,6 +2152,8 @@ async function loadMap(
       currentTilesetMode.value = payload.tileset?.mode ?? null;
       currentMap = nextMap;
       currentMapRevision.value = payload.effectiveMapRevision;
+      currentTilesetNames.value = [...names];
+      currentExtendedTilesetSheets.value = cloneDraft(payload.tileset?.extendedTilesetSheets || []);
       syncCurrentEvents(nextMap);
       if (!options.preserveEventSelection) selectedEventId.value = null;
       systemData.value = payload.system || null;
@@ -2084,7 +2166,13 @@ async function loadMap(
       stagingDirty.value = isStagingDirty(payload.staging);
       currentParallaxImage.value = parallaxImage;
       for (const [name, image] of eventCharacters) characterImages.set(name, image);
-      await setMap(nextMap, names, images, options.resetHistory !== false);
+      await setMap(
+        nextMap,
+        names,
+        images,
+        options.resetHistory !== false,
+        payload.tileset?.extendedTilesetSheets || [],
+      );
       if (!isCurrent()) return;
       currentTilesetImages.value = images;
       renderMap();
@@ -2501,6 +2589,36 @@ async function ctxOpenNotes() {
   });
 }
 
+async function ctxExportMapImage() {
+  const id = treeContext.mapId;
+  closeTreeContext();
+  if (selectedMapId.value !== id && !(await confirmDiscardUldsDraft())) return;
+  if (selectedMapId.value !== id && await loadMap(id) !== 'committed') return;
+  if (!currentMap || selectedMapId.value !== id || !currentMapRevision.value) return;
+  mapImageExportScene.value = {
+    requestId: `map-image-${Date.now()}`,
+    project: projectStore.currentProject,
+    mapId: id,
+    mapName: currentMapName.value,
+    mapRevision: currentMapRevision.value,
+    tileSize: currentTileSize.value,
+    map: cloneDraft(currentMap) as MapImageExportScene['map'],
+    tileset: {
+      tilesetNames: [...currentTilesetNames.value],
+      flags: [...tilesetFlags.value],
+      extendedTilesetSheets: cloneDraft(currentExtendedTilesetSheets.value),
+    },
+    unlimitedLayerDraft: cloneDraft(effectiveUldsLayers.value),
+    unlimitedLayersEnabled: uldsPluginEnabled.value,
+    options: {
+      scalePercent: 100,
+      includeDefaultEventCharacters: false,
+      includeUnlimitedLayers: uldsPluginEnabled.value,
+    },
+  };
+  mapImageExportDialogOpen.value = true;
+}
+
 async function saveNotesDialog() {
   const id = notesDialog.mapId;
   notesDialog.saving = true;
@@ -2912,6 +3030,8 @@ function clearCurrentMap() {
   currentMapNote.value = '';
   currentTileSize.value = 48;
   currentTilesetImages.value = [];
+  currentTilesetNames.value = [];
+  currentExtendedTilesetSheets.value = [];
   currentParallaxImage.value = null;
   currentMapRevision.value = '';
   syncCurrentEvents(null);

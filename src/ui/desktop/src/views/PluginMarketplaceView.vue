@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Brush, Edit, MapLocation, Picture } from '@element-plus/icons-vue'
+import { Brush, Edit, Grid, MapLocation, Picture } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -20,7 +20,7 @@ const error = ref('')
 const errorTitle = ref('')
 
 const definitions = computed(() => productPlugins.definitions)
-const iconMap = { Brush, Edit, MapLocation, Picture }
+const iconMap = { Brush, Edit, Grid, MapLocation, Picture }
 const disabledRedirect = computed(() => (
   route.query.reason === 'disabled'
   && typeof route.query.plugin === 'string'

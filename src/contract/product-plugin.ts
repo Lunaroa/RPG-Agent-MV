@@ -50,6 +50,19 @@ export const PRODUCT_PLUGIN_DESCRIPTORS = [
     defaultEnabled: false,
   },
   {
+    id: 'unlimited-tile-layers',
+    version: '1.0.0',
+    route: '/workbench/tile-layers',
+    icon: 'Grid',
+    name: { 'en-US': 'Unlimited tile layers', 'zh-CN': '无限图块层' },
+    description: {
+      'en-US': 'Paint extra tile layers above the four stock layers in the map editor.',
+      'zh-CN': '在地图编辑器中于原有 4 层之上绘制任意数量的额外图块层。',
+    },
+    compatibleProductVersion: '^0.8.0',
+    defaultEnabled: false,
+  },
+  {
     id: 'map-overview',
     version: '1.0.0',
     route: '/map-overview',

@@ -27,6 +27,11 @@ export const PRODUCT_PLUGIN_REGISTRY = [
   },
   {
     ...PRODUCT_PLUGIN_DESCRIPTORS[2],
+    titleKey: 'productPlugin.unlimitedTileLayers.title',
+    descriptionKey: 'productPlugin.unlimitedTileLayers.description',
+  },
+  {
+    ...PRODUCT_PLUGIN_DESCRIPTORS[3],
     titleKey: 'productPlugin.mapOverview.title',
     descriptionKey: 'productPlugin.mapOverview.description',
   },

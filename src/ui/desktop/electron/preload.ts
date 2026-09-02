@@ -6,6 +6,8 @@ import type {
   ExternalMapReplaceScanRequest,
   MapOverviewPngExportProgressEvent,
   MapOverviewPngExportScene,
+  MapImageExportPreviewResult,
+  MapImageExportScene,
   MapOverviewScanProgressEvent,
   ProjectAssetBrowseOptions,
 } from '../../../contract/types.ts';
@@ -141,21 +143,6 @@ contextBridge.exposeInMainWorld('api', {
     downloadGit: () => ipcRenderer.invoke('projectGit:downloadGit'),
     backup: (request?: ProjectGitProjectRequest) => ipcRenderer.invoke('projectGit:backup', request),
   },
-  versionWindow: {
-    open: () => ipcRenderer.invoke('versionWindow:open'),
-    notifyStatusChanged: (status: unknown) => ipcRenderer.invoke('versionWindow:status-changed', status),
-    notifyProjectChanged: (project: string) => ipcRenderer.invoke('versionWindow:project-changed', project),
-    onStatusChanged: (handler: (status: unknown) => void) => {
-      const listener = (_event: unknown, status: unknown) => handler(status);
-      ipcRenderer.on('projectGit:statusChanged', listener);
-      return () => ipcRenderer.removeListener('projectGit:statusChanged', listener);
-    },
-    onProjectChanged: (handler: (project: string) => void) => {
-      const listener = (_event: unknown, project: unknown) => handler(typeof project === 'string' ? project : '');
-      ipcRenderer.on('projectGit:projectChanged', listener);
-      return () => ipcRenderer.removeListener('projectGit:projectChanged', listener);
-    },
-  },
   uiDesigner: {
     open: (request?: Pick<UiDesignerFileRequest, 'path' | 'project'>) => ipcRenderer.invoke('ui-designer:file:open', request),
     importScene: (request?: UiDesignerProjectRequest) => ipcRenderer.invoke('ui-designer:file:import', request),
@@ -279,6 +266,11 @@ contextBridge.exposeInMainWorld('api', {
     startOverviewPngExport: (scene: MapOverviewPngExportScene) => ipcRenderer.invoke('maps:overviewExportStart', scene),
     overviewPngExportStatus: () => ipcRenderer.invoke('maps:overviewExportStatus'),
     cancelOverviewPngExport: (requestId: string) => ipcRenderer.invoke('maps:overviewExportCancel', requestId),
+    imageExportPreview: (scene: MapImageExportScene) => ipcRenderer.invoke('maps:imageExportPreview', scene),
+    cancelImageExportPreview: (requestId: string) => ipcRenderer.invoke('maps:imageExportPreviewCancel', requestId),
+    selectImageExportDirectory: () => ipcRenderer.invoke('maps:imageExportSelectDirectory'),
+    copyImageExport: (preview: MapImageExportPreviewResult) => ipcRenderer.invoke('maps:imageExportCopy', preview),
+    writeImageExport: (request: unknown) => ipcRenderer.invoke('maps:imageExportWrite', request),
     onOverviewPngExportProgress: (callback: (progress: MapOverviewPngExportProgressEvent) => void) => {
       const handler = (_event: unknown, progress: MapOverviewPngExportProgressEvent) => callback(progress);
       ipcRenderer.on('maps:overviewExportProgress', handler);
@@ -488,6 +480,12 @@ contextBridge.exposeInMainWorld('api', {
     selectInstallDirectory: () => ipcRenderer.invoke('plugins:selectInstallDirectory'),
     deleteFile: (pluginName: string, options?: unknown, project?: string) =>
       ipcRenderer.invoke('plugins:deleteFile', pluginName, options, project),
+    inspectManagedUnlimitedTilesets: (project?: string) =>
+      ipcRenderer.invoke('plugins:inspectManagedUnlimitedTilesets', project),
+    setManagedUnlimitedTilesetsEnabled: (enabled: boolean, options?: unknown, project?: string) =>
+      ipcRenderer.invoke('plugins:setManagedUnlimitedTilesetsEnabled', enabled, options, project),
+    ensureManagedUnlimitedTileLayers: (options?: unknown, project?: string) =>
+      ipcRenderer.invoke('plugins:ensureManagedUnlimitedTileLayers', options, project),
   },
 
   assetLibrary: {

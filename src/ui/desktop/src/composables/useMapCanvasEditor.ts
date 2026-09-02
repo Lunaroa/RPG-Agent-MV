@@ -1,6 +1,9 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Ref } from 'vue';
-import type { TileEdit } from '../api/client';
+import type { ExtendedTilesetSheetDescriptor, ExtendedTilesetSheetType, TileEdit } from '../api/client';
+import { decodeExtendedAutotileId } from '@contract/extended-tileset';
 import type { EditorMode, EditorStatusKind, MapLayerSelection, MapPaintMode, MapTool, PaletteTab, PaletteTabId, TileTab } from '../components/editor/editorTypes';
+import { extraLayerSelectionIndex, isExtraLayerSelection } from '../components/editor/editorTypes';
+import type { MapTileLayerRecord } from '@contract/map-tile-layers';
 import type { ProductLanguage, RpgMakerEngine } from '../../../../contract/types.ts';
 import {
   applyRmmvMapBrushEdits,
@@ -74,6 +77,8 @@ import { mapCellViewportTarget } from '../utils/mapCanvasViewport';
 import { normalizeProductLanguage, translate, type MessageKey } from '../i18n/messages.ts'
 
 const MAP_MODE_EVENT_OPACITY = 0.35;
+/** Undo/redo changes for extra tile layers are tagged with layer >= this base + index. */
+const EXTRA_LAYER_SENTINEL = 1000;
 
 export function paletteFrameLineWidths(emphasis: 'hover' | 'selected', cssScaleInput: number): { outer: number; inner: number } {
   const cssScale = Math.max(.01, Number(cssScaleInput) || 1);
@@ -93,6 +98,8 @@ type BrushCell = {
   dy: number;
   tileId?: number;
   autotileKind?: number;
+  tilesetSlot?: number;
+  extendedTilesetType?: Extract<ExtendedTilesetSheetType, 'A1' | 'A2' | 'A3' | 'A4'>;
   preserveAutotileShape?: boolean;
   layerStack?: LayerBrushSample[];
 };
@@ -100,6 +107,8 @@ type PaintLayer = 0 | 1 | 2 | 3;
 export type LayerBrushSample = {
   tileId: number;
   autotileKind?: number;
+  tilesetSlot?: number;
+  extendedTilesetType?: Extract<ExtendedTilesetSheetType, 'A1' | 'A2' | 'A3' | 'A4'>;
   preserveAutotileShape?: boolean;
 };
 export type MapCanvasBrush =
@@ -121,6 +130,7 @@ export function buildLayerStackEdits(
   layerStack: readonly LayerBrushSample[],
   forceExactAutotiles = false,
 ): TileEdit[] {
+  if (isExtraLayerSelection(selection)) throw new Error('Layer-stack brushes cannot target an extra tile layer.');
   if (layerStack.length < 4) throw new Error('A map layer stack must contain four tile samples.');
   const layers: PaintLayer[] = selection === 'auto' ? [0, 1, 2, 3] : [selection];
   return layers.map((layer) => {
@@ -132,6 +142,10 @@ export function buildLayerStackEdits(
         y,
         layer,
         autotileKind: sample.autotileKind,
+        ...(sample.tilesetSlot == null ? {} : {
+          tilesetSlot: sample.tilesetSlot,
+          extendedTilesetType: sample.extendedTilesetType,
+        }),
       };
     }
     const tileId = Number(sample.tileId || 0);
@@ -187,7 +201,9 @@ export function buildMapRangeBrush(
   to: { x: number; y: number },
   selection: MapLayerSelection,
   preserveAutotileShapes = false,
+  extendedTilesetSheets: readonly ExtendedTilesetSheetDescriptor[] = [],
 ): MapCanvasBrush {
+  if (isExtraLayerSelection(selection)) throw new Error('Range picking on an extra tile layer is handled by the caller.');
   const range = normalizeInclusiveCellRect(from, to);
   const cells: BrushCell[] = [];
   const layerSize = map.width * map.height;
@@ -199,20 +215,26 @@ export function buildMapRangeBrush(
           dy: y - range.minY,
           layerStack: [0, 1, 2, 3].map((layer) => {
             const tileId = Number(map.data[layer * layerSize + y * map.width + x] || 0);
-            return sampleMapTile(tileId, preserveAutotileShapes);
+            return sampleMapTile(tileId, preserveAutotileShapes, extendedTilesetSheets);
           }),
         });
         continue;
       }
       const tileId = Number(map.data[selection * layerSize + y * map.width + x] || 0);
-      if (tileId >= TILE_ID_A1 && !preserveAutotileShapes) {
+      const extendedAuto = decodeExtendedAutotileId(extendedTilesetSheets, tileId);
+      if (((tileId >= TILE_ID_A1 && tileId < 8192) || extendedAuto) && !preserveAutotileShapes) {
         cells.push({ dx: x - range.minX, dy: y - range.minY, tileId, autotileKind: Math.floor((tileId - TILE_ID_A1) / 48) });
+        if (extendedAuto) Object.assign(cells[cells.length - 1], {
+          autotileKind: extendedAuto.localKind,
+          tilesetSlot: extendedAuto.descriptor.slotIndex,
+          extendedTilesetType: extendedAuto.descriptor.type,
+        });
       } else {
         cells.push({
           dx: x - range.minX,
           dy: y - range.minY,
           tileId,
-          preserveAutotileShape: tileId >= TILE_ID_A1,
+          preserveAutotileShape: (tileId >= TILE_ID_A1 && tileId < 8192) || Boolean(extendedAuto),
         });
       }
     }
@@ -229,10 +251,58 @@ export function buildMapRangeBrush(
   return { type: 'tileRect', cells, width: range.width, height: range.height, hotspotX, hotspotY };
 }
 
-function sampleMapTile(tileId: number, preserveAutotileShape: boolean): LayerBrushSample {
-  if (tileId < TILE_ID_A1) return { tileId };
+function sampleMapTile(tileId: number, preserveAutotileShape: boolean, descriptors: readonly ExtendedTilesetSheetDescriptor[]): LayerBrushSample {
+  const extended = decodeExtendedAutotileId(descriptors, tileId);
+  if ((tileId < TILE_ID_A1 || tileId >= 8192) && !extended) return { tileId };
   if (preserveAutotileShape) return { tileId, preserveAutotileShape: true };
+  if (extended) return {
+    tileId,
+    autotileKind: extended.localKind,
+    tilesetSlot: extended.descriptor.slotIndex,
+    extendedTilesetType: extended.descriptor.type,
+  };
   return { tileId, autotileKind: Math.floor((tileId - TILE_ID_A1) / 48) };
+}
+
+/** Eyedrop brush for an extra tile layer: single-plane sampling, never a stack. */
+export function buildExtraLayerRangeBrush(
+  map: Pick<MvMap, 'width' | 'height'>,
+  tiles: readonly number[],
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  preserveAutotileShapes = false,
+  extendedTilesetSheets: readonly ExtendedTilesetSheetDescriptor[] = [],
+): MapCanvasBrush {
+  const range = normalizeInclusiveCellRect(from, to);
+  const cells: BrushCell[] = [];
+  for (let y = range.minY; y <= range.maxY; y += 1) {
+    for (let x = range.minX; x <= range.maxX; x += 1) {
+      const tileId = Number(tiles[y * map.width + x] || 0);
+      const extendedAuto = decodeExtendedAutotileId(extendedTilesetSheets, tileId);
+      if (((tileId >= TILE_ID_A1 && tileId < 8192) || extendedAuto) && !preserveAutotileShapes) {
+        cells.push({ dx: x - range.minX, dy: y - range.minY, tileId, autotileKind: Math.floor((tileId - TILE_ID_A1) / 48) });
+        if (extendedAuto) Object.assign(cells[cells.length - 1], {
+          autotileKind: extendedAuto.localKind,
+          tilesetSlot: extendedAuto.descriptor.slotIndex,
+          extendedTilesetType: extendedAuto.descriptor.type,
+        });
+      } else {
+        cells.push({
+          dx: x - range.minX,
+          dy: y - range.minY,
+          tileId,
+          preserveAutotileShape: (tileId >= TILE_ID_A1 && tileId < 8192) || Boolean(extendedAuto),
+        });
+      }
+    }
+  }
+  const hotspotX = to.x - range.minX;
+  const hotspotY = to.y - range.minY;
+  if (cells.length === 1 && cells[0].autotileKind != null) {
+    return { type: 'autotile', autotileKind: cells[0].autotileKind, cells };
+  }
+  if (cells.length === 1) return { type: 'tile', tileId: cells[0].tileId || 0, cells };
+  return { type: 'tileRect', cells, width: range.width, height: range.height, hotspotX, hotspotY };
 }
 
 interface CanvasEditorOptions {
@@ -240,6 +310,10 @@ interface CanvasEditorOptions {
   parallaxImage: Ref<HTMLImageElement | null>;
   /** Pre-resolved ULDS layers drawn into the map canvas when non-empty. */
   uldsLayers?: Readonly<Ref<UldsDrawLayer[]>>;
+  /** Extra tile layers (unlimited-tile-layers module); tiles arrays are mutated in place during strokes. */
+  extraTileLayers?: Readonly<Ref<MapTileLayerRecord[]>>;
+  /** Persists the current extra tile layers (map note write) after a stroke or history replay. */
+  saveExtraTileLayers?: () => Promise<void>;
   engine: Ref<RpgMakerEngine>;
   tilesetMode: Ref<number | null>;
   mode: Ref<EditorMode>;
@@ -299,6 +373,8 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
 
   let map: MvMap | null = null;
   let tilesetImages: (HTMLImageElement | null)[] = [];
+  let extendedTilesetSheets: ExtendedTilesetSheetDescriptor[] = [];
+  const tilesetDescriptorRevision = ref(0);
   let paletteCanvas: HTMLCanvasElement | null = null;
   let brush: MapCanvasBrush | null = null;
   let hoverCell: { x: number; y: number } | null = null;
@@ -307,6 +383,8 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
   let painting = false;
   let strokeEdits = new Map<string, TileEdit>();
   let strokeSnapshot: number[] | null = null;
+  let extraStrokeTiles: number[] | null = null;
+  let extraStrokeSnapshot: number[] | null = null;
   let lastStrokeCell: { x: number; y: number } | null = null;
   let shapePreviewTouched = new Set<number>();
   let mapRenderFrame: number | null = null;
@@ -336,15 +414,40 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     return Boolean(tilesetImages[slot]);
   }
 
+  function activeExtraIndex(): number | null {
+    const index = extraLayerSelectionIndex(options.layer.value);
+    if (index == null) return null;
+    const layers = options.extraTileLayers?.value;
+    return layers && layers[index] ? index : null;
+  }
+
+  function activeExtraTiles(): number[] | null {
+    const index = activeExtraIndex();
+    return index == null ? null : options.extraTileLayers!.value[index].tiles;
+  }
+
+  /** Extra layers edit against a synthetic grid whose paint plane is layer 0. */
+  function editLayer(): number | 'auto' {
+    if (activeExtraIndex() != null) return 0;
+    const value = options.layer.value;
+    return value === 'auto' || typeof value === 'number' ? value : 0;
+  }
+
   const tileTabs = computed<PaletteTab[]>(() => {
     // tilesetReady 是响应式 ref，读取它以建立依赖追踪；
     // 当 setMap 更新 tilesetImages 并修改 tilesetReady 时，此 computed 会自动重新计算
     void tilesetReady.value;
+    void tilesetDescriptorRevision.value;
     return [
       ...(['A', 'B', 'C', 'D', 'E'] as const).map((tab) => ({
         tab,
         label: tab,
-        available: tileTabAvailable(tab, tileSlotLoaded),
+        available: tileTabAvailable(tab, tileSlotLoaded, extendedTilesetSheets),
+      })),
+      ...extendedTilesetSheets.map((sheet) => ({
+        tab: sheet.label,
+        label: `${sheet.label} · ${sheet.type}`,
+        available: tileTabAvailable(sheet.label, tileSlotLoaded, extendedTilesetSheets),
       })),
       { tab: 'R' as const, label: 'R', available: true },
     ];
@@ -367,6 +470,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     options.tileSize,
     options.parallaxImage,
     options.uldsLayers,
+    options.extraTileLayers,
     tileTab,
     productLanguage,
   ], () => {
@@ -409,7 +513,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     scrollResizeObserver?.disconnect();
   });
 
-  async function setMap(nextMap: MvMap, _names: string[], images: (HTMLImageElement | null)[], resetHistory = true) {
+  async function setMap(nextMap: MvMap, _names: string[], images: (HTMLImageElement | null)[], resetHistory = true, descriptors: readonly ExtendedTilesetSheetDescriptor[] = []) {
     cancelStrokePreview();
     cancelMapRangeSelection(false);
     shadowHoverQuarter = null;
@@ -417,6 +521,8 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     map = nextMap;
     clearPaletteInteraction();
     tilesetImages = images;
+    extendedTilesetSheets = [...descriptors];
+    tilesetDescriptorRevision.value += 1;
     tilesetReady.value = images.some(Boolean);
     canvasWidth.value = nextMap.width * tileSize.value;
     canvasHeight.value = nextMap.height * tileSize.value;
@@ -452,6 +558,8 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     shadowHoverQuarter = null;
     lastEventClickCell = null;
     map = null;
+    extendedTilesetSheets = [];
+    tilesetDescriptorRevision.value += 1;
     clearPaletteInteraction();
     canvasWidth.value = 0;
     canvasHeight.value = 0;
@@ -526,18 +634,24 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       return;
     }
     const eventMode = options.mode.value === 'event';
+    const selection = options.layer.value;
+    const extraIndex = extraLayerSelectionIndex(selection);
+    const tilePainting = options.mode.value === 'map' && options.paintMode.value === 'tile';
     drawMapContent(context, map, {
       tilesetImages,
+      extendedTilesetSheets,
       parallaxImage: options.parallaxImage.value,
       uldsLayers: options.uldsLayers?.value,
+      extraTileLayers: options.extraTileLayers?.value,
+      activeExtraLayer: tilePainting ? activeExtraIndex() : null,
       tileSize: tileSize.value,
       tilesetFlags: options.tileFlags.value,
       showGrid: eventMode || options.showGrid.value,
       showRegions: shouldShowRegionOverlay(options.mode.value, options.paintMode.value, tileTab.value, options.showRegions.value),
       showRegionLabels: false,
       showTileFlags: options.mode.value === 'map' && options.showTileFlags.value,
-      activeLayer: options.mode.value === 'map' && options.paintMode.value === 'tile' && options.layer.value !== 'auto'
-        ? options.layer.value
+      activeLayer: tilePainting
+        ? (extraIndex != null ? -1 : typeof selection === 'number' ? selection : null)
         : null,
       eventOpacity: eventMode ? 1 : MAP_MODE_EVENT_OPACITY,
       selectedEventId: eventMode ? options.selectedEventId.value : null,
@@ -710,7 +824,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     context.save();
     context.globalAlpha = 0.55;
     if (Number(image.tileId) > 0) {
-      drawTile(context, tilesetImages, Number(image.tileId), px, py, tileSize.value);
+      drawTile(context, tilesetImages, Number(image.tileId), px, py, tileSize.value, extendedTilesetSheets);
     } else if (image.characterName) {
       const bitmap = options.getCharacterImage?.(image.characterName) || null;
       const frame = bitmap ? eventCharacterFrame(bitmap, image) : null;
@@ -755,7 +869,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     }
     const regionPalette = tileTab.value === 'R';
     const available = regionPalette || activeTileTabAvailable.value;
-    const rows = regionPalette ? MV_REGION_PALETTE_ROWS : available ? paletteRowsForTab(tileTab.value as TileTab) : 4;
+    const rows = regionPalette ? MV_REGION_PALETTE_ROWS : available ? paletteRowsForTab(tileTab.value as TileTab, extendedTilesetSheets) : 4;
     if (regionPalette) {
       const layout = regionPaletteLayout(
         canvas.parentElement?.clientWidth || MV_REGION_PALETTE_COLS * tileSize.value,
@@ -797,9 +911,9 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     }
     for (let row = 0; row < rows; row += 1) {
       for (let col = 0; col < MV_PALETTE_COLS; col += 1) {
-        const pick = palettePickForCell(tileTab.value as TileTab, col, row, tileSlotLoaded);
+        const pick = palettePickForCell(tileTab.value as TileTab, col, row, tileSlotLoaded, extendedTilesetSheets);
         if (!pick) continue;
-        drawTile(context, tilesetImages, tileIdForPalettePreview(pick), col * tileSize.value, row * tileSize.value, tileSize.value);
+        drawTile(context, tilesetImages, tileIdForPalettePreview(pick), col * tileSize.value, row * tileSize.value, tileSize.value, extendedTilesetSheets);
       }
     }
     if (paletteDragStart && paletteDragEnd) highlightPaletteDrag(context);
@@ -933,9 +1047,9 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     if (!brush) return;
     const places = brush.cells.map((cell) => {
       if (cell.autotileKind != null && tileTab.value === 'A') {
-        return tileIdToPaletteCell(TILE_ID_A1 + cell.autotileKind * 48, tileTab.value as TileTab);
+        return tileIdToPaletteCell(cell.tileId ?? (TILE_ID_A1 + cell.autotileKind * 48), tileTab.value as TileTab, extendedTilesetSheets);
       }
-      return cell.tileId == null ? null : tileIdToPaletteCell(cell.tileId, tileTab.value as TileTab);
+      return cell.tileId == null ? null : tileIdToPaletteCell(cell.tileId, tileTab.value as TileTab, extendedTilesetSheets);
     }).filter(Boolean) as { col: number; row: number }[];
     if (!places.length) return;
     const minCol = Math.min(...places.map((place) => place.col));
@@ -1065,7 +1179,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     const selection = buildPaletteRectSelection(
       paletteDragStart,
       paletteDragEnd,
-      (col, row) => palettePickForCell(tileTab.value as TileTab, col, row, tileSlotLoaded),
+      (col, row) => palettePickForCell(tileTab.value as TileTab, col, row, tileSlotLoaded, extendedTilesetSheets),
     );
     if (!selection) {
       paletteDragStart = null;
@@ -1373,9 +1487,13 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     }
     if (!painting || (event && event.button !== 0)) return;
     const rollback = strokeSnapshot;
+    const extraTiles = extraStrokeTiles;
+    const extraRollback = extraStrokeSnapshot;
     painting = false;
     dragStart = null;
     strokeSnapshot = null;
+    extraStrokeTiles = null;
+    extraStrokeSnapshot = null;
     lastStrokeCell = null;
     shapePreviewTouched = new Set();
     lastShadowQuarter = null;
@@ -1383,7 +1501,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     shadowStrokeQuadrants = new Set();
     const edits = [...strokeEdits.values()];
     strokeEdits = new Map();
-    if (edits.length) await commitEdits(edits, rollback);
+    if (edits.length) await commitEdits(edits, rollback, extraTiles, extraRollback);
     renderOverlay();
   }
 
@@ -1408,6 +1526,8 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     painting = true;
     dragStart = cell;
     strokeSnapshot = map.data.slice();
+    extraStrokeTiles = activeExtraTiles();
+    extraStrokeSnapshot = extraStrokeTiles ? extraStrokeTiles.slice() : null;
     lastStrokeCell = cell;
     strokeEdits = new Map();
     shapePreviewTouched = new Set();
@@ -1452,7 +1572,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       const value = options.tool.value === 'eraser' ? 0 : clampInt(options.regionId.value, 0, 255);
       return [{ kind: 'region', x, y, layer: REGION_LAYER, regionId: value }];
     }
-    if (options.tool.value === 'eraser') return [{ kind: 'tile', x, y, layer: options.layer.value, tileId: 0 }];
+    if (options.tool.value === 'eraser') return [{ kind: 'tile', x, y, layer: editLayer(), tileId: 0 }];
     const edits: TileEdit[] = [];
     const origin = brushOriginAt({ x, y }, activeBrushFootprint());
     for (const cell of brush?.cells || []) {
@@ -1468,20 +1588,27 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
         kind: 'tile',
         x,
         y,
-        layer: options.layer.value,
+        layer: editLayer(),
         tileId: cell.tileId ?? (TILE_ID_A1 + (cell.autotileKind || 0) * 48),
         preserveAutotileShape: true,
       }];
     }
     const exactAutotile = cell.autotileKind != null && shiftPressed;
     const payload = cell.autotileKind != null && !exactAutotile
-      ? { kind: 'autotile' as const, autotileKind: cell.autotileKind }
+      ? {
+          kind: 'autotile' as const,
+          autotileKind: cell.autotileKind,
+          ...(cell.tilesetSlot == null ? {} : {
+            tilesetSlot: cell.tilesetSlot,
+            extendedTilesetType: cell.extendedTilesetType,
+          }),
+        }
       : {
           kind: 'tile' as const,
           tileId: cell.tileId ?? (TILE_ID_A1 + (cell.autotileKind || 0) * 48),
           preserveAutotileShape: exactAutotile,
         };
-    return [{ x, y, layer: options.layer.value, ...payload }];
+    return [{ x, y, layer: editLayer(), ...payload }];
   }
 
   function applyToolAt(x: number, y: number, immediate = false) {
@@ -1519,14 +1646,19 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       accepted.push(edit);
     }
     if (!accepted.length) return;
-    const result = applyRmmvMapBrushEdits(map, accepted, {
-      engine: options.engine.value,
-      tilesetMode: options.tilesetMode.value,
-      autotileResolution: RMMV_INTERACTIVE_AUTOTILE_RESOLUTION,
-      mutate: true,
-      collectChanges: false,
-    });
-    if (shape) for (const index of result.touchedIndices) shapePreviewTouched.add(index);
+    if (activeExtraIndex() != null) {
+      applyExtraEdits(accepted, shape);
+    } else {
+      const result = applyRmmvMapBrushEdits(map, accepted, {
+        engine: options.engine.value,
+        tilesetMode: options.tilesetMode.value,
+        extendedTilesetSheets,
+        autotileResolution: RMMV_INTERACTIVE_AUTOTILE_RESOLUTION,
+        mutate: true,
+        collectChanges: false,
+      });
+      if (shape) for (const index of result.touchedIndices) shapePreviewTouched.add(index);
+    }
     if (immediate) {
       cancelScheduledMapRender();
       renderMap();
@@ -1535,8 +1667,47 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     }
   }
 
+  // Extra layers paint through a synthetic 6-layer grid whose layer 0 mirrors
+  // the active layer, so stock autotile resolution runs unchanged; the result
+  // plane is copied back and everything else (shadows, MZ auto-shadow) drops.
+  function applyExtraEdits(accepted: readonly TileEdit[], shape: boolean) {
+    const tiles = activeExtraTiles();
+    if (!tiles || !map) return;
+    const size = map.width * map.height;
+    while (tiles.length < size) tiles.push(0);
+    if (tiles.length > size) tiles.length = size;
+    const data = new Array<number>(size * 6).fill(0);
+    for (let index = 0; index < size; index += 1) data[index] = tiles[index] || 0;
+    const synthetic = { width: map.width, height: map.height, data };
+    const result = applyRmmvMapBrushEdits(synthetic, accepted, {
+      engine: options.engine.value,
+      tilesetMode: options.tilesetMode.value,
+      extendedTilesetSheets,
+      autotileResolution: RMMV_INTERACTIVE_AUTOTILE_RESOLUTION,
+      mutate: true,
+      collectChanges: false,
+    });
+    for (let index = 0; index < size; index += 1) tiles[index] = result.data[index] || 0;
+    if (shape) {
+      for (const index of result.touchedIndices) {
+        if (index < size) shapePreviewTouched.add(index);
+      }
+    }
+  }
+
   function previewShape(end: { x: number; y: number }, immediate = false) {
-    if (!map || !strokeSnapshot || !dragStart) return;
+    if (!map || !dragStart) return;
+    if (extraStrokeTiles && extraStrokeSnapshot) {
+      for (const index of shapePreviewTouched) {
+        if (index < extraStrokeSnapshot.length) extraStrokeTiles[index] = extraStrokeSnapshot[index];
+      }
+      shapePreviewTouched = new Set();
+      strokeEdits = new Map();
+      shadowStrokeQuadrants = new Set();
+      applyPreviewEdits(shapePatternEdits(dragStart, end), immediate, true);
+      return;
+    }
+    if (!strokeSnapshot) return;
     for (const index of shapePreviewTouched) map.data[index] = strokeSnapshot[index];
     shapePreviewTouched = new Set();
     strokeEdits = new Map();
@@ -1568,6 +1739,8 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       && left.layer === right.layer
       && left.tileId === right.tileId
       && left.autotileKind === right.autotileKind
+      && left.tilesetSlot === right.tilesetSlot
+      && left.extendedTilesetType === right.extendedTilesetType
       && left.preserveAutotileShape === right.preserveAutotileShape
       && left.shadowBits === right.shadowBits
       && left.regionId === right.regionId;
@@ -1587,7 +1760,10 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       renderPalette();
       return;
     }
-    brush = buildMapRangeBrush(map, from, to, options.layer.value, preserveAutotileShapes);
+    const extraTiles = activeExtraTiles();
+    brush = extraTiles
+      ? buildExtraLayerRangeBrush(map, extraTiles, from, to, preserveAutotileShapes, extendedTilesetSheets)
+      : buildMapRangeBrush(map, from, to, options.layer.value, preserveAutotileShapes, extendedTilesetSheets);
     if (tileTab.value === 'R') tileTab.value = lastTileTab;
     options.paintMode.value = 'tile';
     if (options.tool.value === 'eraser') options.tool.value = 'pencil';
@@ -1598,6 +1774,24 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     const cell = brush?.cells[0];
     if (options.layer.value === 'auto' && options.tool.value !== 'eraser' && cell?.layerStack) {
       return buildStackFloodFillEdits(map, start, cell.layerStack, shiftPressed);
+    }
+    const extraTiles = activeExtraTiles();
+    if (extraTiles) {
+      const target = extraTiles[start.y * map.width + start.x] || 0;
+      const replacement = activeReplacementValue();
+      if (target === replacement) return [];
+      const stack = [start];
+      const seen = new Set<string>();
+      const edits: TileEdit[] = [];
+      while (stack.length) {
+        const current = stack.pop()!;
+        const key = `${current.x},${current.y}`;
+        if (seen.has(key) || !inMap(current.x, current.y) || (extraTiles[current.y * map.width + current.x] || 0) !== target) continue;
+        seen.add(key);
+        edits.push(activeEditPayload(current.x, current.y));
+        stack.push({ x: current.x + 1, y: current.y }, { x: current.x - 1, y: current.y }, { x: current.x, y: current.y + 1 }, { x: current.x, y: current.y - 1 });
+      }
+      return edits;
     }
     const layer = activeEditLayer();
     const base = layer * map.width * map.height;
@@ -1622,7 +1816,11 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     if (!painting) return;
     painting = false;
     cancelScheduledMapRender();
-    if (map && strokeSnapshot) map.data = strokeSnapshot;
+    if (extraStrokeTiles && extraStrokeSnapshot) {
+      for (let index = 0; index < extraStrokeSnapshot.length; index += 1) extraStrokeTiles[index] = extraStrokeSnapshot[index];
+    } else if (map && strokeSnapshot) map.data = strokeSnapshot;
+    extraStrokeTiles = null;
+    extraStrokeSnapshot = null;
     dragStart = null;
     strokeSnapshot = null;
     lastStrokeCell = null;
@@ -1648,9 +1846,13 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     cancelMapRangeSelection();
   }
 
-  async function commitEdits(edits: TileEdit[], rollback: number[] | null = null) {
+  async function commitEdits(edits: TileEdit[], rollback: number[] | null = null, extraTiles: number[] | null = null, extraRollback: number[] | null = null) {
     if (options.mode.value !== 'map') {
       options.setStatus(t('mapcanvas.status.eventModeNoTiles'), 'error');
+      return;
+    }
+    if (extraTiles) {
+      await commitExtraEdits(extraTiles, extraRollback);
       return;
     }
     options.busy.value = true;
@@ -1674,6 +1876,49 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       await options.reloadMap();
     } finally { options.busy.value = false; }
   }
+
+  // Extra-layer strokes skip postTiles entirely: changes are diffed from the
+  // stroke snapshot, tagged with a sentinel layer for undo, and persisted by
+  // the host through saveExtraTileLayers (map note write).
+  async function commitExtraEdits(tiles: number[], snapshot: number[] | null) {
+    if (!map || !options.saveExtraTileLayers) return;
+    const index = extraLayerSelectionIndex(options.layer.value);
+    if (index == null) return;
+    options.busy.value = true;
+    options.setStatus(t('mapcanvas.status.stagingPaint'), 'busy');
+    try {
+      const size = map.width * map.height;
+      const changes: TileChange[] = [];
+      for (let cell = 0; cell < size; cell += 1) {
+        const before = snapshot?.[cell] || 0;
+        const after = tiles[cell] || 0;
+        if (before === after) continue;
+        changes.push({
+          kind: 'tile',
+          x: cell % map.width,
+          y: Math.floor(cell / map.width),
+          layer: EXTRA_LAYER_SENTINEL + index,
+          before,
+          after,
+        });
+      }
+      if (changes.length) {
+        undoStack.push(changes);
+        if (undoStack.length > 80) undoStack.shift();
+        redoStack = [];
+        syncStackLengths();
+        await options.saveExtraTileLayers();
+        options.setStatus(t('mapcanvas.status.stagedCells', { count: changes.length }), 'saved');
+      }
+      renderMap();
+    } catch (error) {
+      options.setStatus(t('mapcanvas.status.stageFailed', { message: (error as Error).message }), 'error');
+      if (snapshot) {
+        for (let cell = 0; cell < snapshot.length; cell += 1) tiles[cell] = snapshot[cell];
+      }
+      renderMap();
+    } finally { options.busy.value = false; }
+  }
   async function undo() { await replayHistory('undo'); }
   async function redo() { await replayHistory('redo'); }
   async function replayHistory(kind: 'undo' | 'redo') {
@@ -1682,6 +1927,10 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     if (!source.length) return;
     const changes = source.pop()!;
     syncStackLengths();
+    if (Number(changes[0]?.layer) >= EXTRA_LAYER_SENTINEL) {
+      await replayExtraHistory(kind, changes);
+      return;
+    }
     options.busy.value = true;
     options.setStatus(kind === 'undo' ? t('mapcanvas.status.undoing') : t('mapcanvas.status.redoing'), 'busy');
     try {
@@ -1696,13 +1945,36 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     } finally { options.busy.value = false; }
   }
 
+  async function replayExtraHistory(kind: 'undo' | 'redo', changes: TileChange[]) {
+    const layers = options.extraTileLayers?.value;
+    if (!map || !layers || !options.saveExtraTileLayers) return;
+    options.busy.value = true;
+    options.setStatus(kind === 'undo' ? t('mapcanvas.status.undoing') : t('mapcanvas.status.redoing'), 'busy');
+    try {
+      for (const change of changes) {
+        const layer = layers[Number(change.layer) - EXTRA_LAYER_SENTINEL];
+        if (!layer) continue;
+        layer.tiles[change.y * map.width + change.x] = kind === 'undo' ? (change.before ?? 0) : (change.after ?? 0);
+      }
+      (kind === 'undo' ? redoStack : undoStack).push(changes);
+      syncStackLengths();
+      await options.saveExtraTileLayers();
+      options.setStatus(kind === 'undo' ? t('mapcanvas.status.undone') : t('mapcanvas.status.redone'), 'saved');
+      renderMap();
+    } catch (error) {
+      const message = (error as Error).message;
+      options.setStatus(kind === 'undo' ? t('mapcanvas.status.undoFailed', { message }) : t('mapcanvas.status.redoFailed', { message }), 'error');
+    } finally { options.busy.value = false; }
+  }
+
   function toolReady() { return options.paintMode.value !== 'tile' || (activeTileTabAvailable.value && (options.tool.value === 'eraser' || Boolean(brush))); }
   function activeEditLayer() {
     if (options.paintMode.value === 'region') return REGION_LAYER;
-    if (options.layer.value !== 'auto') return options.layer.value;
+    if (typeof options.layer.value === 'number') return options.layer.value;
     const cell = brush?.cells[0];
     if (cell?.layerStack) return 0;
     if (cell?.autotileKind != null) {
+      if (cell.extendedTilesetType === 'A2') return cell.autotileKind % 8 >= 4 ? 1 : 0;
       const kind = cell.autotileKind;
       return kind >= 16 && kind < 48 && (kind - 16) % 8 >= 4 ? 1 : 0;
     }
@@ -1718,19 +1990,26 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     if (options.tool.value === 'eraser') return 0;
     if (options.paintMode.value === 'region') return clampInt(options.regionId.value, 0, 255);
     const cell = brush?.cells[0];
-    if (cell?.layerStack && options.layer.value !== 'auto') return Number(cell.layerStack[options.layer.value]?.tileId || 0);
-    return cell?.autotileKind != null ? TILE_ID_A1 + cell.autotileKind * 48 : cell?.tileId || 0;
+    if (cell?.layerStack && typeof options.layer.value === 'number') return Number(cell.layerStack[options.layer.value]?.tileId || 0);
+    return cell?.autotileKind != null ? cell.tileId ?? (TILE_ID_A1 + cell.autotileKind * 48) : cell?.tileId || 0;
   }
   function activeEditPayload(x: number, y: number): TileEdit {
     if (options.paintMode.value === 'region') {
       return { kind: 'region', x, y, layer: REGION_LAYER, regionId: options.tool.value === 'eraser' ? 0 : clampInt(options.regionId.value, 0, 255) };
     }
-    if (options.tool.value === 'eraser') return { kind: 'tile', x, y, layer: options.layer.value, tileId: 0 };
+    if (options.tool.value === 'eraser') return { kind: 'tile', x, y, layer: editLayer(), tileId: 0 };
     const cell = brush?.cells[0];
-    if (cell?.layerStack && options.layer.value !== 'auto') {
+    if (cell?.layerStack && typeof options.layer.value === 'number') {
       return buildLayerStackEdits(x, y, options.layer.value, cell.layerStack, shiftPressed)[0]!;
     }
-    return { x, y, layer: options.layer.value, ...(cell?.autotileKind != null ? { kind: 'autotile' as const, autotileKind: cell.autotileKind } : { kind: 'tile' as const, tileId: cell?.tileId || 0 }) };
+    return { x, y, layer: editLayer(), ...(cell?.autotileKind != null ? {
+      kind: 'autotile' as const,
+      autotileKind: cell.autotileKind,
+      ...(cell.tilesetSlot == null ? {} : {
+        tilesetSlot: cell.tilesetSlot,
+        extendedTilesetType: cell.extendedTilesetType,
+      }),
+    } : { kind: 'tile' as const, tileId: cell?.tileId || 0 }) };
   }
   function changeToEdit(change: TileChange, value: number): TileEdit {
     const layer = Number(change.layer ?? 0);

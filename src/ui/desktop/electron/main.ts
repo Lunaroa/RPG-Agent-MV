@@ -25,7 +25,6 @@ import { initAutoUpdater } from './auto-updater.js';
 import { RMMV_ASSET_SCHEME } from './asset-protocol-policy.js';
 import { MAP_PREVIEW_SCHEME } from './map-preview-protocol.js';
 import { cleanupDocumentationWindow, configureDocumentationWindow, DOCUMENTATION_SCHEME } from './documentation-window.js';
-import { cleanupVersionWindow, configureVersionWindow } from './version-window.js';
 import { resolveDocumentationRoot } from './documentation-policy.js';
 import {
   buildDesktopWindowPolicy,
@@ -278,13 +277,6 @@ app.whenReady().then(() => {
       ? new URL('documentation.html', process.env.VITE_DEV_SERVER_URL).toString()
       : path.join(__dirname, '../dist/documentation.html'),
   });
-  configureVersionWindow({
-    preloadPath: path.join(__dirname, 'preload.js'),
-    rendererEntry: process.env.VITE_DEV_SERVER_URL
-      ? process.env.VITE_DEV_SERVER_URL
-      : path.join(__dirname, '../dist/index.html'),
-    getMainWindow: () => mainWindow,
-  });
 
   createWindow().catch((err) => {
     const message = err && err.message ? err.message : String(err);
@@ -305,7 +297,6 @@ app.on('window-all-closed', () => {
   stopUiControlBridge();
   cleanupIpcHandlers();
   cleanupDocumentationWindow();
-  cleanupVersionWindow();
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -316,7 +307,6 @@ app.on('before-quit', () => {
   stopUiControlBridge();
   cleanupIpcHandlers();
   cleanupDocumentationWindow();
-  cleanupVersionWindow();
 });
 
 app.on('activate', () => {

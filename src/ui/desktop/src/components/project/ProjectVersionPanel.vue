@@ -2,7 +2,6 @@
   <div class="pv-page">
     <header class="pv-header">
       <div class="pv-header-left">
-        <span class="pv-title">{{ t('projectGit.title') }}</span>
         <el-tag v-if="status?.branch" size="small" effect="plain">{{ status.branch }}</el-tag>
         <el-tag v-if="status && status.ahead > 0" size="small" type="success" effect="plain">
           {{ t('projectGit.remote.ahead', { count: status.ahead }) }}
@@ -529,11 +528,6 @@ function formatCommitTime(value: string): string {
   display: flex;
   align-items: center;
   gap: 10px;
-}
-
-.pv-title {
-  font-size: 15px;
-  font-weight: 600;
 }
 
 .pv-header-right {

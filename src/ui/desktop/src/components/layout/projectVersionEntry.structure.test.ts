@@ -14,10 +14,6 @@ const panelSource = readFileSync(
   fileURLToPath(new URL('../project/ProjectVersionPanel.vue', import.meta.url)),
   'utf8',
 )
-const versionWindowAppSource = readFileSync(
-  fileURLToPath(new URL('../../VersionWindowApp.vue', import.meta.url)),
-  'utf8',
-)
 const rendererMainSource = readFileSync(
   fileURLToPath(new URL('../../main.ts', import.meta.url)),
   'utf8',
@@ -38,10 +34,6 @@ const preloadSource = readFileSync(
   fileURLToPath(new URL('../../../electron/preload.ts', import.meta.url)),
   'utf8',
 )
-const versionWindowMainSource = readFileSync(
-  fileURLToPath(new URL('../../../electron/version-window.ts', import.meta.url)),
-  'utf8',
-)
 const zhCnSource = readFileSync(
   fileURLToPath(new URL('../../i18n/locales/zh-CN.ts', import.meta.url)),
   'utf8',
@@ -60,16 +52,14 @@ describe('project version entry placement', () => {
     expect(routerSource).not.toMatch(/ProjectCollaborationView/)
   })
 
-  it('opens a dedicated desktop window from the status bar without navigation', () => {
+  it('opens an in-app dialog from the status bar without navigation', () => {
     expect(statusBarSource).toMatch(/data-ui-id="status-project-version"/)
-    expect(statusBarSource).toMatch(/versionWindow\.open/)
-    expect(statusBarSource).toMatch(/onStatusChanged/)
+    expect(statusBarSource).toMatch(/el-dialog/)
+    expect(statusBarSource).toMatch(/ProjectVersionPanel/)
     expect(statusBarSource).not.toMatch(/router\.push|useRouter/)
-    expect(statusBarSource).not.toMatch(/ProjectVersionPanel/)
-    expect(versionWindowMainSource).toMatch(/new BrowserWindow/)
-    expect(versionWindowMainSource).toMatch(/'window', 'version'/)
-    expect(rendererMainSource).toMatch(/window.*version/)
-    expect(versionWindowAppSource).toMatch(/ProjectVersionPanel/)
+    expect(statusBarSource).not.toMatch(/versionWindow/)
+    expect(rendererMainSource).not.toMatch(/VersionWindowApp/)
+    expect(rendererMainSource).not.toMatch(/'window'/)
   })
 
   it('wires the panel to the git service instead of change packages', () => {
@@ -82,7 +72,7 @@ describe('project version entry placement', () => {
     expect(preloadSource).toMatch(/projectGit:status/)
     expect(preloadSource).toMatch(/projectGit:push/)
     expect(preloadSource).toMatch(/projectGit:diff/)
-    expect(preloadSource).toMatch(/versionWindow:open/)
+    expect(preloadSource).not.toMatch(/versionWindow/)
     expect(preloadSource).not.toMatch(/project-collaboration:/)
   })
 

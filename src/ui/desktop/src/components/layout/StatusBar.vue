@@ -1,17 +1,18 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import { History } from '@lucide/vue';
 import type { ProjectGitStatus } from '@contract/project-git';
-import { projectGit, versionWindow } from '../../api/client';
+import { projectGit } from '../../api/client';
 import { useI18n } from '../../i18n';
 import { useProjectStore } from '../../stores/project';
 import { useWorkbenchUiStore } from '../../stores/workbenchUi';
+import ProjectVersionPanel from '../project/ProjectVersionPanel.vue';
 
 const ui = useWorkbenchUiStore();
 const projectStore = useProjectStore();
 const { t } = useI18n();
 const gitStatus = ref<ProjectGitStatus | null>(null);
-let removeStatusListener: (() => void) | null = null;
+const versionDialogVisible = ref(false);
 
 async function loadGitStatus() {
   const project = projectStore.currentProject;
@@ -27,26 +28,25 @@ async function loadGitStatus() {
   }
 }
 
-function openVersionWindow() {
-  void versionWindow.open();
+function openVersionDialog() {
+  versionDialogVisible.value = true;
+}
+
+function onPanelStatus(next: ProjectGitStatus) {
+  gitStatus.value = next;
+}
+
+function onVersionDialogClosed() {
+  void loadGitStatus();
 }
 
 watch(() => projectStore.currentProject, () => {
   gitStatus.value = null;
-  void versionWindow.notifyProjectChanged(projectStore.currentProject || '');
   void loadGitStatus();
 });
 
 onMounted(() => {
   void loadGitStatus();
-  removeStatusListener = versionWindow.onStatusChanged((value) => {
-    gitStatus.value = value;
-  });
-});
-
-onUnmounted(() => {
-  removeStatusListener?.();
-  removeStatusListener = null;
 });
 </script>
 
@@ -59,7 +59,7 @@ onUnmounted(() => {
       class="sb-item sb-version"
       data-ui-id="status-project-version"
       :title="t('projectGit.status.open')"
-      @click="openVersionWindow"
+      @click="openVersionDialog"
     >
       <History />
       <template v-if="gitStatus?.enabled">
@@ -84,6 +84,17 @@ onUnmounted(() => {
     <span v-if="ui.sbStatusText" class="sb-item sb-status" :class="ui.sbStatusKind">
       {{ ui.sbStatusText }}
     </span>
+    <el-dialog
+      v-model="versionDialogVisible"
+      :title="t('projectGit.title')"
+      class="version-dialog"
+      width="min(1180px, 92vw)"
+      destroy-on-close
+      append-to-body
+      @closed="onVersionDialogClosed"
+    >
+      <ProjectVersionPanel @status="onPanelStatus" />
+    </el-dialog>
   </footer>
 </template>
 
@@ -128,4 +139,13 @@ onUnmounted(() => {
 .sb-status.sb-busy { color: var(--app-warn); }
 .sb-status.sb-saved { color: var(--app-ok); }
 .sb-status.sb-error { color: var(--app-danger); }
+</style>
+
+<style>
+.version-dialog .el-dialog__body {
+  height: min(720px, 74vh);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
 </style>

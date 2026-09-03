@@ -77,6 +77,8 @@ export const MAP_IPC_CHANNELS = [
   'maps:overviewExportStart',
   'maps:overviewExportStatus',
   'maps:overviewExportCancel',
+  'maps:imageExportSessionOpen',
+  'maps:imageExportSessionClose',
   'maps:imageExportPreview',
   'maps:imageExportPreviewCancel',
   'maps:imageExportSelectDirectory',
@@ -355,6 +357,22 @@ export function registerMapIpcHandlers(
   handle('maps:overviewExportStatus', () => desktop.mapOverviewExport.getMapOverviewPngExportStatus());
   handle('maps:overviewExportCancel', (_event, requestId: string) =>
     desktop.mapOverviewExport.cancelMapOverviewPngExport(requestId));
+  handle('maps:imageExportSessionOpen', (_event, scene: MapImageExportScene) => {
+    if (!scene || typeof scene !== 'object') throw new Error('Map image export scene is required.');
+    const resolved = project(scene.project);
+    assertRegisteredProject(resolved);
+    const unlimitedLayersEnabled = Boolean(options.productPluginEnabled?.('unlimited-map-layers'));
+    if (scene.options?.includeUnlimitedLayers && !unlimitedLayersEnabled) {
+      throw new Error('[MAP_IMAGE_ULDS_DISABLED] Unlimited layers must be enabled before they can be exported.');
+    }
+    return desktop.mapImageExport.openMapImageExportSession(workflowRoot, resolved, {
+      ...scene,
+      project: resolved,
+      unlimitedLayersEnabled,
+    });
+  });
+  handle('maps:imageExportSessionClose', (_event, value?: string) =>
+    desktop.mapImageExport.closeMapImageExportSession(project(value)));
   handle('maps:imageExportPreview', (_event, scene: MapImageExportScene) => {
     if (!scene || typeof scene !== 'object') throw new Error('Map image export scene is required.');
     const resolved = project(scene.project);

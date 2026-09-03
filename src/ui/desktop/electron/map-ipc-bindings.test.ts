@@ -279,6 +279,8 @@ function desktop(overrides: {
   startExport?: (options: any) => unknown;
   generateMapImageExport?: (...args: unknown[]) => unknown;
   validateMapImageExport?: (...args: unknown[]) => unknown;
+  openMapImageExportSession?: (...args: unknown[]) => unknown;
+  closeMapImageExportSession?: (...args: unknown[]) => unknown;
 }) {
   return {
     project: {
@@ -304,6 +306,8 @@ function desktop(overrides: {
     mapImageExport: {
       generateMapImageExportPreview: (...args: unknown[]) => overrides.generateMapImageExport?.(...args),
       validateMapImageExportPreviewForFinalization: (...args: unknown[]) => overrides.validateMapImageExport?.(...args),
+      openMapImageExportSession: (...args: unknown[]) => overrides.openMapImageExportSession?.(...args),
+      closeMapImageExportSession: (...args: unknown[]) => overrides.closeMapImageExportSession?.(...args),
     },
     workspaceSurfaces: {
       validateWorkspaceSurfaceVersion: (...args: unknown[]) => overrides.validateWorkspaceSurface?.(...args),
@@ -343,6 +347,73 @@ describe('map image export IPC boundary', () => {
     };
 
     assert.throws(() => handlers.get('maps:imageExportPreview')!({}, scene), /MAP_IMAGE_ULDS_DISABLED/);
+    assert.equal(called, false);
+  });
+
+  test('routes export session open and close through the service boundary', async () => {
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    const opened: unknown[][] = [];
+    const closed: string[] = [];
+    registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, desktop({
+      listProjects: () => [{ path: PROJECT_PATH }],
+      openMapImageExportSession: (...args: unknown[]) => {
+        opened.push(args);
+        return { nativeWidth: 96, nativeHeight: 48, maxScalePercent: 100 };
+      },
+      closeMapImageExportSession: (value: string) => {
+        closed.push(value);
+        return { closed: true };
+      },
+    }), ipcOptions({ productPluginEnabled: () => true }));
+    const scene = {
+      requestId: 'map-image-ipc-session',
+      project: PROJECT_PATH,
+      mapId: 1,
+      mapName: 'Sample',
+      mapRevision: 'revision',
+      tileSize: 48,
+      map: { width: 1, height: 1, tilesetId: 1, data: Array(6).fill(0), events: [null] },
+      tileset: { tilesetNames: Array(9).fill(''), flags: [], extendedTilesetSheets: [] },
+      unlimitedLayerDraft: [],
+      unlimitedLayersEnabled: false,
+      options: { scalePercent: 100, includeDefaultEventCharacters: false, includeUnlimitedLayers: true },
+    };
+
+    const info = await handlers.get('maps:imageExportSessionOpen')!({}, scene) as { maxScalePercent: number };
+    assert.equal(info.maxScalePercent, 100);
+    assert.equal(opened.length, 1);
+    assert.equal((opened[0][2] as { unlimitedLayersEnabled: boolean }).unlimitedLayersEnabled, true);
+
+    const result = await handlers.get('maps:imageExportSessionClose')!({}, PROJECT_PATH) as { closed: boolean };
+    assert.equal(result.closed, true);
+    assert.deepEqual(closed, [PROJECT_PATH]);
+  });
+
+  test('rejects opening an export session with unlimited layers while the plugin is disabled', async () => {
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    let called = false;
+    registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, desktop({
+      listProjects: () => [{ path: PROJECT_PATH }],
+      openMapImageExportSession: () => {
+        called = true;
+        return undefined;
+      },
+    }), ipcOptions({ productPluginEnabled: () => false }));
+    const scene = {
+      requestId: 'map-image-ipc-session-ulds',
+      project: PROJECT_PATH,
+      mapId: 1,
+      mapName: 'Sample',
+      mapRevision: 'revision',
+      tileSize: 48,
+      map: { width: 1, height: 1, tilesetId: 1, data: Array(6).fill(0), events: [null] },
+      tileset: { tilesetNames: Array(9).fill(''), flags: [], extendedTilesetSheets: [] },
+      unlimitedLayerDraft: [],
+      unlimitedLayersEnabled: true,
+      options: { scalePercent: 100, includeDefaultEventCharacters: false, includeUnlimitedLayers: true },
+    };
+
+    assert.throws(() => handlers.get('maps:imageExportSessionOpen')!({}, scene), /MAP_IMAGE_ULDS_DISABLED/);
     assert.equal(called, false);
   });
 

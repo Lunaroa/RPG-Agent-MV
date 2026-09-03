@@ -266,6 +266,8 @@ contextBridge.exposeInMainWorld('api', {
     startOverviewPngExport: (scene: MapOverviewPngExportScene) => ipcRenderer.invoke('maps:overviewExportStart', scene),
     overviewPngExportStatus: () => ipcRenderer.invoke('maps:overviewExportStatus'),
     cancelOverviewPngExport: (requestId: string) => ipcRenderer.invoke('maps:overviewExportCancel', requestId),
+    openImageExportSession: (scene: MapImageExportScene) => ipcRenderer.invoke('maps:imageExportSessionOpen', scene),
+    closeImageExportSession: (project?: string) => ipcRenderer.invoke('maps:imageExportSessionClose', project),
     imageExportPreview: (scene: MapImageExportScene) => ipcRenderer.invoke('maps:imageExportPreview', scene),
     cancelImageExportPreview: (requestId: string) => ipcRenderer.invoke('maps:imageExportPreviewCancel', requestId),
     selectImageExportDirectory: () => ipcRenderer.invoke('maps:imageExportSelectDirectory'),

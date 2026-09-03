@@ -349,6 +349,12 @@ export interface MapImageExportPreviewResult {
   pngBase64: string;
 }
 
+export interface MapImageExportSessionInfo {
+  nativeWidth: number;
+  nativeHeight: number;
+  maxScalePercent: number;
+}
+
 export interface MapImageExportResult extends MapImageExportPreviewResult {
   action: 'copied' | 'exported';
   outputPath: string | null;

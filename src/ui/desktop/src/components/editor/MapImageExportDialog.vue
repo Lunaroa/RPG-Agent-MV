@@ -95,8 +95,25 @@ watch(() => props.visible, (visible) => {
   preview.value = null;
   previewUrl.value = '';
   errorMessage.value = '';
-  schedulePreview(0);
+  void openSession();
 });
+
+async function openSession(): Promise<void> {
+  const scene = props.scene;
+  if (!scene) return;
+  loading.value = true;
+  errorMessage.value = '';
+  try {
+    await maps.openImageExportSession(scene);
+  } catch (error) {
+    if (!props.visible) return;
+    loading.value = false;
+    errorMessage.value = formatUserFacingErrorMessage(error, 'general', language.value);
+    return;
+  }
+  if (!props.visible) return;
+  schedulePreview(0);
+}
 
 watch([scalePercent, includeDefaultEventCharacters, includeUnlimitedLayers], () => {
   if (props.visible) schedulePreview(140);
@@ -192,10 +209,14 @@ function cleanup(): void {
 
 function close(): void {
   cleanup();
+  if (props.scene) void maps.closeImageExportSession(props.scene.project).catch(() => undefined);
   emit('update:visible', false);
 }
 
-onBeforeUnmount(cleanup);
+onBeforeUnmount(() => {
+  cleanup();
+  if (props.scene) void maps.closeImageExportSession(props.scene.project).catch(() => undefined);
+});
 </script>
 
 <style scoped>

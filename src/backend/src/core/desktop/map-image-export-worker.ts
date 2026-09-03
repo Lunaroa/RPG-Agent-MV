@@ -11,7 +11,12 @@ const sharpModuleRelativePath = import.meta.url.endsWith('.ts')
   : '../../../backend/node_modules/sharp/dist/index.mjs';
 const sharp = (await import(new URL(sharpModuleRelativePath, import.meta.url).href) as SharpModule).default;
 
-import type { MapImageExportPreviewResult, MapImageExportScene } from '../../../../contract/types.ts';
+import type {
+  MapImageExportOptions,
+  MapImageExportPreviewResult,
+  MapImageExportScene,
+  MapImageExportSessionInfo,
+} from '../../../../contract/types.ts';
 import { buildExtendedTilesetDescriptors } from '../../../../contract/extended-tileset.ts';
 import {
   ULDS_DEFAULT_PATH,
@@ -31,14 +36,36 @@ import { decodePng, renderMapToPng } from '../workflow/map/map-render.ts';
 export const MAP_IMAGE_EXPORT_MAX_DIMENSION = 32_767;
 export const MAP_IMAGE_EXPORT_MAX_PIXELS = 500_000_000;
 const STRIP_PIXEL_BUDGET = 16_777_216;
+const FINAL_RESULT_CACHE_LIMIT = 8;
 
-interface WorkerRequest {
+interface ValidationRequest {
+  type: 'validation';
   workflowRoot: string;
   project: string;
   databasePath: string;
   scene: MapImageExportScene;
-  validationOnly?: boolean;
+  validationOnly: true;
 }
+
+interface SessionOpenRequest {
+  type: 'session-open';
+  workflowRoot: string;
+  project: string;
+  databasePath: string;
+  scene: MapImageExportScene;
+}
+
+interface SessionRenderRequest {
+  type: 'session-render';
+  requestId: string;
+  options: MapImageExportOptions;
+}
+
+interface SessionCloseRequest {
+  type: 'session-close';
+}
+
+type WorkerRequest = ValidationRequest | SessionOpenRequest | SessionRenderRequest | SessionCloseRequest;
 
 interface CompositeLayer {
   input: Buffer | string;
@@ -48,82 +75,284 @@ interface CompositeLayer {
   tile?: boolean;
 }
 
+type LayerGroup = CompositeLayer[] | Error;
+
+interface SessionState {
+  request: SessionOpenRequest;
+  nativeWidth: number;
+  nativeHeight: number;
+  maxScalePercent: number;
+  groups: {
+    parallax: CompositeLayer[];
+    uldsBelow: LayerGroup;
+    tiles: CompositeLayer[];
+    uldsAbove: LayerGroup;
+    events: LayerGroup;
+  };
+  nativeByOptions: Map<string, Buffer>;
+  finalByKey: Map<string, { width: number; height: number; png: Buffer }>;
+}
+
 if (!parentPort) throw new Error('Map image export worker requires a parent port.');
 
-parentPort.once('message', (request: WorkerRequest) => {
-  configureDatabase({ path: request.databasePath });
-  const operation = request.validationOnly
-    ? Promise.resolve(validateSceneSnapshot(request)).then(() => ({ validated: true as const }))
-    : renderScene(request);
-  void operation.then((result) => {
-    parentPort!.postMessage({ ok: true, result });
-  }).catch((error) => {
-    parentPort!.postMessage({ ok: false, error: error instanceof Error ? error.message : String(error) });
-  }).finally(() => {
-    closeDatabase();
-    parentPort!.close();
-  });
+let session: SessionState | null = null;
+let renderChain: Promise<void> = Promise.resolve();
+const renderQueue: SessionRenderRequest[] = [];
+let closing = false;
+
+parentPort.on('message', (request: WorkerRequest) => {
+  if (request.type === 'validation') {
+    void runValidation(request);
+    return;
+  }
+  if (request.type === 'session-open') {
+    void openSession(request);
+    return;
+  }
+  if (request.type === 'session-render') {
+    if (closing) {
+      parentPort!.postMessage({
+        type: 'session-render-result',
+        requestId: request.requestId,
+        ok: false,
+        error: '[MAP_IMAGE_PREVIEW_CANCELLED] The export session is closed.',
+      });
+      return;
+    }
+    enqueueRender(request);
+    return;
+  }
+  if (request.type === 'session-close') renderChain = renderChain.then(shutdown);
 });
 
 process.once('exit', () => closeDatabase());
 
-async function renderScene(request: WorkerRequest): Promise<MapImageExportPreviewResult> {
-  const { nativeWidth, nativeHeight, maxScalePercent } = validateSceneSnapshot(request);
-  const { scene } = request;
-  const outputWidth = Math.max(1, Math.round(nativeWidth * scene.options.scalePercent / 100));
-  const outputHeight = Math.max(1, Math.round(nativeHeight * scene.options.scalePercent / 100));
-  validateDimensions(outputWidth, outputHeight, maxScalePercent);
-
-  const resourceRoot = path.dirname(resolveDataDir(request.project));
-  const bitmaps = scene.tileset.tilesetNames.map((name) => {
-    if (!name) return null;
-    const file = effectiveResource(request, resourceRoot, 'tilesets', name);
-    if (!file) throw new Error(`[MAP_IMAGE_RESOURCE_MISSING] Tileset image: ${name}`);
-    return decodePng(fs.readFileSync(file));
-  });
-
-  const composites: CompositeLayer[] = [];
-  composites.push(...await parallaxLayers(request, resourceRoot, nativeWidth, nativeHeight));
-  if (scene.options.includeUnlimitedLayers) {
-    composites.push(...await unlimitedLayers(request, resourceRoot, nativeWidth, nativeHeight, (z) => z < ULDS_TILE_Z_THRESHOLD));
+async function runValidation(request: ValidationRequest): Promise<void> {
+  try {
+    configureDatabase({ path: request.databasePath });
+    validateSceneSnapshot(request);
+    parentPort!.postMessage({ ok: true, result: { validated: true } });
+  } catch (error) {
+    parentPort!.postMessage({ ok: false, error: error instanceof Error ? error.message : String(error) });
+  } finally {
+    shutdown();
   }
-  composites.push(...await renderTileStrips(scene, bitmaps));
-  composites.push(...shadowLayers(scene));
-  if (scene.options.includeUnlimitedLayers) {
-    composites.push(...await unlimitedLayers(request, resourceRoot, nativeWidth, nativeHeight, (z) => z >= ULDS_TILE_Z_THRESHOLD));
+}
+
+async function openSession(request: SessionOpenRequest): Promise<void> {
+  try {
+    configureDatabase({ path: request.databasePath });
+    const { nativeWidth, nativeHeight, maxScalePercent } = validateSceneSnapshot(request);
+    const { scene } = request;
+    const resourceRoot = path.dirname(resolveDataDir(request.project));
+    const bitmaps = scene.tileset.tilesetNames.map((name) => {
+      if (!name) return null;
+      const file = effectiveResource(request, resourceRoot, 'tilesets', name);
+      if (!file) throw new Error(`[MAP_IMAGE_RESOURCE_MISSING] Tileset image: ${name}`);
+      return decodePng(fs.readFileSync(file));
+    });
+    const groups: SessionState['groups'] = {
+      parallax: await clipCompositeLayers(
+        await parallaxLayers(request, resourceRoot, nativeWidth, nativeHeight), nativeWidth, nativeHeight,
+      ),
+      uldsBelow: [],
+      tiles: await clipCompositeLayers([
+        ...await renderTileStrips(scene, bitmaps),
+        ...shadowLayers(scene),
+      ], nativeWidth, nativeHeight),
+      uldsAbove: [],
+      events: [],
+    };
+    if (scene.unlimitedLayersEnabled) {
+      groups.uldsBelow = await prepareOptionalGroup(() =>
+        unlimitedLayers(request, resourceRoot, nativeWidth, nativeHeight, (z) => z < ULDS_TILE_Z_THRESHOLD)
+          .then((layers) => clipCompositeLayers(layers, nativeWidth, nativeHeight)));
+      groups.uldsAbove = await prepareOptionalGroup(() =>
+        unlimitedLayers(request, resourceRoot, nativeWidth, nativeHeight, (z) => z >= ULDS_TILE_Z_THRESHOLD)
+          .then((layers) => clipCompositeLayers(layers, nativeWidth, nativeHeight)));
+    }
+    groups.events = await prepareOptionalGroup(() =>
+      eventCharacterLayers(request, resourceRoot)
+        .then((layers) => clipCompositeLayers(layers, nativeWidth, nativeHeight)));
+    session = {
+      request,
+      nativeWidth,
+      nativeHeight,
+      maxScalePercent,
+      groups,
+      nativeByOptions: new Map(),
+      finalByKey: new Map(),
+    };
+    const info: MapImageExportSessionInfo = { nativeWidth, nativeHeight, maxScalePercent };
+    parentPort!.postMessage({ type: 'session-ready', ok: true, result: info });
+  } catch (error) {
+    parentPort!.postMessage({
+      type: 'session-ready',
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
-  if (scene.options.includeDefaultEventCharacters) {
-    composites.push(...await eventCharacterLayers(request, resourceRoot));
+}
+
+async function prepareOptionalGroup(build: () => Promise<CompositeLayer[]>): Promise<LayerGroup> {
+  try {
+    return await build();
+  } catch (error) {
+    return error instanceof Error ? error : new Error(String(error));
+  }
+}
+
+function enqueueRender(request: SessionRenderRequest): void {
+  while (renderQueue.length > 0) {
+    const superseded = renderQueue.shift()!;
+    parentPort!.postMessage({
+      type: 'session-render-result',
+      requestId: superseded.requestId,
+      ok: false,
+      error: '[MAP_IMAGE_PREVIEW_CANCELLED] A newer preview request replaced this one.',
+    });
+  }
+  renderQueue.push(request);
+  renderChain = renderChain.then(processRenderQueue);
+}
+
+async function processRenderQueue(): Promise<void> {
+  while (renderQueue.length > 0) {
+    const request = renderQueue.shift()!;
+    if (renderQueue.length > 0) {
+      parentPort!.postMessage({
+        type: 'session-render-result',
+        requestId: request.requestId,
+        ok: false,
+        error: '[MAP_IMAGE_PREVIEW_CANCELLED] A newer preview request replaced this one.',
+      });
+      continue;
+    }
+    await renderInSession(request);
+  }
+}
+
+async function renderInSession(render: SessionRenderRequest): Promise<void> {
+  const active = session;
+  if (!active) {
+    parentPort!.postMessage({
+      type: 'session-render-result',
+      requestId: render.requestId,
+      ok: false,
+      error: '[MAP_IMAGE_SESSION_REQUIRED] The export session is not open.',
+    });
+    return;
+  }
+  try {
+    const result = await renderWithCache(active, render);
+    parentPort!.postMessage({ type: 'session-render-result', requestId: render.requestId, ok: true, result });
+  } catch (error) {
+    parentPort!.postMessage({
+      type: 'session-render-result',
+      requestId: render.requestId,
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function renderWithCache(
+  active: SessionState,
+  render: SessionRenderRequest,
+): Promise<MapImageExportPreviewResult> {
+  assertCurrentRevision(active.request);
+  assertCurrentTilesetProtocol(active.request);
+  const options = render.options;
+  const scene = active.request.scene;
+  if (!options || !Number.isInteger(options.scalePercent) || options.scalePercent < 1 || options.scalePercent > 100) {
+    throw new Error('[MAP_IMAGE_INVALID_SCALE] Scale must be an integer from 1 to 100.');
+  }
+  if (options.includeUnlimitedLayers && !scene.unlimitedLayersEnabled) {
+    throw new Error('[MAP_IMAGE_ULDS_DISABLED] Unlimited layers must be enabled before they can be exported.');
+  }
+  if (options.scalePercent > active.maxScalePercent) {
+    throw new Error(`[MAP_IMAGE_SIZE_LIMIT] Current map supports at most ${active.maxScalePercent}% export scale.`);
+  }
+  const outputWidth = Math.max(1, Math.round(active.nativeWidth * options.scalePercent / 100));
+  const outputHeight = Math.max(1, Math.round(active.nativeHeight * options.scalePercent / 100));
+  validateDimensions(outputWidth, outputHeight, active.maxScalePercent);
+
+  const finalKey = `${options.scalePercent}|${options.includeDefaultEventCharacters ? 1 : 0}|${options.includeUnlimitedLayers ? 1 : 0}`;
+  const cachedFinal = active.finalByKey.get(finalKey);
+  if (cachedFinal) {
+    active.finalByKey.delete(finalKey);
+    active.finalByKey.set(finalKey, cachedFinal);
+    return {
+      requestId: render.requestId,
+      mapId: scene.mapId,
+      width: cachedFinal.width,
+      height: cachedFinal.height,
+      maxScalePercent: active.maxScalePercent,
+      mime: 'image/png',
+      pngBase64: cachedFinal.png.toString('base64'),
+    };
   }
 
-  const boundedComposites = await clipCompositeLayers(composites, nativeWidth, nativeHeight);
-  const nativePng = await sharp({
-    create: {
-      width: nativeWidth,
-      height: nativeHeight,
-      channels: 4,
-      background: { r: 0, g: 0, b: 0, alpha: 0 },
-    },
-    limitInputPixels: false,
-  }).composite(boundedComposites).png({ compressionLevel: 6, adaptiveFiltering: false }).toBuffer();
-  const png = outputWidth === nativeWidth && outputHeight === nativeHeight
+  const nativeKey = `${options.includeDefaultEventCharacters ? 1 : 0}|${options.includeUnlimitedLayers ? 1 : 0}`;
+  let nativePng = active.nativeByOptions.get(nativeKey);
+  if (!nativePng) {
+    nativePng = await compositeNative(active, options);
+    active.nativeByOptions.set(nativeKey, nativePng);
+  }
+  const png = outputWidth === active.nativeWidth && outputHeight === active.nativeHeight
     ? nativePng
     : await sharp(nativePng, { limitInputPixels: false })
       .resize(outputWidth, outputHeight, { kernel: sharp.kernel.nearest, fit: 'fill' })
       .png({ compressionLevel: 9, adaptiveFiltering: true })
       .toBuffer();
+  active.finalByKey.set(finalKey, { width: outputWidth, height: outputHeight, png });
+  while (active.finalByKey.size > FINAL_RESULT_CACHE_LIMIT) {
+    const oldest = active.finalByKey.keys().next().value;
+    if (typeof oldest !== 'string') break;
+    active.finalByKey.delete(oldest);
+  }
   return {
-    requestId: scene.requestId,
+    requestId: render.requestId,
     mapId: scene.mapId,
     width: outputWidth,
     height: outputHeight,
-    maxScalePercent,
+    maxScalePercent: active.maxScalePercent,
     mime: 'image/png',
     pngBase64: png.toString('base64'),
   };
 }
 
-function validateSceneSnapshot(request: WorkerRequest): {
+async function compositeNative(active: SessionState, options: MapImageExportOptions): Promise<Buffer> {
+  const composites: CompositeLayer[] = [];
+  composites.push(...active.groups.parallax);
+  if (options.includeUnlimitedLayers) composites.push(...unwrapGroup(active.groups.uldsBelow));
+  composites.push(...active.groups.tiles);
+  if (options.includeUnlimitedLayers) composites.push(...unwrapGroup(active.groups.uldsAbove));
+  if (options.includeDefaultEventCharacters) composites.push(...unwrapGroup(active.groups.events));
+  return sharp({
+    create: {
+      width: active.nativeWidth,
+      height: active.nativeHeight,
+      channels: 4,
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    },
+    limitInputPixels: false,
+  }).composite(composites).png({ compressionLevel: 6, adaptiveFiltering: false }).toBuffer();
+}
+
+function unwrapGroup(group: LayerGroup): CompositeLayer[] {
+  if (group instanceof Error) throw group;
+  return group;
+}
+
+function shutdown(): void {
+  if (closing) return;
+  closing = true;
+  closeDatabase();
+  parentPort!.close();
+}
+
+function validateSceneSnapshot(request: { scene: MapImageExportScene; project: string; workflowRoot: string }): {
   nativeWidth: number;
   nativeHeight: number;
   maxScalePercent: number;
@@ -135,9 +364,6 @@ function validateSceneSnapshot(request: WorkerRequest): {
   const nativeWidth = scene.map.width * scene.tileSize;
   const nativeHeight = scene.map.height * scene.tileSize;
   const maxScalePercent = maximumScalePercent(nativeWidth, nativeHeight);
-  if (scene.options.scalePercent > maxScalePercent) {
-    throw new Error(`[MAP_IMAGE_SIZE_LIMIT] Current map supports at most ${maxScalePercent}% export scale.`);
-  }
   if (scene.options.includeUnlimitedLayers && !scene.unlimitedLayersEnabled) {
     throw new Error('[MAP_IMAGE_ULDS_DISABLED] Unlimited layers must be enabled before they can be exported.');
   }
@@ -148,7 +374,7 @@ function validateSceneSnapshot(request: WorkerRequest): {
   };
 }
 
-function validateScene(request: WorkerRequest): void {
+function validateScene(request: { scene: MapImageExportScene; project: string }): void {
   const scene = request?.scene;
   if (!scene || scene.project !== request.project) throw new Error('[MAP_IMAGE_INVALID_SCENE] Project mismatch.');
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(scene.requestId)) throw new Error('[MAP_IMAGE_INVALID_SCENE] Invalid request id.');
@@ -163,7 +389,7 @@ function validateScene(request: WorkerRequest): void {
   }
 }
 
-function assertCurrentRevision(request: WorkerRequest): void {
+function assertCurrentRevision(request: { workflowRoot: string; project: string; scene: MapImageExportScene }): void {
   const file = getMapFileForRead(request.workflowRoot, request.project, request.scene.mapId);
   if (!file || !fs.existsSync(file)) throw new Error('[MAP_IMAGE_MAP_MISSING] The selected map no longer exists.');
   const revision = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -172,7 +398,7 @@ function assertCurrentRevision(request: WorkerRequest): void {
   }
 }
 
-function assertCurrentTilesetProtocol(request: WorkerRequest): void {
+function assertCurrentTilesetProtocol(request: { workflowRoot: string; project: string; scene: MapImageExportScene }): void {
   const dataDir = resolveDataDir(request.project);
   const relative = path.relative(request.project, path.join(dataDir, 'Tilesets.json')).replace(/\\/g, '/');
   const file = getProjectFileForRead(request.workflowRoot, request.project, relative)
@@ -253,7 +479,7 @@ async function renderTileStrips(
 }
 
 async function parallaxLayers(
-  request: WorkerRequest,
+  request: { workflowRoot: string; project: string; scene: MapImageExportScene },
   resourceRoot: string,
   width: number,
   height: number,
@@ -296,7 +522,7 @@ function shadowLayers(scene: MapImageExportScene): CompositeLayer[] {
 }
 
 async function unlimitedLayers(
-  request: WorkerRequest,
+  request: { workflowRoot: string; project: string; scene: MapImageExportScene },
   resourceRoot: string,
   canvasWidth: number,
   canvasHeight: number,
@@ -312,7 +538,7 @@ async function unlimitedLayers(
 }
 
 async function buildUnlimitedLayer(
-  request: WorkerRequest,
+  request: { workflowRoot: string; project: string; scene: MapImageExportScene },
   resourceRoot: string,
   record: UldsLayerRecord,
   canvasWidth: number,
@@ -368,7 +594,10 @@ function uldsBlend(mode: number): SharpBlend {
   return 'over';
 }
 
-async function eventCharacterLayers(request: WorkerRequest, resourceRoot: string): Promise<CompositeLayer[]> {
+async function eventCharacterLayers(
+  request: { workflowRoot: string; project: string; scene: MapImageExportScene },
+  resourceRoot: string,
+): Promise<CompositeLayer[]> {
   const result: CompositeLayer[] = [];
   for (const rawEvent of request.scene.map.events) {
     if (!rawEvent || typeof rawEvent !== 'object') continue;
@@ -445,7 +674,7 @@ async function clipCompositeLayers(
 }
 
 function effectiveResource(
-  request: WorkerRequest,
+  request: { workflowRoot: string; project: string },
   resourceRoot: string,
   category: string,
   name: string,

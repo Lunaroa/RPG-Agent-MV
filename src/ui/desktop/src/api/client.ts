@@ -272,6 +272,8 @@ declare global {
         startOverviewPngExport(scene: MapOverviewPngExportScene): Promise<unknown>;
         overviewPngExportStatus(): Promise<unknown>;
         cancelOverviewPngExport(requestId: string): Promise<unknown>;
+        openImageExportSession(scene: MapImageExportScene): Promise<unknown>;
+        closeImageExportSession(project?: string): Promise<unknown>;
         imageExportPreview(scene: MapImageExportScene): Promise<unknown>;
         cancelImageExportPreview(requestId: string): Promise<unknown>;
         selectImageExportDirectory(): Promise<string | null>;
@@ -468,7 +470,7 @@ function desktopApi(): Window['api'] {
 
 // 端点响应/请求形状的单一事实来源（见 RPG-Agent-MV/contract/types.ts）。
 import type {
-  MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewScanProgressEvent, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, MapImageExportOptions, MapImageExportPreviewResult, MapImageExportResult, MapImageExportScene, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
+  MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewScanProgressEvent, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, MapImageExportOptions, MapImageExportPreviewResult, MapImageExportResult, MapImageExportScene, MapImageExportSessionInfo, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorMapNotes,
   ExternalProjectBrowseResult, ExternalProjectMapSummary, ExternalMapImportOptions, ExternalMapImportScanRequest, ExternalMapImportScanResult, ExternalMapImportApplyRequest, ExternalMapImportApplyResult, ExternalMapImportResourceRow, ExternalMapImportTilesetRow, ExternalMapImportMapPreview, ExternalMapImportWarning, ExternalMapResourceAction, ExternalMapResourceStatus, ExternalMapResourceResolution, ExternalMapTilesetResolution, ExternalMapReplaceOptions, ExternalMapReplaceScanRequest, ExternalMapReplaceApplyRequest,
   LunaRpgProjectConfig,
@@ -504,7 +506,7 @@ import type {
   ExtendedTilesetSheetDescriptor, ExtendedTilesetSheetType,
 } from '@contract/types';
 export type {
-  MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, MapImageExportOptions, MapImageExportPreviewResult, MapImageExportResult, MapImageExportScene, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
+  MapTreeNode, MapIndex, MapMovePosition, MapOverviewPngExportProgressEvent, MapOverviewPngExportScene, MapOverviewPngExportStartResult, MapOverviewPngExportStatus, MapOverviewSnapshot, MapOverviewThumbnail, MapOverviewThumbnailQuality, MapImageExportOptions, MapImageExportPreviewResult, MapImageExportResult, MapImageExportScene, MapImageExportSessionInfo, EventSearchHit, EventSearchOptions, EventSearchResult, TilesetSummary, MapPayload, TileEdit, EventReport, ProjectInfo,
   EditorMapNotes,
   ExternalProjectBrowseResult, ExternalProjectMapSummary, ExternalMapImportOptions, ExternalMapImportScanRequest, ExternalMapImportScanResult, ExternalMapImportApplyRequest, ExternalMapImportApplyResult, ExternalMapImportResourceRow, ExternalMapImportTilesetRow, ExternalMapImportMapPreview, ExternalMapImportWarning, ExternalMapResourceAction, ExternalMapResourceStatus, ExternalMapResourceResolution, ExternalMapTilesetResolution, ExternalMapReplaceOptions, ExternalMapReplaceScanRequest, ExternalMapReplaceApplyRequest,
   LunaRpgProjectConfig,
@@ -968,6 +970,12 @@ export const maps = {
   },
   cancelOverviewPngExport(requestId: string) {
     return desktopApi().maps.cancelOverviewPngExport(requestId) as Promise<MapOverviewPngExportStatus>;
+  },
+  openImageExportSession(scene: MapImageExportScene) {
+    return desktopApi().maps.openImageExportSession(toPlain(scene)) as Promise<MapImageExportSessionInfo>;
+  },
+  closeImageExportSession(project: string = DEFAULT_PROJECT) {
+    return desktopApi().maps.closeImageExportSession(project) as Promise<{ closed: boolean }>;
   },
   imageExportPreview(scene: MapImageExportScene) {
     return desktopApi().maps.imageExportPreview(toPlain(scene)) as Promise<MapImageExportPreviewResult>;

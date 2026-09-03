@@ -14,12 +14,20 @@ import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import {
   cancelMapImageExportPreview,
+  closeMapImageExportSession,
   generateMapImageExportPreview,
+  openMapImageExportSession,
   validateMapImageExportPreviewForFinalization,
 } from './map-image-export-service.ts';
 
 describe('map image export worker', { concurrency: false }, () => {
   let databaseRoot = '';
+  const sessionProjects: string[] = [];
+
+  const openSession = async (root: string, project: string, scene: MapImageExportScene) => {
+    await openMapImageExportSession(root, project, scene);
+    sessionProjects.push(project);
+  };
 
   beforeEach(async () => {
     databaseRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-map-image-export-db-'));
@@ -29,7 +37,10 @@ describe('map image export worker', { concurrency: false }, () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    for (const project of sessionProjects.splice(0)) {
+      await closeMapImageExportSession(project);
+    }
     closeDatabase();
     fs.rmSync(databaseRoot, { recursive: true, force: true });
   });
@@ -38,6 +49,7 @@ test('preserves transparency and exact 1-100 percent dimensions', async (context
   const fixture = createFixture();
   context.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
   const scene = createScene(fixture.project, fixture.mapFile, 100, 'map-image-100');
+  await openSession(fixture.root, fixture.project, scene);
 
   const full = await generateMapImageExportPreview(fixture.root, fixture.project, scene);
   assert.equal(full.width, 96);
@@ -64,6 +76,7 @@ test('rejects a stale dialog snapshot', async (context) => {
   const fixture = createFixture();
   context.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
   const scene = createScene(fixture.project, fixture.mapFile, 100, 'map-image-stale');
+  await openSession(fixture.root, fixture.project, scene);
   fs.writeFileSync(fixture.mapFile, JSON.stringify({ width: 1, height: 1, tilesetId: 1, data: Array(6).fill(0), events: [null] }), 'utf8');
   await assert.rejects(
     generateMapImageExportPreview(fixture.root, fixture.project, scene),
@@ -75,17 +88,18 @@ test('reports the highest acceptable scale before allocating an oversized image'
   const fixture = createFixture();
   context.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
   fs.writeFileSync(fixture.mapFile, JSON.stringify({
-    width: 1000,
-    height: 1000,
+    width: 683,
+    height: 1,
     tilesetId: 1,
-    data: [],
+    data: Array(683 * 6).fill(0),
     events: [null],
   }), 'utf8');
   const scene = createScene(fixture.project, fixture.mapFile, 100, 'map-image-size-limit');
+  await openSession(fixture.root, fixture.project, scene);
 
   await assert.rejects(
     generateMapImageExportPreview(fixture.root, fixture.project, scene),
-    /MAP_IMAGE_SIZE_LIMIT.*at most 46%/,
+    /MAP_IMAGE_SIZE_LIMIT.*at most 99%/,
   );
 });
 
@@ -101,7 +115,7 @@ test('fails recoverably when an image resource disappears after the dialog opens
   const scene = createScene(fixture.project, fixture.mapFile, 100, 'map-image-resource-missing');
 
   await assert.rejects(
-    generateMapImageExportPreview(fixture.root, fixture.project, scene),
+    openMapImageExportSession(fixture.root, fixture.project, scene),
     /MAP_IMAGE_RESOURCE_MISSING.*MissingSheet/,
   );
 });
@@ -110,6 +124,7 @@ test('revalidates a trusted preview before clipboard or file finalization', asyn
   const fixture = createFixture();
   context.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
   const scene = createScene(fixture.project, fixture.mapFile, 100, 'map-image-finalize');
+  await openSession(fixture.root, fixture.project, scene);
   const preview = await generateMapImageExportPreview(fixture.root, fixture.project, scene);
   assert.deepEqual(await validateMapImageExportPreviewForFinalization(preview, false), {
     project: fixture.project,
@@ -139,28 +154,9 @@ test('revalidates a trusted preview before clipboard or file finalization', asyn
 test('draws only the first-page default character frame when requested', async (context) => {
   const fixture = createFixture();
   context.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
-  const characters = path.join(fixture.project, 'www', 'img', 'characters');
-  fs.mkdirSync(characters, { recursive: true });
-  await sharp({ create: { width: 576, height: 384, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
-    .composite([{ input: { create: { width: 48, height: 48, channels: 4, background: { r: 230, g: 30, b: 50, alpha: 1 } } }, left: 48, top: 0 }])
-    .png()
-    .toFile(path.join(characters, 'EventCharacter.png'));
-  const map = {
-    width: 2,
-    height: 1,
-    tilesetId: 1,
-    data: Array(12).fill(0),
-    events: [
-      null,
-      { id: 1, x: 0, y: 0, pages: [{ image: { tileId: 8192, characterName: 'EventCharacter', characterIndex: 0, pattern: 1, direction: 2 } }] },
-      { id: 2, x: 1, y: 0, pages: [
-        { image: { tileId: 0, characterName: 'EventCharacter', characterIndex: 0, pattern: 2, direction: 8 } },
-        { image: { tileId: 0, characterName: '', characterIndex: 0, pattern: 0, direction: 2 } },
-      ] },
-    ],
-  };
-  fs.writeFileSync(fixture.mapFile, JSON.stringify(map), 'utf8');
+  await writeEventCharacterFixture(fixture);
   const scene = createScene(fixture.project, fixture.mapFile, 100, 'map-image-events');
+  await openSession(fixture.root, fixture.project, scene);
   const withoutEvents = decodePng(Buffer.from((await generateMapImageExportPreview(fixture.root, fixture.project, scene)).pngBase64, 'base64'));
   assert.equal(pixel(withoutEvents, 60, 12)[3], 0);
 
@@ -171,6 +167,39 @@ test('draws only the first-page default character frame when requested', async (
   })).pngBase64, 'base64'));
   assert.deepEqual(pixel(withEvents, 60, 12), [230, 30, 50, 255]);
   assert.equal(pixel(withEvents, 12, 12)[3], 0, 'tile-based event images are excluded');
+});
+
+test('reuses cached session layers across option toggles with identical output', async (context) => {
+  const fixture = createFixture();
+  context.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  await writeEventCharacterFixture(fixture);
+  const scene = createScene(fixture.project, fixture.mapFile, 50, 'map-image-cache-a');
+  await openSession(fixture.root, fixture.project, scene);
+
+  const offFirst = await generateMapImageExportPreview(fixture.root, fixture.project, scene);
+  const withEvents = await generateMapImageExportPreview(fixture.root, fixture.project, {
+    ...scene,
+    requestId: 'map-image-cache-b',
+    options: { ...scene.options, includeDefaultEventCharacters: true },
+  });
+  const offAgain = await generateMapImageExportPreview(fixture.root, fixture.project, {
+    ...scene,
+    requestId: 'map-image-cache-c',
+  });
+  const smaller = await generateMapImageExportPreview(fixture.root, fixture.project, {
+    ...scene,
+    requestId: 'map-image-cache-d',
+    options: { ...scene.options, scalePercent: 25 },
+  });
+  const offAtFifty = await generateMapImageExportPreview(fixture.root, fixture.project, {
+    ...scene,
+    requestId: 'map-image-cache-e',
+  });
+
+  assert.equal(offFirst.pngBase64, offAgain.pngBase64);
+  assert.equal(offFirst.pngBase64, offAtFifty.pngBase64);
+  assert.notEqual(offFirst.pngBase64, withEvents.pngBase64);
+  assert.notEqual(offFirst.pngBase64, smaller.pngBase64);
 });
 
 test('composites normal, add, multiply, and screen unlimited layers at t=0', async (context) => {
@@ -195,6 +224,7 @@ test('composites normal, add, multiply, and screen unlimited layers at t=0', asy
     name: 'Overlay', path: 'parallaxes', x: index * 48, y: 0, z: 0.5,
     'scale.x': 1, 'scale.y': 1, blendMode, opacity: 255, loop: false,
   }));
+  await openSession(fixture.root, fixture.project, scene);
   const result = decodePng(Buffer.from((await generateMapImageExportPreview(fixture.root, fixture.project, scene)).pngBase64, 'base64'));
   assert.deepEqual(pixel(result, 12, 12), [100, 50, 20, 255]);
   assert.deepEqual(pixel(result, 60, 12), [200, 150, 120, 255]);
@@ -223,6 +253,7 @@ test('renders all six extended sheet types through the export worker', async (co
   descriptors.forEach((descriptor, index) => { data[index] = descriptor.firstTileId; });
   fs.writeFileSync(fixture.mapFile, JSON.stringify({ width: 6, height: 1, tilesetId: 1, data, events: [null] }), 'utf8');
   const scene = createScene(fixture.project, fixture.mapFile, 100, 'map-image-extended');
+  await openSession(fixture.root, fixture.project, scene);
   const result = decodePng(Buffer.from((await generateMapImageExportPreview(fixture.root, fixture.project, scene)).pngBase64, 'base64'));
   colors.forEach((color, index) => assert.deepEqual(pixel(result, index * 48 + 12, 12), color));
 });
@@ -244,6 +275,7 @@ test('loads a tileset image from a safe project-relative subdirectory', async (c
   }), 'utf8');
 
   const scene = createScene(fixture.project, fixture.mapFile, 100, 'map-image-nested-resource');
+  await openSession(fixture.root, fixture.project, scene);
   const result = decodePng(Buffer.from((await generateMapImageExportPreview(
     fixture.root,
     fixture.project,
@@ -264,6 +296,30 @@ function createFixture(): { root: string; project: string; mapFile: string } {
   const mapFile = path.join(dataDir, 'Map001.json');
   fs.writeFileSync(mapFile, JSON.stringify({ width: 2, height: 1, tilesetId: 1, data: Array(12).fill(0), events: [null] }), 'utf8');
   return { root, project, mapFile };
+}
+
+async function writeEventCharacterFixture(fixture: { project: string; mapFile: string }): Promise<void> {
+  const characters = path.join(fixture.project, 'www', 'img', 'characters');
+  fs.mkdirSync(characters, { recursive: true });
+  await sharp({ create: { width: 576, height: 384, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    .composite([{ input: { create: { width: 48, height: 48, channels: 4, background: { r: 230, g: 30, b: 50, alpha: 1 } } }, left: 48, top: 0 }])
+    .png()
+    .toFile(path.join(characters, 'EventCharacter.png'));
+  const map = {
+    width: 2,
+    height: 1,
+    tilesetId: 1,
+    data: Array(12).fill(0),
+    events: [
+      null,
+      { id: 1, x: 0, y: 0, pages: [{ image: { tileId: 8192, characterName: 'EventCharacter', characterIndex: 0, pattern: 1, direction: 2 } }] },
+      { id: 2, x: 1, y: 0, pages: [
+        { image: { tileId: 0, characterName: 'EventCharacter', characterIndex: 0, pattern: 2, direction: 8 } },
+        { image: { tileId: 0, characterName: '', characterIndex: 0, pattern: 0, direction: 2 } },
+      ] },
+    ],
+  };
+  fs.writeFileSync(fixture.mapFile, JSON.stringify(map), 'utf8');
 }
 
 function createScene(

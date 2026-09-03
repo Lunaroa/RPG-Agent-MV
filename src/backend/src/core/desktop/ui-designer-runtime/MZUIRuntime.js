@@ -3057,6 +3057,12 @@
     var location = global.document && global.document.location ? global.document.location : global.location;
     if (!location) return null;
     try {
+      // NW.js 0.13+ serves packaged local documents from chrome-extension URLs.
+      // Only an actual NW.js process may use the validated working-directory path.
+      if (location.protocol === 'chrome-extension:') {
+        if (!process.versions || !process.versions.nw) throw new Error('RPG Maker chrome-extension document requires NW.js.');
+        return null;
+      }
       if (location.protocol && location.protocol !== 'file:') throw new Error('RPG Maker app document must use the file protocol.');
       var pathname = String(location.pathname || '');
       if (!pathname) throw new Error('RPG Maker app document path is unavailable.');

@@ -1094,6 +1094,7 @@ describe('MZUIRuntime MV/MZ bridge', () => {
       try {
         const engineRoot = engine === 'MV' ? path.join(project, 'www') : project;
         fs.mkdirSync(path.join(engineRoot, 'data'), { recursive: true });
+        fs.mkdirSync(path.join(engineRoot, 'js', 'plugins'), { recursive: true });
         fs.mkdirSync(path.join(engineRoot, 'data', 'ui-scenes'), { recursive: true });
         const sceneName = `Scene_External${engine}`;
         fs.writeFileSync(path.join(engineRoot, 'data', 'ui-scenes', `${sceneName}.mzui`), JSON.stringify({
@@ -1116,6 +1117,50 @@ describe('MZUIRuntime MV/MZ bridge', () => {
         fs.rmSync(project, { recursive: true, force: true });
         fs.rmSync(externalRuntime, { recursive: true, force: true });
       }
+    }
+  });
+
+  test('resolves MV and MZ scene roots from cwd for verified NW.js chrome-extension documents', () => {
+    for (const engine of ['MV', 'MZ']) {
+      const project = fs.mkdtempSync(path.join(os.tmpdir(), `ui-runtime-nw-${engine.toLowerCase()}-`));
+      try {
+        const engineRoot = engine === 'MV' ? path.join(project, 'www') : project;
+        fs.mkdirSync(path.join(engineRoot, 'data'), { recursive: true });
+        fs.mkdirSync(path.join(engineRoot, 'js', 'plugins'), { recursive: true });
+        const context = makeContext();
+        context.location = { protocol: 'chrome-extension:', pathname: '/index.html', href: 'chrome-extension://fixture/index.html' };
+        context.document = { location: context.location };
+        context.PluginManager.parameters = () => ({ AutoRegister: 'true' });
+        context.process = { cwd: () => project, versions: { nw: '0.83.0' } };
+        context.require = nodeRequire;
+        vm.runInNewContext(RUNTIME_SOURCE, context, { filename: `MZUIRuntime-nw-${engine}.js` });
+        assert.equal(context.MZUIRuntime.resolveEngineRoot(), fs.realpathSync(engineRoot));
+      } finally {
+        fs.rmSync(project, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test('rejects non-NW chrome-extension and remote documents instead of trusting cwd', () => {
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ui-runtime-untrusted-document-'));
+    try {
+      fs.mkdirSync(path.join(project, 'data'), { recursive: true });
+      fs.mkdirSync(path.join(project, 'js', 'plugins'), { recursive: true });
+      for (const documentUrl of ['chrome-extension://fixture/index.html', 'http://127.0.0.1/index.html']) {
+        const parsedUrl = new URL(documentUrl);
+        const context = makeContext();
+        context.location = { protocol: parsedUrl.protocol, pathname: parsedUrl.pathname, href: parsedUrl.href };
+        context.document = { location: context.location };
+        context.process = { cwd: () => project, versions: {} };
+        context.require = nodeRequire;
+        vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-untrusted-document.js' });
+        assert.throws(
+          () => context.MZUIRuntime.resolveEngineRoot(),
+          /RPG Maker app document root is invalid/,
+        );
+      }
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true });
     }
   });
 

@@ -145,6 +145,33 @@ const previewEnabledForSelected = computed(() => {
 const pluginColors = ref<Record<string, string>>({});
 const colorPickerPlugin = ref<string | null>(null);
 
+function handleColorPickerOutside(event: PointerEvent): void {
+  const target = event.target as HTMLElement | null;
+  if (target?.closest?.('.plugin-color-swatch, .plugin-color-picker, .el-color-dropdown')) return;
+  colorPickerPlugin.value = null;
+}
+
+function handleColorPickerEscape(event: KeyboardEvent): void {
+  if (event.key !== 'Escape') return;
+  event.stopPropagation();
+  colorPickerPlugin.value = null;
+}
+
+watch(colorPickerPlugin, (name) => {
+  if (name) {
+    document.addEventListener('pointerdown', handleColorPickerOutside, true);
+    document.addEventListener('keydown', handleColorPickerEscape, true);
+  } else {
+    document.removeEventListener('pointerdown', handleColorPickerOutside, true);
+    document.removeEventListener('keydown', handleColorPickerEscape, true);
+  }
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', handleColorPickerOutside, true);
+  document.removeEventListener('keydown', handleColorPickerEscape, true);
+});
+
 async function loadPreviewDisabledPlugins(project: string): Promise<void> {
   const config = await projectConfigApi.get(project);
   if (projectStore.currentProject !== project) return;
@@ -1465,7 +1492,7 @@ function resizeKeydown(event: KeyboardEvent): void {
                       <el-color-picker
                         :model-value="pluginColors[plugin.name] || resolvePluginColor(plugin.name, pluginColors)"
                         color-format="hex"
-                        @update:model-value="applyPluginColor(plugin.name, $event)"
+                        @update:model-value="applyPluginColor(plugin.name, $event); colorPickerPlugin = null"
                       />
                       <button type="button" class="plugin-color-reset editor-btn" @click="applyPluginColor(plugin.name, null)">
                         {{ t('eventcmd.clearPluginColor') }}

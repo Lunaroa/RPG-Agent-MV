@@ -1,6 +1,6 @@
 import type { UiDesignerDocument, UiGuide, UiNode, UiPoint, UiRect, UiSnapResult, UiViewport } from '@contract/ui-designer'
 import { resizeUiListGridToExtent, resolveUiListGridExtent } from './listLayout'
-import { resolveTreeOrderRanks } from './tree'
+import { collectNodeSubtreeIds, resolveTreeOrderRanks } from './tree'
 import {
   UI_DESIGNER_PANE_LIMITS,
   normalizeUiDesignerDocumentGeometry,
@@ -481,23 +481,42 @@ export function topmostNodeAtPoint(
     .sort((left, right) => right.props.zIndex - left.props.zIndex || (order.get(right.id) ?? 0) - (order.get(left.id) ?? 0))[0]
 }
 
-/** Smart-snap peers must share the same parent-local coordinate space and be editable visual targets. */
 /**
- * Sibling rects worth snapping to. `excludeIds` removes nodes that move with
- * the drag (the rest of a multi-selection) so a group never snaps onto its
- * own members' pre-drag positions.
+ * Rects worth snapping to, across hierarchy levels. Node coordinates are
+ * scene-space (children are not offset by their parent), so any visible,
+ * unlocked node is a valid peer regardless of its parent. `excludeIds`
+ * removes nodes that move with the drag (the rest of a multi-selection) so a
+ * group never snaps onto its own members' pre-drag positions. Nodes that
+ * move together with the source — its ancestors and descendants — are
+ * excluded too, since snapping onto them would freeze the gesture in place.
  */
 export function smartSnapTargetsForNode(document: UiDesignerDocument, nodeId: string, excludeIds: readonly string[] = []): SmartSnapTarget[] {
   const source = findDocumentNode(document, nodeId)
   if (!source) return []
+  const sourceFamily = new Set<string>([nodeId, ...ancestorIds(document, source), ...collectNodeSubtreeIds(document, [nodeId])])
   return document.nodes
     .filter((node) => node.id !== nodeId
       && !excludeIds.includes(node.id)
       && node.id !== 'node_root'
-      && node.parentId === source.parentId
+      && !sourceFamily.has(node.id)
       && node.props.visible !== false
       && !node.locked)
     .map((node) => ({ id: node.id, rect: nodeVisualRect(node) }))
+}
+
+function ancestorIds(document: UiDesignerDocument, node: UiNode): string[] {
+  const byId = new Map(document.nodes.map((candidate) => [candidate.id, candidate]))
+  const ids: string[] = []
+  const visited = new Set<string>()
+  let parentId = node.parentId
+  while (parentId && !visited.has(parentId)) {
+    visited.add(parentId)
+    const parent = byId.get(parentId)
+    if (!parent) break
+    ids.push(parent.id)
+    parentId = parent.parentId
+  }
+  return ids
 }
 
 interface SnapCandidate {

@@ -741,7 +741,7 @@ describe('ui designer history, geometry and performance', () => {
     assert.deepEqual(drafts.rotations, { nest_container: 180, nest_inner: 180, nest_leaf: 180 })
   })
 
-  test('limits smart resize snap targets to visible unlocked siblings in the same local space', () => {
+  test('offers smart snap targets across hierarchy levels while excluding hidden, locked, and drag-along nodes', () => {
     const document = createUiDocument()
     const source = createDefaultNode('text', { id: 'snap_source', name: 'Source', parentId: 'node_root' })
     const sibling = createDefaultNode('text', { id: 'snap_sibling', name: 'Sibling', parentId: 'node_root', x: 120, y: 48 })
@@ -755,8 +755,13 @@ describe('ui designer history, geometry and performance', () => {
     document.nodes[0].children.push(source.id, sibling.id, hidden.id, locked.id, container.id)
     container.children.push(nested.id)
 
-    assert.deepEqual(smartSnapTargetsForNode(document, source.id), [{ id: sibling.id, rect: nodeRect(sibling) }, { id: container.id, rect: nodeRect(container) }])
-    assert.deepEqual(smartSnapTargetsForNode(document, nested.id), [])
+    // Cross-hierarchy: a root node can snap onto a node nested in a container.
+    assert.deepEqual(smartSnapTargetsForNode(document, source.id).map((target) => target.id), ['snap_sibling', 'snap_container', 'snap_nested'])
+    // A nested node can snap onto nodes outside its own parent chain, but its
+    // own parent container is excluded because it moves with the drag.
+    assert.deepEqual(smartSnapTargetsForNode(document, nested.id).map((target) => target.id), ['snap_source', 'snap_sibling'])
+    // A container excludes its descendants: they move together with it.
+    assert.deepEqual(smartSnapTargetsForNode(document, container.id).map((target) => target.id), ['snap_source', 'snap_sibling'])
     assert.deepEqual(smartSnapTargetsForNode(document, 'missing'), [])
   })
 

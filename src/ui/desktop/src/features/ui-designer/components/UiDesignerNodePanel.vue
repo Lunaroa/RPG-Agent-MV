@@ -45,7 +45,7 @@ const labels: Record<UiDesignerNodeType, UiDesignerMessageKey> = {
 }
 
 const labelFor = (type: UiDesignerNodeType) => t(labels[type])
-const nodeLabel = (node: UiNode) => `${node.name} · ${labelFor(node.type)}`
+const nodeLabel = (node: UiNode) => node.name
 const flattenedEntries = computed(() => {
   const result: NodeTreeEntry[] = []
   const visit = (entries: NodeTreeEntry[]) => entries.forEach((entry) => { result.push(entry); if (entry.children) visit(entry.children) })
@@ -281,9 +281,8 @@ const handleKeydown = (event: KeyboardEvent) => {
         <el-dropdown trigger="contextmenu" @command="(command: string) => contextCommand(command, data.id)">
         <span class="node-tree-entry" :class="{ selected: selectedIds.includes(data.id), locked: document.nodes.find((node) => node.id === data.id)?.locked }" :data-node-id="data.id" :data-ui-id="`ui-designer-tree-row-${data.id}`" @mouseenter="designer.setHoveredNode(data.id)" @mouseleave="designer.setHoveredNode(undefined)" @contextmenu="designer.selectNodeActionTarget(data.id)" @dblclick.stop="emit('activateNode', data.id)">
           <component :is="UI_DESIGNER_NODE_TYPE_ICONS[data.type]" class="node-type-icon" aria-hidden="true" />
-          <span class="node-kind">{{ labelFor(data.type) }}</span>
           <el-input v-if="editingId === data.id" v-model="editingName" size="small" :placeholder="t('nodeNamePlaceholder')" @keyup.enter="finishRename" @blur="finishRename" />
-          <span v-else class="node-name">{{ data.label.split(' · ')[0] }}</span>
+          <span v-else class="node-name">{{ data.label }}</span>
           <span v-if="selectedIds.length < 2" class="node-row-actions">
             <el-button size="small" text @click.stop="toggleVisibility(data.id)"><component :is="document.nodes.find((node) => node.id === data.id)?.props.visible ? Eye : EyeOff" /></el-button>
             <el-button size="small" text @click.stop="toggleLock(data.id)"><component :is="document.nodes.find((node) => node.id === data.id)?.locked ? Lock : Unlock" /></el-button>
@@ -356,7 +355,6 @@ const handleKeydown = (event: KeyboardEvent) => {
 .status-detail { color: var(--app-ink-soft); font-size: 10px; }
 .node-type-icon, .node-menu-icon { width: 14px; height: 14px; flex: 0 0 auto; stroke-width: 1.7; }
 .node-menu-icon { margin-right: 8px; }
-.node-kind { color: var(--app-ink-soft); font-size: 10px; }
 .node-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .node-types { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; width: 100%; min-width: 0; max-height: 220px; overflow-x: hidden; overflow-y: auto; }
 .node-types .el-button { box-sizing: border-box; width: 100%; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; }

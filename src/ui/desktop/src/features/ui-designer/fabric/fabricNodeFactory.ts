@@ -184,8 +184,10 @@ const commonObjectOptions = (node: UiNode, document?: UiDesignerDocument) => {
   angle: node.props.rotate,
   opacity: Math.max(0, Math.min(1, node.props.opacity / 255)),
   visible,
-  selectable: true,
-  evented: true,
+  // Locked nodes (directly or via an ancestor) must not be selectable on the
+  // canvas: pointer events pass through to whatever sits underneath.
+  selectable: !locked,
+  evented: !locked,
   lockMovementX: transformLocked,
   lockMovementY: transformLocked,
   lockScalingX: transformLocked,
@@ -193,7 +195,7 @@ const commonObjectOptions = (node: UiNode, document?: UiDesignerDocument) => {
   lockRotation: transformLocked,
   centeredRotation: true,
   hasControls: !transformLocked,
-  hoverCursor: transformLocked ? 'not-allowed' : 'move',
+  hoverCursor: locked ? 'default' : transformLocked ? 'not-allowed' : 'move',
   borderColor: '#d06b42',
   cornerColor: '#d06b42',
   cornerStrokeColor: '#171a24',

@@ -35,6 +35,33 @@ test('all eight resize controls feed the dimension-resize gesture and rotate the
   }
 })
 
+test('a locked node is not selectable and lets pointer events pass through', async () => {
+  const document = createUiDocument('Scene_LockedPointer')
+  const container = createDefaultNode('container', { id: 'node_box', name: 'Box', parentId: 'node_root' })
+  const child = createDefaultNode('container', { id: 'node_box_inner', name: 'BoxInner', parentId: 'node_box' })
+  document.nodes.push(container, child)
+  document.nodes[0].children.push(container.id)
+  container.children.push(child.id)
+  document.zOrder.push(container.id)
+
+  const unlocked = await createFabricNodeObject(container, null, document)
+  assert.equal(unlocked.selectable, true)
+  assert.equal(unlocked.evented, true)
+  assert.equal(unlocked.hoverCursor, 'move')
+
+  container.locked = true
+  const locked = await createFabricNodeObject(container, null, document)
+  assert.equal(locked.selectable, false)
+  assert.equal(locked.evented, false)
+  assert.equal(locked.hoverCursor, 'default')
+
+  // Ancestor locking is inherited: the child is not directly locked but still
+  // becomes unselectable while its parent is locked.
+  const inherited = await createFabricNodeObject(child, null, document)
+  assert.equal(inherited.selectable, false)
+  assert.equal(inherited.evented, false)
+})
+
 test('a container with a locked descendant blocks canvas transforms so a refused commit cannot desync the view', async () => {
   const document = createUiDocument('Scene_Lock')
   const container = createDefaultNode('container', { id: 'node_box', name: 'Box', parentId: 'node_root' })

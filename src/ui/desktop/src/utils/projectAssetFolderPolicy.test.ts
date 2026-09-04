@@ -13,6 +13,11 @@ describe('projectAssetFolderPolicy', () => {
     assert.equal(isProjectAssetUserPictureSubfolder('pictures/busts/als_1'), true);
   });
 
+  it('never treats virtual favorites ids as user folders', () => {
+    assert.equal(isProjectAssetUserPictureSubfolder('__favorites__'), false);
+    assert.equal(isProjectAssetUserPictureSubfolder('__favorites__:pictures/busts'), false);
+  });
+
   it('normalizes a single folder leaf name', () => {
     assert.equal(normalizeProjectAssetFolderLeafName('  busts  '), 'busts');
     assert.throws(() => normalizeProjectAssetFolderLeafName('a/b'), /Invalid folder name/);

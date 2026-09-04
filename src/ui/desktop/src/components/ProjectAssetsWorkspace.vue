@@ -248,8 +248,34 @@ const annotationIndex = ref<Map<string, ProjectAssetAnnotation>>(new Map())
 const FAVORITES_NODE_ID = '__favorites__'
 /** Frontend-only project resource root shared by the tree, grid, and breadcrumbs. */
 const PROJECT_RESOURCES_ROOT_NODE_ID = '__project_resources__'
+/** Prefix for the virtual favorites subgroup nodes (favorites grouped by listing directory). */
+const FAVORITES_GROUP_PREFIX = '__favorites__:'
 
-const isFavoritesSelection = computed(() => selectedCategoryId.value === FAVORITES_NODE_ID)
+const isFavoritesSelection = computed(() =>
+  selectedCategoryId.value === FAVORITES_NODE_ID || selectedCategoryId.value.startsWith(FAVORITES_GROUP_PREFIX))
+
+/** Current listing node when a favorites subgroup is selected; undefined at the favorites root. */
+const favoritesGroupNodeId = computed(() =>
+  selectedCategoryId.value.startsWith(FAVORITES_GROUP_PREFIX)
+    ? selectedCategoryId.value.slice(FAVORITES_GROUP_PREFIX.length)
+    : undefined)
+
+/** Directories that own at least one favorited file, in tree label order. */
+const favoritesGroups = computed(() => {
+  const seen = new Set<string>()
+  for (const id of favorites.value) {
+    const sep = id.indexOf(':')
+    if (sep <= 0) continue // folder favorites carry the node id itself
+    const category = id.slice(0, sep)
+    const name = id.slice(sep + 1)
+    const slash = name.lastIndexOf('/')
+    seen.add(slash > 0 ? `${category}/${name.slice(0, slash)}` : category)
+  }
+  return [...seen]
+    .filter((nodeId) => findTreeNode(treeNodes.value, nodeId))
+    .sort((left, right) =>
+      projectAssetCategoryLabel(left, language.value).localeCompare(projectAssetCategoryLabel(right, language.value)))
+})
 
 function categoryAllowedInSelectionMode(categoryId: string): boolean {
   if (!categoryId) return false
@@ -312,6 +338,11 @@ function favoriteListingNodes(ids: ReadonlySet<string>): string[] {
     nodes.add(slash > 0 ? `${category}/${name.slice(0, slash)}` : category)
   }
   return [...nodes]
+}
+
+/** Favorited files living directly in one listing node (drives the favorites subgroup counts). */
+function countFavoriteFilesInNode(nodeId: string): number {
+  return [...favorites.value].filter((id) => favoriteListingNodes(new Set([id]))[0] === nodeId).length
 }
 
 async function refreshFavorites(): Promise<void> {
@@ -658,7 +689,13 @@ const treeData = computed<TreeNodeView[]>(() => {
           id: FAVORITES_NODE_ID,
           label: t('projectAssets.favoritesNode'),
           entryCount: favorites.value.size,
-          children: undefined,
+          children: favoritesGroups.value.length
+            ? favoritesGroups.value.map((nodeId) => ({
+              id: `${FAVORITES_GROUP_PREFIX}${nodeId}`,
+              label: projectAssetCategoryLabel(nodeId, language.value),
+              entryCount: countFavoriteFilesInNode(nodeId),
+            }))
+            : undefined,
         },
         ...nodes,
       ],
@@ -670,6 +707,7 @@ const selectedNode = computed(() => findTreeNode(treeNodes.value, selectedCatego
 
 const isGroupSelection = computed(() =>
   selectedCategoryId.value === PROJECT_RESOURCES_ROOT_NODE_ID
+    || selectedCategoryId.value === FAVORITES_NODE_ID
     || Boolean(selectedCategoryId.value && isProjectAssetGroupCategory(selectedCategoryId.value)),
 )
 
@@ -683,7 +721,24 @@ const folderItems = computed<FolderGridItem[]>(() => {
     })) ?? []
   }
   if (isFavoritesSelection.value) {
-    const items: FolderGridItem[] = []
+    const groupNodeId = favoritesGroupNodeId.value
+    if (groupNodeId) {
+      // A subgroup lists its own subfolders exactly like the real category node does.
+      const node = findTreeNode(treeNodes.value, groupNodeId)
+      return (node?.children ?? []).filter((child) => categoryAllowedInSelectionMode(child.id)).map((child) => ({
+        kind: 'folder' as const,
+        id: child.id,
+        label: projectAssetCategoryLabel(child.id, language.value),
+        entryCount: child.entryCount,
+      }))
+    }
+    // Favorites root: subgroup folders per directory plus favorited folders.
+    const items: FolderGridItem[] = favoritesGroups.value.map((nodeId) => ({
+      kind: 'folder' as const,
+      id: `${FAVORITES_GROUP_PREFIX}${nodeId}`,
+      label: projectAssetCategoryLabel(nodeId, language.value),
+      entryCount: countFavoriteFilesInNode(nodeId),
+    }))
     for (const id of favorites.value) {
       if (id.includes(':')) continue
       const node = findTreeNode(treeNodes.value, id)
@@ -709,9 +764,13 @@ const folderItems = computed<FolderGridItem[]>(() => {
 })
 
 const filteredEntries = computed(() => {
-  // Favorites listing is a snapshot; keep it live against un-favoriting.
+  // Favorites listing is a snapshot; keep it live against un-favoriting. A
+  // favorites subgroup only shows the favorited files of its own directory.
+  const groupNodeId = favoritesGroupNodeId.value
   const base = isFavoritesSelection.value
-    ? categoryEntries.value.filter((entry) => favorites.value.has(entry.id))
+    ? groupNodeId
+      ? categoryEntries.value.filter((entry) => favorites.value.has(entry.id) && favoriteListingNodes(new Set([entry.id]))[0] === groupNodeId)
+      : categoryEntries.value.filter((entry) => favorites.value.has(entry.id))
     : categoryEntries.value
   const query = searchQuery.value.trim().toLowerCase()
   if (!query) return base
@@ -854,22 +913,29 @@ const showIconGrid = computed(() => viewMode.value === 'icons')
 const showDetailsView = computed(() => viewMode.value === 'details' || viewMode.value === 'list')
 
 const displayDirectory = computed(() => {
-  const node = selectedNode.value
+  const node = selectedNode.value ?? (favoritesGroupNodeId.value ? findTreeNode(treeNodes.value, favoritesGroupNodeId.value) : null)
   if (node?.directory) return node.directory
   return categoryDirectory.value
 })
 
-const pathCrumbs = computed(() =>
-  isFavoritesSelection.value
-    ? [
-        { label: t('projectAssets.projectRoot'), directory: '', nodeId: PROJECT_RESOURCES_ROOT_NODE_ID },
-        { label: t('projectAssets.favoritesNode'), directory: FAVORITES_NODE_ID, nodeId: FAVORITES_NODE_ID },
-      ]
-    : buildProjectAssetPathCrumbs(displayDirectory.value, treeNodes.value, {
-        label: t('projectAssets.projectRoot'),
-        nodeId: PROJECT_RESOURCES_ROOT_NODE_ID,
-      }),
-)
+const pathCrumbs = computed(() => {
+  if (isFavoritesSelection.value) {
+    const crumbs = [
+      { label: t('projectAssets.projectRoot'), directory: '', nodeId: PROJECT_RESOURCES_ROOT_NODE_ID },
+      { label: t('projectAssets.favoritesNode'), directory: FAVORITES_NODE_ID, nodeId: FAVORITES_NODE_ID },
+    ]
+    const groupNodeId = favoritesGroupNodeId.value
+    if (groupNodeId) {
+      const node = findTreeNode(treeNodes.value, groupNodeId)
+      crumbs.push({ label: projectAssetCategoryLabel(groupNodeId, language.value), directory: node?.directory || '', nodeId: `${FAVORITES_GROUP_PREFIX}${groupNodeId}` })
+    }
+    return crumbs
+  }
+  return buildProjectAssetPathCrumbs(displayDirectory.value, treeNodes.value, {
+    label: t('projectAssets.projectRoot'),
+    nodeId: PROJECT_RESOURCES_ROOT_NODE_ID,
+  })
+})
 
 /** Absolute on-disk directory for the current node — what "copy path" writes and hover shows. */
 const displayAbsoluteDirectory = computed(() => {
@@ -884,9 +950,9 @@ const displayAbsoluteDirectory = computed(() => {
 })
 
 const searchPlaceholder = computed(() => {
-  // The favorites node is frontend-only; projectAssetCategoryLabel would throw for it.
+  // The favorites nodes are frontend-only; projectAssetCategoryLabel would throw for them.
   const label = isFavoritesSelection.value
-    ? t('projectAssets.favoritesNode')
+    ? (favoritesGroupNodeId.value ? projectAssetCategoryLabel(favoritesGroupNodeId.value, language.value) : t('projectAssets.favoritesNode'))
     : selectedCategoryId.value === PROJECT_RESOURCES_ROOT_NODE_ID
       ? t('projectAssets.projectRoot')
     : selectedCategoryId.value
@@ -1438,7 +1504,7 @@ async function loadCategory(categoryId: string, options: { preserveViewState?: b
     categoryEntries.value = []
     return
   }
-  if (categoryId === FAVORITES_NODE_ID) {
+  if (categoryId === FAVORITES_NODE_ID || categoryId.startsWith(FAVORITES_GROUP_PREFIX)) {
     await loadFavoritesListing(options)
     return
   }
@@ -1521,7 +1587,7 @@ async function loadFavoritesListing(options: { preserveViewState?: boolean } = {
   const project = projectStore.currentProject
   if (!project) return
   const bucket = thumbnailBucket.value
-  const token = listingCoordinator.begin({ project, categoryId: FAVORITES_NODE_ID, bucket })
+  const token = listingCoordinator.begin({ project, categoryId: selectedCategoryId.value || FAVORITES_NODE_ID, bucket })
   categoryLoading.value = true
   categoryError.value = ''
   categoryDirectory.value = ''
@@ -1912,8 +1978,8 @@ function openFolderContextMenu(event: MouseEvent, folderId: string) {
 function openTreeContextMenu(event: MouseEvent, nodeId: string) {
   event.preventDefault()
   event.stopPropagation()
-  // The favorites node is virtual — no on-disk directory to reveal, rename or delete.
-  if (nodeId === FAVORITES_NODE_ID || nodeId === PROJECT_RESOURCES_ROOT_NODE_ID) return
+  // The favorites node and its directory subgroups are virtual — no on-disk directory to reveal, rename or delete.
+  if (nodeId === FAVORITES_NODE_ID || nodeId.startsWith(FAVORITES_GROUP_PREFIX) || nodeId === PROJECT_RESOURCES_ROOT_NODE_ID) return
   contextFolderId.value = nodeId
   contextMenuKind.value = 'tree'
   positionContextMenu(event.clientX, event.clientY)
@@ -2949,6 +3015,7 @@ const treeDropTargetId = ref<string | null>(null)
 function treeNodeAcceptsDrop(categoryId: string): boolean {
   return Boolean(projectStore.currentProject)
     && categoryId !== FAVORITES_NODE_ID
+    && !categoryId.startsWith(FAVORITES_GROUP_PREFIX)
     && categoryId !== PROJECT_RESOURCES_ROOT_NODE_ID
     && !isProjectAssetGroupCategory(categoryId)
     && !mutationBusy.value
@@ -3434,7 +3501,12 @@ async function refreshSilently() {
   folderPreviewGeneration += 1
   folderPreviews.value = new Map()
   const categoryId = selectedCategoryId.value
-  if (!categoryId || (categoryId !== FAVORITES_NODE_ID && !findTreeNode(treeNodes.value, categoryId))) {
+  const groupNodeId = categoryId.startsWith(FAVORITES_GROUP_PREFIX)
+    ? categoryId.slice(FAVORITES_GROUP_PREFIX.length)
+    : ''
+  const selectionStillValid = categoryId === FAVORITES_NODE_ID
+    || (groupNodeId ? Boolean(findTreeNode(treeNodes.value, groupNodeId)) : Boolean(findTreeNode(treeNodes.value, categoryId)))
+  if (!categoryId || !selectionStillValid) {
     // Current node vanished on disk — fall back to the full reload with default selection.
     await loadTree()
     return

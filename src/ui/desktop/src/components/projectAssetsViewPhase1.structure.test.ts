@@ -48,6 +48,14 @@ describe('projectAssetsView phase1 structure', () => {
     assert.match(viewSource, /ensureFolderPreview\(categoryId: string\)[\s\S]*categoryId === FAVORITES_NODE_ID[\s\S]*folderPreviews\.value\.set\(categoryId, \[\]\)/);
   });
 
+  test('favorites expand one level of directory subgroups that stay virtual', () => {
+    assert.match(viewSource, /FAVORITES_GROUP_PREFIX = '__favorites__:'/);
+    assert.match(viewSource, /id: `\$\{FAVORITES_GROUP_PREFIX\}\$\{nodeId\}`/);
+    assert.match(viewSource, /categoryId === FAVORITES_NODE_ID \|\| categoryId\.startsWith\(FAVORITES_GROUP_PREFIX\)/);
+    assert.match(viewSource, /nodeId\.startsWith\(FAVORITES_GROUP_PREFIX\) \|\| nodeId === PROJECT_RESOURCES_ROOT_NODE_ID/);
+    assert.match(viewSource, /!categoryId\.startsWith\(FAVORITES_GROUP_PREFIX\)[\s\S]*!isProjectAssetGroupCategory\(categoryId\)/);
+  });
+
   test('folder delete asks again when nested assets are still referenced', () => {
     assert.match(viewSource, /removeSubfolder\(folderId, false/);
     assert.match(viewSource, /projectAssets\.folderDeleteForceConfirm/);

@@ -318,6 +318,38 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     runtime.cleanup();
   });
 
+  test('blinks the focus frame by default and resets it on blur', () => {
+    const context = makeContext();
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    const button = scene.nodes.find((node: any) => node.type === 'button');
+    scene.nodes = [button];
+    scene.zOrder = [button.id];
+    runtime.mount(scene, { root: new context.PIXI.Container(), executionMode: 'editor-preview', deltaMs: 16 });
+
+    assert.equal(runtime.focusNode(button.id), true);
+    const frame = runtime.nodeViews.button.__mzuiFocusFrame;
+    assert.ok(frame, 'focus frame must exist once the button is focused');
+    assert.equal(frame.alpha, 1, 'frame starts fully visible');
+    const alphas: number[] = [];
+    for (let index = 0; index < 60; index += 1) {
+      runtime.update();
+      alphas.push(frame.alpha);
+    }
+    assert.ok(Math.min(...alphas) < 0.5, `frame must fade out during the blink cycle, min alpha ${Math.min(...alphas)}`);
+    assert.ok(Math.max(...alphas) > 0.9, 'frame must come back to near-full alpha');
+    assert.ok(alphas.some((value) => value < 1), 'alpha must actually animate while focused');
+    assert.equal(frame.visible, true);
+
+    assert.equal(runtime.blurNode(button.id), true);
+    assert.equal(runtime.nodeViews.button.__mzuiFocusBlinkMs, 0);
+    runtime.update();
+    assert.equal(frame.visible, false);
+    assert.equal(frame.alpha, 1, 'blink state must reset once the frame hides');
+    runtime.cleanup();
+  });
+
   test('navigates visible enabled buttons vertically in previews and keeps focus/press visuals unscaled', () => {
     const context = makeContext();
     const listeners = new Map<string, (event: any) => void>();
@@ -1778,6 +1810,38 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.deepEqual(events, ['root:show', 'child:show', 'child:hide', 'child:show', 'root:hide', 'root:show', 'root:hide', 'child:hide']);
     runtime.cleanup();
     assert.deepEqual(events, ['root:show', 'child:show', 'child:hide', 'child:show', 'root:hide', 'root:show', 'root:hide', 'child:hide']);
+  });
+
+  test('resolves dotted property code keys onto nested props objects', () => {
+    const context = makeContext();
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    const button = scene.nodes.find((node: any) => node.type === 'button');
+    button.propModes = { 'imageStates.hover': 'code', 'imageStates.pressed': 'code' };
+    button.propCodes = { 'imageStates.hover': "'img/ui/btn_hover.png'", 'imageStates.pressed': "'img/ui/btn_pressed.png'" };
+    runtime.mount(scene, { root: new context.PIXI.Container() });
+    runtime.update();
+    assert.equal(button.props.imageStates.hover, 'img/ui/btn_hover.png');
+    assert.equal(button.props.imageStates.pressed, 'img/ui/btn_pressed.png');
+    assert.equal(button.props.imageStates.normal, '');
+    assert.equal(button.props.imageStates['imageStates.hover'], undefined);
+    runtime.cleanup();
+  });
+
+  test('creates the parent props object for a dotted code key when missing', () => {
+    const context = makeContext();
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    const button = scene.nodes.find((node: any) => node.type === 'button');
+    delete button.props.imageStates;
+    button.propModes = { 'imageStates.hover': 'code' };
+    button.propCodes = { 'imageStates.hover': "'img/ui/btn_hover.png'" };
+    runtime.mount(scene, { root: new context.PIXI.Container() });
+    runtime.update();
+    assert.deepEqual({ ...button.props.imageStates }, { hover: 'img/ui/btn_hover.png' });
+    runtime.cleanup();
   });
 
   test('compiles code once, disables only the failing node handler, and exposes scene helpers through this', () => {

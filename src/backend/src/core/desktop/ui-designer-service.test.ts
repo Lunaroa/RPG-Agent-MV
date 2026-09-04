@@ -5,8 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 
-import type { UiDesignerDocument, UiListNode } from '../../../../contract/ui-designer.ts';
+import type { UiButtonNode, UiDesignerDocument, UiListNode } from '../../../../contract/ui-designer.ts';
 import { migrateLegacyUiSourceCode } from '../../../../contract/ui-designer-script.ts';
+import { createDefaultNode } from '../../../../ui/desktop/src/features/ui-designer/models/document.ts';
 import {
   UI_DESIGNER_RECENT_LIMIT,
   UiDesignerFileConflictError,
@@ -248,6 +249,36 @@ describe('ui designer document service', () => {
     list.props.maxItems = 100;
     list.focusAnim = { type: 'scaleIn', duration: 100, easing: 'Linear' };
     assert.ok(validateUiDesignerDocument(listDocument).errors.some((issue) => issue.nodeId === list.id && issue.path?.endsWith('focusAnim')));
+  });
+
+  test('accepts dotted button imageStates property modes and still rejects unknown keys', () => {
+    const document = sampleDocument();
+    const button = createDefaultNode('button');
+    button.id = 'node_button';
+    button.name = 'Button';
+    button.parentId = 'node_root';
+    button.propModes = {
+      'imageStates.normal': 'code',
+      'imageStates.hover': 'code',
+      'imageStates.pressed': 'code',
+      'imageStates.disabled': 'code',
+    };
+    button.propCodes = {
+      'imageStates.normal': "'img/ui/btn.png'",
+      'imageStates.hover': "'img/ui/btn_hover.png'",
+      'imageStates.pressed': "'img/ui/btn_pressed.png'",
+      'imageStates.disabled': "'img/ui/btn_disabled.png'",
+    };
+    document.nodes[0].children = [button.id];
+    document.nodes.push(button);
+    document.zOrder = [button.id];
+    const report = validateUiDesignerDocument(document);
+    assert.deepEqual(report.errors.filter((issue) => issue.nodeId === button.id).map((issue) => issue.path), []);
+
+    button.propModes = { 'imageStates.hover': 'code', 'imageStates.nope': 'code' } as Record<string, 'code'>;
+    button.propCodes = { 'imageStates.hover': "'a.png'", 'imageStates.nope': "'b.png'" };
+    const invalidReport = validateUiDesignerDocument(document);
+    assert.ok(invalidReport.errors.some((issue) => issue.nodeId === button.id && issue.path?.includes('imageStates.nope')));
   });
 
   test('rejects unsafe direct and nested project resource paths', () => {

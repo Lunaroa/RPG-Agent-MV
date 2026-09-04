@@ -107,6 +107,15 @@ const TYPE_PROP_KEYS: Record<string, readonly string[]> = {
   ],
 };
 
+/**
+ * Nested sub-properties that accept their own value/code mode. The key stored
+ * in propModes/propCodes is the dotted path (e.g. "imageStates.hover"); the
+ * runtime resolves it back onto the owning object prop.
+ */
+const SUB_PROP_KEYS: Record<string, readonly string[]> = {
+  button: ['imageStates.normal', 'imageStates.hover', 'imageStates.pressed', 'imageStates.disabled'],
+};
+
 export class UiDesignerValidationError extends Error {
   readonly code = 'UI_DESIGNER_VALIDATION';
   readonly report: UiValidationReport;
@@ -629,6 +638,7 @@ function validatePropertyModes(value: unknown, codes: unknown, type: unknown, ad
   const allowed = new Set<string>([
     ...BASE_PROP_KEYS,
     ...(isUiDesignerNodeType(type) ? TYPE_PROP_KEYS[type] ?? [] : []),
+    ...(isUiDesignerNodeType(type) ? SUB_PROP_KEYS[type] ?? [] : []),
   ]);
   for (const [key, mode] of Object.entries(value)) {
     if (!allowed.has(key)) addError('invalid-reference', `Property mode ${key} is not supported by this node type.`, `${path}.propModes.${key}`, nodeId);

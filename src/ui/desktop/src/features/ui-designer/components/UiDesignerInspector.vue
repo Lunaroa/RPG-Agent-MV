@@ -331,6 +331,24 @@ const propValue = (key: string): unknown => {
 }
 const propMode = (key: string) => selectedNode.value?.propModes[key] ?? 'value'
 const propCode = (key: string) => selectedNode.value?.propCodes[key] ?? ''
+const buttonStateModes = computed(() => {
+  const modes = selectedNode.value?.propModes ?? {}
+  return {
+    normal: modes['imageStates.normal'] ?? 'value',
+    hover: modes['imageStates.hover'] ?? 'value',
+    pressed: modes['imageStates.pressed'] ?? 'value',
+    disabled: modes['imageStates.disabled'] ?? 'value',
+  }
+})
+const buttonStateCodes = computed(() => {
+  const codes = selectedNode.value?.propCodes ?? {}
+  return {
+    normal: codes['imageStates.normal'] ?? '',
+    hover: codes['imageStates.hover'] ?? '',
+    pressed: codes['imageStates.pressed'] ?? '',
+    disabled: codes['imageStates.disabled'] ?? '',
+  }
+})
 const buttonFieldUiId = (field: FieldDescriptor) => {
   if (selectedNode.value?.type !== 'button') return undefined
   if (field.key === 'content') return 'ui-designer-inspector-button-content'
@@ -506,7 +524,19 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
               :resources="designer.resourceCatalog?.resources ?? []"
               :pick-resource="designer.hasProject ? (currentPath) => pickResourcePath('image', currentPath) : undefined"
               :resource-picker-disabled="!designer.hasProject"
+              :modes="buttonStateModes"
+              :codes="buttonStateCodes"
+              :code-adapter="designer.adapters.code"
+              :draft-coordinator="designer.draftCoordinator"
+              :scene-id="designer.activeSceneId"
+              :node-id="selectedNode.id"
+              :format-on-blur="Boolean(designer.preferences.autoFormat)"
+              :code-font-family="designer.preferences.codeFontFamily"
+              :code-font-size="designer.preferences.codeFontSize"
+              :completion-items="[...UI_DESIGNER_NODE_SCRIPT_COMPLETIONS, ...designer.document.nodes.flatMap((node) => [node.id, node.name])]"
               @update="updateProperty('imageStates', $event)"
+              @mode="(state, mode) => updateMode(`imageStates.${state}`, mode)"
+              @code="(state, code, sceneId) => updateCode(`imageStates.${state}`, code, sceneId)"
             />
             <el-button
               v-if="group.purpose === 'contentResources' && selectedNode.type === 'button'"

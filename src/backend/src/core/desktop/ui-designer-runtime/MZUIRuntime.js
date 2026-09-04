@@ -457,6 +457,7 @@
             applyNodeAnimation(node, self.frame, true);
             applyNodeProps(node, self.nodeViews[node.id], self.scene, true);
             applyButtonFocusAnimation(node, self.nodeViews[node.id], self);
+            applyButtonFocusFrameBlink(self.nodeViews[node.id], self);
             updateSpriteScroll(node, self.nodeViews[node.id]);
             updateFrameAnimation(node, self.nodeViews[node.id], self.frame, self);
             updateParticleNode(node, self.nodeViews[node.id], self.frame, self);
@@ -522,7 +523,17 @@
           if (node.propModes[key] !== 'code') return;
           if (node.type === 'list' && key === 'dataSource') return;
           var value = self.invoke(self.compiled.properties[node.id + ':' + key], self.makeInvocationArgs(node, null, props), 'property:' + key, 'property:' + node.id + ':' + key, { node: node.id });
-          if (value !== undefined) props[key] = value;
+          if (value === undefined) return;
+          // Dotted keys address a nested sub-property (e.g. "imageStates.hover").
+          var dotIndex = key.indexOf('.');
+          if (dotIndex > 0) {
+            var parentKey = key.slice(0, dotIndex);
+            var subKey = key.slice(dotIndex + 1);
+            if (!object(props[parentKey])) props[parentKey] = {};
+            props[parentKey][subKey] = value;
+          } else {
+            props[key] = value;
+          }
         });
       },
       dispatchActions: function dispatchActions(eventName, event) {
@@ -2438,6 +2449,7 @@
       view.__mzuiButtonImage.tint = state === 'hover' && props.hoverTint ? parseColor(props.hoverTint, 0xffffff) : 0xffffff;
     }
     if (view.__mzuiFocusFrame) view.__mzuiFocusFrame.visible = Boolean(view.__mzuiFocused);
+    if (!view.__mzuiFocused) view.__mzuiFocusBlinkMs = 0;
     if (view.__mzuiFocused && global.PIXI && typeof global.PIXI.Graphics === 'function' && !view.__mzuiFocusFrame) {
       var frame = new global.PIXI.Graphics();
       if (typeof frame.lineStyle === 'function') frame.lineStyle(Math.max(1, finite(props.focusWidth, 1)), parseColor(props.focusColor, 0xffffff), 1);
@@ -2629,6 +2641,23 @@
     if (animation.type === 'slideFromBottom') node.props.y = baseY + distanceY * (1 - progress);
     node.__mzuiAnimationActive = progress < 1;
     return node.__mzuiAnimationActive;
+  }
+
+  // Focused buttons blink their focus frame by default (RPG Maker style), so
+  // the user can see which button owns keyboard/gamepad input even when the
+  // scene defines no explicit focusAnim.
+  var FOCUS_FRAME_BLINK_PERIOD_MS = 960;
+
+  function applyButtonFocusFrameBlink(view, runtime) {
+    var frame = view && view.__mzuiFocusFrame;
+    if (!frame) return;
+    if (!view.__mzuiFocused) { frame.alpha = 1; return; }
+    var deltaMs = Math.max(1, finite(runtime && runtime.deltaMs, frameDeltaMs()));
+    view.__mzuiFocusBlinkMs = ((view.__mzuiFocusBlinkMs || 0) + deltaMs) % FOCUS_FRAME_BLINK_PERIOD_MS;
+    var phase = view.__mzuiFocusBlinkMs / FOCUS_FRAME_BLINK_PERIOD_MS;
+    // Triangle wave: ease the stroke in and out instead of hard on/off.
+    var wave = phase < 0.5 ? phase * 2 : (1 - phase) * 2;
+    frame.alpha = 0.3 + 0.7 * wave;
   }
 
   function startButtonFocusAnimation(node, view) {

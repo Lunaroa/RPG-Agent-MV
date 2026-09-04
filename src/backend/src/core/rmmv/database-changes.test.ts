@@ -24,6 +24,7 @@ import {
   dryRunRmmvDatabaseChanges,
   preflightRmmvDatabaseProjectApply,
   stageRmmvDatabaseChanges,
+  validateEffectiveRmmvDatabaseState,
   type RmmvDatabaseChange,
 } from "./database-changes.ts";
 
@@ -285,6 +286,17 @@ describe("controlled RMMV database changes", { concurrency: false }, () => {
     assert.equal(applied.applied, true);
     assert.equal((readJson(path.join(dataDir, "Items.json")) as Array<Record<string, unknown> | null>)[1]!.name, "Applied With Legacy Missing Map");
     assert.equal(fs.existsSync(path.join(dataDir, "Map002.json")), false);
+  });
+
+  test("tolerates declared maps whose files were deleted during inspection", () => {
+    const mapInfos = readJson(path.join(dataDir, "MapInfos.json")) as unknown[];
+    mapInfos.push({ id: 2, name: "Deleted Map", parentId: 0, order: 2, expanded: true });
+    writeJson(path.join(dataDir, "MapInfos.json"), mapInfos);
+
+    const result = validateEffectiveRmmvDatabaseState(workflowRoot, project);
+
+    assert.equal(fs.existsSync(path.join(dataDir, "Map002.json")), false);
+    assert.ok(result, "inspection must succeed instead of throwing for the missing map");
   });
 
   test("blocks a staged deletion of a declared map before the transaction starts", () => {

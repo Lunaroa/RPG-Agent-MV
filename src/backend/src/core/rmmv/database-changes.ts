@@ -231,7 +231,9 @@ export function validateEffectiveRmmvDatabaseState(
   workflowRoot: string,
   project: string,
 ): RmmvDatabaseSemanticValidationResult {
-  const loaded = loadProjectInputs(workflowRoot, path.resolve(project));
+  // Declared maps whose files were deleted from the project are tolerated here:
+  // inspection must stay usable instead of failing the whole database view.
+  const loaded = loadProjectInputs(workflowRoot, path.resolve(project), { allowUnreadableMaps: true });
   return validateRmmvDatabaseSnapshot(loaded.snapshot, { maps: loaded.maps, engine: loaded.engine });
 }
 
@@ -242,8 +244,10 @@ export function validateEffectiveRmmvDatabaseStagingTransition(
   const project = path.resolve(projectRoot);
   const status = getProjectStagingStatus(workflowRoot, project);
   const sourceOnlyRelativePaths = new Set(status.files.map((file) => file.relativePath));
-  const before = loadProjectInputs(workflowRoot, project, { sourceOnlyRelativePaths });
-  const after = loadProjectInputs(workflowRoot, project);
+  // Missing map files are reported as unreadable map states, not thrown errors;
+  // apply-time safety stays enforced by preflightRmmvDatabaseProjectApply.
+  const before = loadProjectInputs(workflowRoot, project, { sourceOnlyRelativePaths, allowUnreadableMaps: true });
+  const after = loadProjectInputs(workflowRoot, project, { allowUnreadableMaps: true });
   return validateRmmvDatabaseTransition(before.snapshot, after.snapshot, {
     beforeMaps: before.maps,
     maps: after.maps,

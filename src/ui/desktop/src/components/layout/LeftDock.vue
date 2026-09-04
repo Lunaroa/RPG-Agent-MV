@@ -646,8 +646,8 @@ onMounted(() => {
 .node-fav.active { display:flex; color:#f5a623; }
 .tree-node:hover .node-fav, .tree-node:focus-within .node-fav { display:flex; }
 .node-staged { flex:0 0 auto; padding: 1px 4px; border-radius: 4px; background: var(--app-warn-soft); color: var(--app-warn); font-size: 9px; font-weight:600; }
-.tree-node.missing .node-label { color: var(--app-danger); text-decoration: line-through; text-decoration-thickness: 1px; }
-.node-missing { flex:0 0 auto; padding: 1px 4px; border-radius: 4px; background: color-mix(in srgb, var(--app-danger) 11%, transparent); color: var(--app-danger); font-size: 9px; font-weight:650; }
+.tree-node.missing .node-label { color: var(--app-warn); text-decoration: line-through; text-decoration-thickness: 1px; }
+.node-missing { flex:0 0 auto; padding: 1px 4px; border-radius: 4px; background: var(--app-warn-soft); color: var(--app-warn); font-size: 9px; font-weight:650; }
 .pane-empty { padding: 10px; color: var(--app-ink-muted); font-size: 12px; }
 .map-tree-error { display: grid; gap: 8px; color: var(--app-danger); }
 .map-tree-error button { justify-self: start; padding: 3px 8px; border: 1px solid var(--app-border); border-radius: 3px; background: var(--app-bg); color: var(--app-accent); font: inherit; cursor: pointer; }

@@ -272,7 +272,7 @@ describe('ui designer resource catalog', () => {
     const catalog = inspectUiDesignerResources(project);
     assert.equal(catalog.projectCompatibility?.engine, 'MZ');
     assert.equal(catalog.projectCompatibility?.engineVersion, '1.9.0');
-    assert.equal(catalog.projectCompatibility?.engineVersionSupported, false);
+    assert.equal(catalog.projectCompatibility?.engineVersionSupported, true);
     assert.match(catalog.projectCompatibility?.warnings.join(' ') || '', /outside the validated/i);
   });
 

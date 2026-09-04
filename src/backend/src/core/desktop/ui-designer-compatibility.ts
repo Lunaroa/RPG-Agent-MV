@@ -7,11 +7,11 @@ import type { RmmvProjectManifest } from '../rmmv/rmmv-layout.ts';
  * does not probe or execute project files a second time.
  */
 export function uiDesignerProjectCompatibility(
-  manifest: Pick<RmmvProjectManifest, 'engine' | 'engineVersion' | 'engineVersionSupported' | 'encryptedResources' | 'encryptedImages' | 'encryptedAudio'>,
+  manifest: Pick<RmmvProjectManifest, 'engine' | 'engineVersion' | 'engineVersionSupported' | 'engineVersionValidated' | 'encryptedResources' | 'encryptedImages' | 'encryptedAudio'>,
 ): UiDesignerProjectCompatibility {
   const engine = manifest.engine === 'rpg-maker-mz' ? 'MZ' : manifest.engine === 'rpg-maker-mv' ? 'MV' : 'unknown';
   const warnings: string[] = [];
-  if (!manifest.engineVersionSupported) {
+  if (manifest.engineVersionSupported && !manifest.engineVersionValidated) {
     warnings.push(`The ${engine} engine version ${manifest.engineVersion || 'unknown'} is outside the validated UI designer baseline.`);
   }
   if (manifest.encryptedResources) {
@@ -24,6 +24,7 @@ export function uiDesignerProjectCompatibility(
     engine,
     engineVersion: manifest.engineVersion,
     engineVersionSupported: manifest.engineVersionSupported,
+    engineVersionValidated: manifest.engineVersionValidated,
     warnings,
   };
 }
@@ -33,6 +34,7 @@ export function unsupportedUiDesignerProjectCompatibility(message: string): UiDe
     engine: 'unknown',
     engineVersion: null,
     engineVersionSupported: false,
+    engineVersionValidated: false,
     warnings: [message],
   };
 }

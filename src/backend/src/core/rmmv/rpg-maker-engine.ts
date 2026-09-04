@@ -24,6 +24,11 @@ export interface RpgMakerEngineProfile {
   resourceDirs: readonly string[];
 }
 
+/**
+ * Fully validated MZ core baseline. Every recognized MZ core version is
+ * supported; versions other than this baseline surface a compatibility
+ * warning (engineVersionValidated) instead of being rejected.
+ */
 export const SUPPORTED_RPG_MAKER_MZ_VERSION = '1.10.0';
 export const RPG_MAKER_MZ_TILE_SIZES = [16, 24, 32, 48] as const;
 
@@ -84,6 +89,8 @@ export interface RpgMakerEngineInspection {
   engine: RpgMakerEngine;
   engineVersion: string | null;
   engineVersionSupported: boolean;
+  /** True when the detected version matches the fully validated baseline. */
+  engineVersionValidated: boolean;
   encryption: RpgMakerEncryptionStatus;
   profile: RpgMakerEngineProfile;
   canvas: RpgMakerCanvasSettings;
@@ -127,6 +134,7 @@ export function inspectRpgMakerEngine(
       engine: 'rpg-maker-mv',
       engineVersion: readMVVersion(root, resources),
       engineVersionSupported: true,
+      engineVersionValidated: true,
       encryption: inspectRpgMakerEncryption(resources, system),
       profile: RPG_MAKER_ENGINE_PROFILES['rpg-maker-mv'],
       canvas: { tileSize: 48, screenWidth: 816, uiAreaWidth: 816, screenHeight: 624, uiAreaHeight: 624, faceSize: 144, iconSize: 32 },
@@ -153,7 +161,8 @@ export function inspectRpgMakerEngine(
   return {
     engine: 'rpg-maker-mz',
     engineVersion: version,
-    engineVersionSupported: version === SUPPORTED_RPG_MAKER_MZ_VERSION,
+    engineVersionSupported: true,
+    engineVersionValidated: version === SUPPORTED_RPG_MAKER_MZ_VERSION,
     encryption,
     profile: RPG_MAKER_ENGINE_PROFILES['rpg-maker-mz'],
     canvas: readMZCanvasSettings(system),

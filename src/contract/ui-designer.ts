@@ -677,6 +677,8 @@ export interface UiDesignerProjectCompatibility {
   engine: 'MV' | 'MZ' | 'unknown'
   engineVersion: string | null
   engineVersionSupported: boolean
+  /** True when the detected version matches the fully validated baseline. */
+  engineVersionValidated: boolean
   warnings: string[]
 }
 

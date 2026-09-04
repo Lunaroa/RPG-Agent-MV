@@ -157,7 +157,7 @@ export function validateRmmvProjectDirectory(projectPath: string): ProjectValida
 export function getProjectCompatibilityWarning(projectPath: string): ProjectCompatibilityWarning | null {
   const manifest = validateRmmvProjectDirectory(projectPath).manifest;
   if (manifest.engine !== 'rpg-maker-mz') return null;
-  const versionMismatch = !manifest.engineVersionSupported;
+  const versionMismatch = !manifest.engineVersionValidated;
   if (!versionMismatch && !manifest.encryptedResources) return null;
   return {
     detectedVersion: manifest.engineVersion!,

@@ -385,6 +385,7 @@ export function readUiDesignerSceneData(projectRoot: string, requestedPath: stri
       engine: 'unknown',
       engineVersion: null,
       engineVersionSupported: false,
+      engineVersionValidated: false,
       warnings: ['Project compatibility could not be inspected.'],
     },
   };

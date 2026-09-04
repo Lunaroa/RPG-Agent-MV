@@ -8,7 +8,7 @@ RPG Agent MV must connect to a complete RPG Maker MV or MZ project directory wit
 
 - Open correctly in its matching RPG Maker editor.
 - For MZ, contain a root `data` directory, complete MZ core scripts, and a recognizable core version. `game.rmmzproject` is optional provenance metadata, not an import requirement.
-- MZ 1.10.0 is the fully validated baseline. Older cores and encrypted resources require compatibility confirmation; encrypted asset capabilities may remain limited while project data stays editable.
+- MZ 1.10.0 is the fully validated baseline. Other recognizable MZ versions remain usable with a compatibility warning, and encrypted resources require confirmation; encrypted asset capabilities may remain limited while project data stays editable.
 - Contain map data and database data.
 - Contain the assets required by the task.
 - Be readable from the local path used by RPG Agent MV.

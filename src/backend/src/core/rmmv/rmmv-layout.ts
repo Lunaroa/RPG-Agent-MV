@@ -23,6 +23,8 @@ export interface RmmvProjectManifest extends RmmvProjectLayout {
   engine: RpgMakerEngine;
   engineVersion: string | null;
   engineVersionSupported: boolean;
+  /** True when the detected version matches the fully validated baseline. */
+  engineVersionValidated: boolean;
   encryptedResources: boolean;
   encryptedImages: boolean;
   encryptedAudio: boolean;
@@ -209,6 +211,7 @@ export function inspectRmmvProject(projectRoot: string): RmmvProjectManifest {
     engine: engineInspection.engine,
     engineVersion: engineInspection.engineVersion,
     engineVersionSupported: engineInspection.engineVersionSupported,
+    engineVersionValidated: engineInspection.engineVersionValidated,
     encryptedResources: engineInspection.encryption.encryptedResources,
     encryptedImages: engineInspection.encryption.encryptedImages,
     encryptedAudio: engineInspection.encryption.encryptedAudio,

@@ -48,6 +48,18 @@ describe('managed unlimited tilesets runtime', { concurrency: false }, () => {
     });
   }
 
+  test('allows an older but recognizable MZ core instead of rejecting it by version', () => {
+    const project = createProject(root, 'MZ');
+    fs.writeFileSync(
+      path.join(project, 'js', 'rmmz_core.js'),
+      runtimeCoreFixture('MZ').replace('1.10.0', '1.9.0'),
+      'utf8',
+    );
+    const result = setManagedUnlimitedTilesetsEnabled(root, project, true);
+    assert.equal(result.engine, 'rpg-maker-mz');
+    assert.equal(inspectManagedUnlimitedTilesets(root, project).valid, true);
+  });
+
   test('requires explicit backup-and-replace for an unknown same-name plugin', () => {
     const project = createProject(root, 'MV');
     const pluginPath = path.join(project, 'www', 'js', 'plugins', 'RPGAgentUnlimitedTilesets.js');

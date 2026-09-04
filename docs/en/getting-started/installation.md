@@ -6,7 +6,7 @@ This page explains the requirements, startup path, and first checks for RPG Agen
 
 Before using RPG Agent MV, prepare:
 
-- A complete RPG Maker MV or MZ project directory with readable project data and core scripts. MZ 1.10.0 is the fully validated baseline; older cores and encrypted resources show compatibility warnings, and encrypted asset capabilities may remain limited.
+- A complete RPG Maker MV or MZ project directory with readable project data and core scripts. MZ 1.10.0 is the fully validated baseline; other recognizable MZ versions remain usable with a compatibility warning, encrypted resources also show a warning, and encrypted asset capabilities may remain limited.
 - A working model provider, API key, and default model.
 - A local project path that RPG Agent MV can read.
 - A Git worktree for the RMMV project is recommended, so changes can be reviewed and organized.

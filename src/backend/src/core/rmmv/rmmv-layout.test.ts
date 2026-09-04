@@ -119,13 +119,14 @@ describe('RMMV layout resolver', () => {
     }
   });
 
-  test('accepts a recognizable older RPG Maker MZ core and marks it unsupported', () => {
+  test('accepts a recognizable older RPG Maker MZ core as supported but unvalidated', () => {
     const root = tempRoot();
     try {
       writeMZProject(root, '1.9.0', 48, 816, 624);
       const manifest = inspectRmmvProject(root);
       assert.equal(manifest.engineVersion, '1.9.0');
-      assert.equal(manifest.engineVersionSupported, false);
+      assert.equal(manifest.engineVersionSupported, true);
+      assert.equal(manifest.engineVersionValidated, false);
     } finally {
       removeRoot(root);
     }

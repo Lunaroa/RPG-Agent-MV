@@ -6,7 +6,7 @@ RPG Agent MV is a local AI production tool for RPG Maker MV and RPG Maker MZ 1.1
 
 This guide covers first use, project management, Agent workflows, extension points, and common troubleshooting paths.
 
-The app is not a replacement for the RPG Maker editor. MV and MZ projects share project management, map, event, database, asset, plugin, staging, and versioning flows. MZ 1.10.0 is the fully validated baseline, while older cores require compatibility confirmation. Authors must still confirm third-party plugin semantics and final in-game results.
+The app is not a replacement for the RPG Maker editor. MV and MZ projects share project management, map, event, database, asset, plugin, staging, and versioning flows. Every recognizable MZ core version is supported; MZ 1.10.0 is the fully validated baseline, and other versions surface a compatibility warning without blocking features. Authors must still confirm third-party plugin semantics and final in-game results.
 
 ## Contents
 

@@ -18,7 +18,11 @@ const compatibilitySummary = () => {
   const compatibility = designer.runtimeStatus.projectCompatibility
   if (!compatibility) return ''
   const engine = compatibility.engine === 'unknown' ? t('projectCompatibilityUnknown') : `${compatibility.engine} ${compatibility.engineVersion ?? ''}`.trim()
-  const state = compatibility.engineVersionSupported ? t('projectCompatibilitySupported') : t('projectCompatibilityWarning')
+  const state = !compatibility.engineVersionSupported
+    ? t('projectCompatibilityUnsupported')
+    : compatibility.engineVersionValidated
+      ? t('projectCompatibilitySupported')
+      : t('projectCompatibilityWarning')
   return `${t('projectCompatibility')}: ${engine} · ${state}`
 }
 </script>
@@ -29,7 +33,7 @@ const compatibilitySummary = () => {
     <span class="status-item" :class="{ error: designer.validation.errors.length > 0 }">{{ designer.validation.errors.length ? `${designer.validation.errors.length} ${t('validationErrors')}` : t('valid') }}</span>
     <span v-if="designer.runtimeDiagnostics.length" class="status-item warning">{{ t('runtimeDiagnostics') }}: {{ designer.runtimeDiagnostics.length }}</span>
     <span class="status-item">{{ t('runtime') }}: {{ runtimeLabel(designer.runtimeStatus.state) }}</span>
-    <span v-if="designer.runtimeStatus.projectCompatibility" class="status-item" :class="{ warning: !designer.runtimeStatus.projectCompatibility.engineVersionSupported }">{{ compatibilitySummary() }}</span>
+    <span v-if="designer.runtimeStatus.projectCompatibility" class="status-item" :class="{ warning: !designer.runtimeStatus.projectCompatibility.engineVersionValidated }">{{ compatibilitySummary() }}</span>
     <span class="status-item">{{ t('editorPreviewStatus') }}: {{ previewLabel(designer.previewStatus) }}</span>
     <el-button size="small" text :disabled="designer.isPreviewing || !designer.hasProject" @click="void designer.checkRuntime()">{{ t('checkRuntime') }}</el-button>
     <span class="status-item" :class="{ error: designer.previewStatus === 'error' || designer.previewStatus === 'unavailable' || designer.fileStatus === 'error' || designer.resourceStatus === 'error' || designer.actionError || designer.recoveryCleanupPending }">{{ designer.recoveryCleanupPending ? t('recoveryCleanupPending') : operationSummary() }}<details v-if="!designer.recoveryCleanupPending && operationDetails()" class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ operationDetails() }}</span></details></span>

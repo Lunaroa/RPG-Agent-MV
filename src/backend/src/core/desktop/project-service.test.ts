@@ -95,7 +95,7 @@ describe('desktop project service', () => {
         encryptedAudio: false,
       });
       assert.equal(registered.engineVersion, '1.9.0');
-      assert.equal(registered.engineVersionSupported, false);
+      assert.equal(registered.engineVersionSupported, true);
     } finally {
       removeRoot(root);
       removeRoot(external);

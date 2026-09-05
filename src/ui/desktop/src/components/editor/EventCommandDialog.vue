@@ -411,29 +411,29 @@
                 </fieldset>
                 <fieldset v-if="draft.code === 122" class="cond-group">
                   <legend>{{ t('eventcmd.operandTitle') }}</legend>
-                  <div class="cond-row">
+                  <div class="cond-row" :class="{ inactive: numberParam(3)!==0 }">
                     <label class="cond-pick"><input type="radio" name="gp-operand" :checked="numberParam(3)===0" @change="setVariableOperand(0)" />{{ t('eventcmd.condConstant') }}</label>
-                    <input class="cond-main" :value="numberParam(4)" type="number" :disabled="numberParam(3)!==0" @input="setParam(4,numberValue($event))" />
+                    <input class="cond-main" :value="variableOperandNumberParam(0,4,0)" type="number" :disabled="numberParam(3)!==0" @input="setParam(4,numberValue($event))" />
                   </div>
-                  <div class="cond-row">
+                  <div class="cond-row" :class="{ inactive: numberParam(3)!==1 }">
                     <label class="cond-pick"><input type="radio" name="gp-operand" :checked="numberParam(3)===1" @change="setVariableOperand(1)" />{{ t('eventcmd.variable') }}</label>
-                    <span class="var-cmd-row cond-main"><input :value="namedEntryDisplay('variable', numberParam(4,1))" readonly :disabled="numberParam(3)!==1" @click="numberParam(3)===1&&openNamedEntry('variable',4)" /><button type="button" class="editor-btn" :disabled="numberParam(3)!==1" @click="openNamedEntry('variable',4)">…</button></span>
+                    <span class="var-cmd-row cond-main"><input :value="variableOperandNamedEntryDisplay(1,4)" readonly :disabled="numberParam(3)!==1" @click="numberParam(3)===1&&openNamedEntry('variable',4)" /><button type="button" class="editor-btn" :disabled="numberParam(3)!==1" @click="openNamedEntry('variable',4)">…</button></span>
                   </div>
-                  <div class="cond-row">
+                  <div class="cond-row" :class="{ inactive: numberParam(3)!==2 }">
                     <label class="cond-pick"><input type="radio" name="gp-operand" :checked="numberParam(3)===2" @change="setVariableOperand(2)" />{{ t('eventcmd.operandRandom') }}</label>
-                    <span class="cond-main cond-inline"><input :value="numberParam(4)" type="number" :disabled="numberParam(3)!==2" @input="setParam(4,numberValue($event))" /><span class="cond-unit">~</span><input :value="numberParam(5)" type="number" :disabled="numberParam(3)!==2" @input="setParam(5,numberValue($event))" /></span>
+                    <span class="cond-main cond-inline"><input :value="variableOperandNumberParam(2,4,0)" type="number" :disabled="numberParam(3)!==2" @input="setParam(4,numberValue($event))" /><span class="cond-unit">~</span><input :value="variableOperandNumberParam(2,5,0)" type="number" :disabled="numberParam(3)!==2" @input="setParam(5,numberValue($event))" /></span>
                   </div>
-                  <div class="cond-row">
+                  <div class="cond-row" :class="{ inactive: numberParam(3)!==3 }">
                     <label class="cond-pick"><input type="radio" name="gp-operand" :checked="numberParam(3)===3" @change="setVariableOperand(3)" />{{ t('eventcmd.operandGameData') }}</label>
                     <span class="cond-main cond-inline gp-gamedata">
-                      <select :value="numberParam(4)" :disabled="numberParam(3)!==3" @change="setParam(4,numberValue($event))"><option v-for="(key, index) in gpGameDataKeys" :key="key" :value="index">{{ t(key) }}</option></select>
-                      <input :value="numberParam(5)" type="number" :disabled="numberParam(3)!==3" @input="setParam(5,numberValue($event))" :title="t('eventcmd.dataParam1')" />
-                      <input :value="numberParam(6)" type="number" :disabled="numberParam(3)!==3" @input="setParam(6,numberValue($event))" :title="t('eventcmd.dataParam2')" />
+                      <select :value="variableOperandNumberParam(3,4,0)" :disabled="numberParam(3)!==3" @change="setParam(4,numberValue($event))"><option v-for="(key, index) in gpGameDataKeys" :key="key" :value="index">{{ t(key) }}</option></select>
+                      <input :value="variableOperandNumberParam(3,5,0)" type="number" :disabled="numberParam(3)!==3" @input="setParam(5,numberValue($event))" :title="t('eventcmd.dataParam1')" />
+                      <input :value="variableOperandNumberParam(3,6,0)" type="number" :disabled="numberParam(3)!==3" @input="setParam(6,numberValue($event))" :title="t('eventcmd.dataParam2')" />
                     </span>
                   </div>
-                  <div class="cond-row">
+                  <div class="cond-row" :class="{ inactive: numberParam(3)!==4 }">
                     <label class="cond-pick"><input type="radio" name="gp-operand" :checked="numberParam(3)===4" @change="setVariableOperand(4)" />{{ t('eventcmd.script') }}</label>
-                    <input class="cond-main" :value="stringParam(4)" spellcheck="false" :disabled="numberParam(3)!==4" @input="setParam(4,inputValue($event))" />
+                    <input class="cond-main" :value="variableOperandStringParam(4,4)" spellcheck="false" :disabled="numberParam(3)!==4" @input="setParam(4,inputValue($event))" />
                   </div>
                 </fieldset>
               </div>
@@ -691,6 +691,10 @@ const shopGoodsDialog=ref<InstanceType<typeof ShopGoodsDialog>>(),shopGoods=ref<
 // Else is tracked separately from the raw span so canceling its removal leaves
 // the original Then/Else commands untouched until the command is committed.
 const condTab=ref(1),elseBranchEnabled=ref(false),conditionalTypeDrafts=ref<Record<number,unknown[]>>({});
+// Control Variables (122): five operand-type rows share the same parameter slots
+// in the raw MV format. Each type keeps an isolated draft so non-selected rows
+// still show their own last-edited values, like the conditional-branch editor.
+const variableOperandDrafts=ref<Record<number,unknown[]>>({});
 const conditionalButtonKeys=[
   {value:'down',label:'eventcmd.dirDown'},
   {value:'left',label:'eventcmd.dirLeft'},
@@ -728,7 +732,23 @@ const gpOpKeys=['eventcmd.opSet','eventcmd.opAdd','eventcmd.opSub','eventcmd.opM
 const gpGameDataKeys=['eventcmd.gameData0','eventcmd.gameData1','eventcmd.gameData2','eventcmd.gameData3','eventcmd.gameData4','eventcmd.gameData5','eventcmd.gameData6','eventcmd.gameData7'] as const;
 function syncGpRangeMode(){gpRangeMode.value=(draft.value?.code===121||draft.value?.code===122)&&numberParam(0,1)!==numberParam(1,1);}
 function setGpRangeMode(range:boolean){gpRangeMode.value=range;if(!range)setParam(1,numberParam(0,1));}
-function setVariableOperand(type:number){if(!draft.value||draft.value.code!==122)return;draft.value.parameters=draft.value.parameters.slice(0,3).concat([type]);touchCommand();}
+function setVariableOperand(type:number){if(!draft.value||draft.value.code!==122)return;const currentType=numberParam(3,0);if(currentType===type)return;const next={...variableOperandDrafts.value};next[currentType]=clone(draft.value.parameters);const restored=next[type]||null;draft.value.parameters=restored?clone(restored):createVariableOperandDraft(type);next[type]=clone(draft.value.parameters);variableOperandDrafts.value=next;touchCommand();}
+function createVariableOperandDraft(type:number):unknown[]{const next:MvCommand={code:122,indent:draft.value?.indent||0,parameters:[numberParam(0,1),numberParam(1,1),numberParam(2,0),type]};normalizeEventCommandParameters(next,currentEngine.value);return next.parameters;}
+function initializeVariableOperandDrafts(){if(draft.value?.code!==122){variableOperandDrafts.value={};return;}variableOperandDrafts.value={[numberParam(3,0)]:clone(draft.value.parameters)};}
+function variableOperandParam(type:number,index:number):unknown{
+  if(!draft.value||draft.value.code!==122)return undefined;
+  if(numberParam(3,0)===type)return draft.value.parameters[index];
+  const draftParams=variableOperandDrafts.value[type];
+  return Array.isArray(draftParams)?draftParams[index]:undefined;
+}
+function variableOperandNumberParam(type:number,index:number,fallback?:number):number|string{
+  const value=variableOperandParam(type,index);
+  if(value===undefined||value===null||value==='')return fallback??'';
+  const number=Number(value);
+  return Number.isFinite(number)?number:(fallback??'');
+}
+function variableOperandStringParam(type:number,index:number,fallback=''){const value=variableOperandParam(type,index);return value===undefined||value===null?fallback:String(value);}
+function variableOperandNamedEntryDisplay(type:number,index:number){const id=Number(variableOperandParam(type,index));if(!isFinitePositiveInteger(id))return t('eventcmd.invalidEntryId');return namedEntryDisplay('variable',id);}
 const sortedCurrentEvents=computed(()=>[...(props.currentEvents||[])].filter((event)=>Number.isInteger(event.id)&&event.id>0).sort((left,right)=>left.id-right.id));
 function syncCondState(){const type=draft.value?.code===111?Number(draft.value.parameters[0])||0:0;condTab.value=type<=3?1:type===4?2:type===5||type===6||type===13?3:4;}
 function activeConditionalType(){return draft.value?.code===111&&Number.isInteger(Number(draft.value.parameters[0]))?Number(draft.value.parameters[0]):-1;}
@@ -957,7 +977,7 @@ onUnmounted(() => {
   stopShakePreview();
 });
 
-function openPicker(at:number, indent=0){pickerOpen.value=true;pickerPage.value=1;pickerQuery.value='';activePickerIndex.value=0;draft.value=null;draftSpan.value=[];elseBranchEnabled.value=false;conditionalTypeDrafts.value={};insertSpan.value=at;insertIndent.value=indent;editSpan.value=null;visible.value=true;void nextTick(()=>pickerSearchRef.value?.focus());}
+function openPicker(at:number, indent=0){pickerOpen.value=true;pickerPage.value=1;pickerQuery.value='';activePickerIndex.value=0;draft.value=null;draftSpan.value=[];elseBranchEnabled.value=false;conditionalTypeDrafts.value={};variableOperandDrafts.value={};insertSpan.value=at;insertIndent.value=indent;editSpan.value=null;visible.value=true;void nextTick(()=>pickerSearchRef.value?.focus());}
 // Keep in sync with the bespoke editor templates dispatched by draft.code above.
 const CUSTOM_EDITOR_CODES=new Set([101,102,103,104,105,108,111,124,138,205,223,224,225,234,236,302,322,323,355,356,357]);
 // RM inserts parameterless commands directly; no editor page is shown for them.
@@ -982,9 +1002,9 @@ function openEditor(commands:MvCommand[],index:number,eventCommands?:MvCommand[]
   // needs the prior Show Picture 231 to know which asset a slot holds).
   eventCommandsForFields.value=eventCommands&&eventCommands.length?clone(eventCommands):[];
   eventCommandIndexForFields.value=Number.isInteger(eventCommandRawIndex)&&eventCommandRawIndex!=null&&eventCommandRawIndex>=0?eventCommandRawIndex:null;
-  draftSpan.value=nextSpan;draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);if(draft.value?.code===111)initializeConditionalTypeDraft();if(draft.value&&commandHasNoEditorParams(draft.value.code)){draft.value=null;draftSpan.value=[];conditionalTypeDrafts.value={};return;}editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;if(draft.value?.code===205){openMergedRouteDialog();return;}pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceText();syncShopGoods();syncCondState();syncConditionalBranchState();syncGpRangeMode();syncPluginCommandSelection();visible.value=true;void nextTick(measureTextGuide);if([356,357].includes(draft.value?.code??0))void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);
+  draftSpan.value=nextSpan;draft.value=draftSpan.value[0];if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);if(draft.value?.code===111)initializeConditionalTypeDraft();if(draft.value?.code===122)initializeVariableOperandDrafts();if(draft.value&&commandHasNoEditorParams(draft.value.code)){draft.value=null;draftSpan.value=[];conditionalTypeDrafts.value={};variableOperandDrafts.value={};return;}editSpan.value=index;insertSpan.value=null;insertIndent.value=draft.value?.indent||0;if(draft.value?.code===205){openMergedRouteDialog();return;}pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceText();syncShopGoods();syncCondState();syncConditionalBranchState();syncGpRangeMode();syncPluginCommandSelection();visible.value=true;void nextTick(measureTextGuide);if([356,357].includes(draft.value?.code??0))void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);
 }
-function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];eventCommandsForFields.value=[];eventCommandIndexForFields.value=null;if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);if(draft.value?.code===111)initializeConditionalTypeDraft();if(draft.value&&commandHasNoEditorParams(draft.value.code)){commit();return;}if(draft.value?.code===205){openMergedRouteDialog();return;}pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceText();syncShopGoods();syncCondState();syncConditionalBranchState();syncGpRangeMode();syncPluginCommandSelection();void nextTick(measureTextGuide);if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
+function pick(kind:string){draftSpan.value=applyCommandIndent(commandTemplate(kind,props.mapId??1,currentEngine.value),insertIndent.value);draft.value=draftSpan.value[0];eventCommandsForFields.value=[];eventCommandIndexForFields.value=null;if(draft.value)normalizeEventCommandParameters(draft.value,currentEngine.value);if(draft.value?.code===111)initializeConditionalTypeDraft();if(draft.value?.code===122)initializeVariableOperandDrafts();if(draft.value&&commandHasNoEditorParams(draft.value.code)){commit();return;}if(draft.value?.code===205){openMergedRouteDialog();return;}pickerOpen.value=false;batchInput.value=false;syncMultiText();syncChoiceText();syncShopGoods();syncCondState();syncConditionalBranchState();syncGpRangeMode();syncPluginCommandSelection();void nextTick(measureTextGuide);if(draft.value?.code===356||draft.value?.code===357)void loadPluginCommandMetadata();loadDialogSize(draft.value?.code??0);if([101,322,323].includes(draft.value?.code??0))void nextTick(paintImagePreviews);}
 // Set Movement Route (205) merges the target dropdown into the route editor: the
 // command dialog shell never shows, MoveRouteDialog commits or cancels the draft.
 function openMergedRouteDialog(){pickerOpen.value=false;visible.value=false;const current=numberParam(0,0);routeDialog.value?.open(routeParam.value,{target:current,targetOptions:moveRouteTargetOptions(current)});}
@@ -1002,7 +1022,7 @@ function moveRouteTargetOptions(current:number):[number,string][]{
   return options;
 }
 function cancelMergedRoute(){if(draft.value?.code===205&&!visible.value)close();}
-function close(){visible.value=false;pickerOpen.value=false;pickerQuery.value='';draft.value=null;draftSpan.value=[];elseBranchEnabled.value=false;conditionalTypeDrafts.value={};}
+function close(){visible.value=false;pickerOpen.value=false;pickerQuery.value='';draft.value=null;draftSpan.value=[];elseBranchEnabled.value=false;conditionalTypeDrafts.value={};variableOperandDrafts.value={};}
 function selectPickerPage(page:number){pickerPage.value=page;pickerQuery.value='';}
 function pickerOptionId(code:number){return `event-command-option-${code}`;}
 function activatePickerItem(code:number){const index=currentPickerItems.value.findIndex((item)=>item.code===code);if(index>=0)activePickerIndex.value=index;}

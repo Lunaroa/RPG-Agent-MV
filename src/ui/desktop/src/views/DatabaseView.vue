@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onActivated, onDeactivated, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus';
+import { WarningFilled } from '@element-plus/icons-vue';
 import { useProjectStore } from '../stores/project';
 import { useRoute, useRouter } from 'vue-router';
 import {
@@ -17,6 +18,11 @@ import {
 } from '../api/client';
 import { cloneDraft } from '../utils/clone-draft';
 import { createDraftHistory } from '../utils/draft-history';
+import {
+  readStagingConflictDetails,
+  stagingConflictReasonLabel,
+  type MapPreviewStagingConflictFile,
+} from '../utils/staging-conflicts';
 import { useWorkbenchUiStore } from '../stores/workbenchUi';
 import { usePmEventEditor } from '../composables/usePmEventEditor';
 import StructuredFieldsEditor from '../components/console/StructuredFieldsEditor.vue';
@@ -100,6 +106,7 @@ async function applyProjectStaging() {
   if (!projectStore.currentProject || stagingBusy.value || surfaceWriteLocked.value) return;
   stagingBusy.value = true;
   detailError.value = '';
+  stagingSaveConflicts.value = null;
   try {
     const status = await mapsApi.projectStaging(projectStore.currentProject);
     const summary = parseProjectStagingSummary(status);
@@ -112,7 +119,7 @@ async function applyProjectStaging() {
     await refreshStagingStatus();
     await loadData();
   } catch (applyError) {
-    detailError.value = (applyError as Error).message;
+    detailError.value = stagingConflictMessage(applyError) ?? (applyError as Error).message;
   } finally {
     stagingBusy.value = false;
   }
@@ -122,6 +129,7 @@ async function discardProjectStaging() {
   if (!projectStore.currentProject || stagingBusy.value || surfaceWriteLocked.value) return;
   stagingBusy.value = true;
   detailError.value = '';
+  stagingSaveConflicts.value = null;
   try {
     await mapsApi.discardProjectStaging(projectStore.currentProject);
     pmDetail.value = null;
@@ -166,6 +174,19 @@ async function revertCurrentStagedEntry() {
 
 function formatErrorText(errorValue: unknown): string {
   return formatUserFacingErrorMessage(errorValue, 'general', language.value);
+}
+
+function stagingConflictMessage(errorValue: unknown): string | null {
+  const conflicts = readStagingConflictDetails(errorValue);
+  if (!conflicts) return null;
+  stagingSaveConflicts.value = conflicts.conflicts;
+  const parsedMessage = errorValue instanceof Error ? errorValue.message.split('\n')[0] : '';
+  return parsedMessage.replace(/^\[STAGING_CONFLICT\]\s*/i, '');
+}
+
+function stagingSaveConflictSummary(): string {
+  const count = stagingSaveConflicts.value?.length || 0;
+  return t(count === 1 ? 'story.stagingConflict.one' : 'story.stagingConflict.many', { count });
 }
 
 const loading = ref(false);
@@ -267,6 +288,7 @@ const pmDetail = ref<PmDetail | null>(null);
 const detailDraft = ref<unknown>(null);
 const detailBusy = ref(false);
 const detailError = ref('');
+const stagingSaveConflicts = ref<MapPreviewStagingConflictFile[] | null>(null);
 const battleTestDialogVisible = ref(false);
 const battleTestBusy = ref(false);
 const temporaryBattleback1Name = ref('');
@@ -1112,6 +1134,7 @@ async function saveDetail() {
   if (!pmDetail.value || surfaceWriteLocked.value) return;
   detailBusy.value = true;
   detailError.value = '';
+  stagingSaveConflicts.value = null;
   try {
     if (pmDetail.value.kind === 'managed') {
       const entry = pmDetail.value.entry;
@@ -1136,7 +1159,7 @@ async function saveDetail() {
     await loadData();
     await refreshStagingStatus();
   } catch (saveError) {
-    detailError.value = (saveError as Error).message;
+    detailError.value = stagingConflictMessage(saveError) ?? (saveError as Error).message;
   } finally {
     detailBusy.value = false;
   }
@@ -1472,9 +1495,59 @@ function detailTitle(): string {
           <div v-else-if="pmDetail && detailEditable" class="pm-detail-body">
             <StructuredFieldsEditor v-model="detailDraft" :label="t('story.entryFields')" />
           </div>
-          <div v-else-if="detailError && !pmDetail" class="detail-error">{{ formatErrorText(detailError) }}</div>
+          <div v-else-if="detailError && !pmDetail" class="detail-error">
+            <template v-if="stagingSaveConflicts">
+              <div class="staging-conflict-panel" role="alert" data-ui-id="pm-staging-save-conflict">
+                <strong><WarningFilled /> {{ t('story.stagingConflict.title') }}</strong>
+                <p>{{ stagingSaveConflictSummary() }}</p>
+                <p class="staging-conflict-hint">{{ t('story.stagingConflict.hint') }}</p>
+                <ul class="staging-conflict-list">
+                  <li v-for="conflict in stagingSaveConflicts" :key="conflict.relativePath">
+                    <code>{{ conflict.relativePath }}</code>
+                    <span v-for="reason in conflict.reasons" :key="reason">
+                      {{ stagingConflictReasonLabel(reason, language) }}
+                    </span>
+                  </li>
+                </ul>
+                <div class="staging-conflict-actions">
+                  <button type="button" class="secondary-button" :disabled="detailBusy || stagingBusy" @click="saveDetail">
+                    {{ t('editor.preview.stagingConflict.recheck') }}
+                  </button>
+                  <button v-if="stagingDirty" type="button" class="secondary-button" :disabled="detailBusy || stagingBusy" @click="discardProjectStaging">
+                    {{ t('story.stagingConflict.discard') }}
+                  </button>
+                </div>
+              </div>
+            </template>
+            <template v-else>{{ formatErrorText(detailError) }}</template>
+          </div>
           <div v-else class="detail-empty">{{ t('story.selectEntryHint') }}</div>
-          <div v-if="detailError && pmDetail" class="detail-error">{{ formatErrorText(detailError) }}</div>
+          <div v-if="detailError && pmDetail" class="detail-error">
+            <template v-if="stagingSaveConflicts">
+              <div class="staging-conflict-panel" role="alert" data-ui-id="pm-staging-save-conflict">
+                <strong><WarningFilled /> {{ t('story.stagingConflict.title') }}</strong>
+                <p>{{ stagingSaveConflictSummary() }}</p>
+                <p class="staging-conflict-hint">{{ t('story.stagingConflict.hint') }}</p>
+                <ul class="staging-conflict-list">
+                  <li v-for="conflict in stagingSaveConflicts" :key="conflict.relativePath">
+                    <code>{{ conflict.relativePath }}</code>
+                    <span v-for="reason in conflict.reasons" :key="reason">
+                      {{ stagingConflictReasonLabel(reason, language) }}
+                    </span>
+                  </li>
+                </ul>
+                <div class="staging-conflict-actions">
+                  <button type="button" class="secondary-button" :disabled="detailBusy || stagingBusy" @click="saveDetail">
+                    {{ t('editor.preview.stagingConflict.recheck') }}
+                  </button>
+                  <button v-if="stagingDirty" type="button" class="secondary-button" :disabled="detailBusy || stagingBusy" @click="discardProjectStaging">
+                    {{ t('story.stagingConflict.discard') }}
+                  </button>
+                </div>
+              </div>
+            </template>
+            <template v-else>{{ formatErrorText(detailError) }}</template>
+          </div>
           <footer v-if="pmDetail">
               <span>{{ t('story.saveStagingNote') }}</span>
               <div class="pm-detail-footer-actions">
@@ -1929,6 +2002,17 @@ function detailTitle(): string {
   text-align: center;
 }
 .detail-error{padding:12px;color:var(--app-danger);font-size:11px}
+.staging-conflict-panel{display:grid;gap:8px;padding:12px;border:1px solid rgba(239,143,120,.38);border-radius:8px;color:var(--console-text,#3d3527);background:var(--console-panel-bg,#fff)}
+.staging-conflict-panel strong{display:flex;align-items:center;gap:6px;color:var(--app-danger);font-size:12px}
+.staging-conflict-panel strong svg{width:14px;height:14px}
+.staging-conflict-panel p{margin:0;font-size:11px;line-height:1.5}
+.staging-conflict-panel .staging-conflict-hint{color:var(--console-muted,#8b7d6b)}
+.staging-conflict-list{margin:0;padding:0;list-style:none;max-height:200px;overflow:auto}
+.staging-conflict-list li{display:grid;gap:3px;padding:8px 0;border-bottom:1px solid var(--console-border,#e7dfd0)}
+.staging-conflict-list li:last-child{border-bottom:0}
+.staging-conflict-list code{font:11px/1.5 var(--app-font-mono);overflow-wrap:anywhere}
+.staging-conflict-list span{color:var(--console-muted,#8b7d6b);font-size:11px;line-height:1.45}
+.staging-conflict-actions{display:flex;flex-wrap:wrap;gap:8px}
 .read-issue-detail{display:grid;gap:6px;margin:12px;padding:12px;border:1px solid color-mix(in srgb,var(--app-danger) 35%,var(--app-border));border-radius:6px;background:color-mix(in srgb,var(--app-danger) 7%,var(--app-bg));color:var(--app-danger);font-size:11px;overflow-wrap:anywhere}
 .map-item.error,.sub-category-button.error{color:var(--app-danger)}
 

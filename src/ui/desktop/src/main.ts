@@ -10,6 +10,9 @@ import './styles/index.css'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import { createPinia } from 'pinia'
 import router from './router'
+import { installEditorModalDrag } from './utils/editor-modal-drag'
+
+installEditorModalDrag()
 
 const app = createApp(App)
 

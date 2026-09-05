@@ -38,6 +38,19 @@
 
 .editor-modal-header {
   justify-content: space-between;
+  cursor: move;
+  user-select: none;
+}
+
+.editor-modal-header button,
+.editor-modal-header input,
+.editor-modal-header select,
+.editor-modal-header a {
+  cursor: auto;
+}
+
+.editor-modal-shell-dragging {
+  will-change: margin;
 }
 
 .editor-modal-footer {

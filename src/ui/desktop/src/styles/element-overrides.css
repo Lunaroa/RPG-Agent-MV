@@ -132,6 +132,15 @@
 .el-overlay-dialog .el-dialog__header {
   margin-right: 0;
   font-weight: 600;
+  cursor: move;
+  user-select: none;
+}
+.el-overlay-dialog .el-dialog__header .el-dialog__headerbtn,
+.el-overlay-dialog .el-dialog__header button,
+.el-overlay-dialog .el-dialog__header input,
+.el-overlay-dialog .el-dialog__header select,
+.el-overlay-dialog .el-dialog__header a {
+  cursor: auto;
 }
 
 /* 树：节点 hover / 选中底用 accent-soft */

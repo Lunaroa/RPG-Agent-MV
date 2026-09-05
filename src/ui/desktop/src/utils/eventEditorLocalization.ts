@@ -62,6 +62,16 @@ export interface EventEditorLocaleText {
   timerOperationLabels: readonly string[];
   /** Equipment slot type labels for Change Equipment (319): Weapon/Shield/Head/Body/Accessory. */
   equipSlotLabels: readonly string[];
+  /** Conditional Branch (111) gold comparison labels (type 7): or above / or below / less than. */
+  goldComparisonLabels: readonly string[];
+  /** Conditional Branch (111) facing-direction labels (type 6), indexed by RM direction 2/4/6/8. */
+  conditionDirectionLabels: Readonly<Record<number, string>>;
+  /** Conditional Branch (111) vehicle type labels (type 13): Boat/Ship/Airship. */
+  conditionVehicleLabels: readonly string[];
+  /** Control Variables (122) operation labels, indexed by operation id: Set/Add/Sub/Mul/Div/Mod. */
+  controlVariableOperationLabels: readonly string[];
+  /** Control Variables (122) game-data operand labels (operand type 3), indexed by game-data id. */
+  controlVariableGameDataLabels: readonly string[];
 }
 
 export const EVENT_EDITOR_TEXT_BY_LOCALE = {
@@ -178,6 +188,11 @@ export const EVENT_EDITOR_TEXT_BY_LOCALE = {
     selectItemTypeLabels: ['未知', '普通物品', '重要物品', '隐藏物品 A', '隐藏物品 B'],
     timerOperationLabels: ['开始', '停止'],
     equipSlotLabels: ['武器', '盾牌', '头部', '身体', '装饰品'],
+    goldComparisonLabels: ['以上', '以下', '低于'],
+    conditionDirectionLabels: { 2: '下', 4: '左', 6: '右', 8: '上' },
+    conditionVehicleLabels: ['小船', '大船', '飞艇'],
+    controlVariableOperationLabels: ['代入', '加算', '减算', '乘算', '除算', '取余'],
+    controlVariableGameDataLabels: ['物品持有数', '武器持有数', '防具持有数', '角色数据', '敌人数据', '角色/事件位置', '队伍成员', '其他数据'],
   },
   'en-US': {
     triggers: [
@@ -292,6 +307,11 @@ export const EVENT_EDITOR_TEXT_BY_LOCALE = {
     selectItemTypeLabels: ['Unknown', 'Regular Item', 'Key Item', 'Hidden Item A', 'Hidden Item B'],
     timerOperationLabels: ['Start', 'Stop'],
     equipSlotLabels: ['Weapon', 'Shield', 'Head', 'Body', 'Accessory'],
+    goldComparisonLabels: ['or Above', 'or Below', 'Less than'],
+    conditionDirectionLabels: { 2: 'Down', 4: 'Left', 6: 'Right', 8: 'Up' },
+    conditionVehicleLabels: ['Boat', 'Ship', 'Airship'],
+    controlVariableOperationLabels: ['Set', 'Add', 'Sub', 'Mul', 'Div', 'Mod'],
+    controlVariableGameDataLabels: ['Item Count', 'Weapon Count', 'Armor Count', 'Actor Data', 'Enemy Data', 'Character/Event Position', 'Party Member', 'Other Data'],
   },
 } as const satisfies Record<ProductLanguage, EventEditorLocaleText>;
 

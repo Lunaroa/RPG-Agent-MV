@@ -15,46 +15,46 @@ describe('commandDisplay renders RM-native summaries (no raw param dump)', () =>
   });
 
   test('Change Items (126) shows item id + operation + amount, not [1,0,0,1]', () => {
-    assert.equal(commandDisplay(cmd(126, [1, 0, 0, 1])).label, '◆Change Items: #1, Increase 1');
-    assert.equal(commandDisplay(cmd(126, [3, 1, 0, 2])).label, '◆Change Items: #3, Decrease 2');
+    assert.equal(commandDisplay(cmd(126, [1, 0, 0, 1])).label, '◆Change Items: 0001, Increase 1');
+    assert.equal(commandDisplay(cmd(126, [3, 1, 0, 2])).label, '◆Change Items: 0003, Decrease 2');
   });
 
   test('Change Weapons/Armors (127/128) reuse the operand rendering', () => {
-    assert.equal(commandDisplay(cmd(127, [1, 0, 0, 1, false])).label, '◆Change Weapons: #1, Increase 1');
-    assert.equal(commandDisplay(cmd(128, [1, 0, 0, 1, false])).label, '◆Change Armors: #1, Increase 1');
+    assert.equal(commandDisplay(cmd(127, [1, 0, 0, 1, false])).label, '◆Change Weapons: 0001, Increase 1');
+    assert.equal(commandDisplay(cmd(128, [1, 0, 0, 1, false])).label, '◆Change Armors: 0001, Increase 1');
   });
 
   test('Change Party Member (129) shows actor + add/remove', () => {
-    assert.equal(commandDisplay(cmd(129, [1, 0, false])).label, '◆Change Party Member: #1, Add');
+    assert.equal(commandDisplay(cmd(129, [1, 0, false])).label, '◆Change Party Member: 0001, Add');
   });
 
   test('Actor stat commands (311/312/313/315/316/317/318/326) target Entire Party / Fixed Actor', () => {
     assert.equal(commandDisplay(cmd(311, [0, 0, 0, 0, 50, false])).label, '◆Change HP: Entire Party, Increase 50');
-    assert.equal(commandDisplay(cmd(312, [0, 2, 0, 0, 30])).label, '◆Change MP: Actor #2, Increase 30');
-    assert.equal(commandDisplay(cmd(326, [1, 3, 1, 0, 10])).label, '◆Change TP: Party Member #3, Decrease 10');
-    assert.equal(commandDisplay(cmd(313, [0, 1, 0, 4])).label, '◆Change State: Actor #1, Add #4');
-    assert.equal(commandDisplay(cmd(315, [1, 1, 0, 0, 100, false])).label, '◆Change EXP: Party Member #1, Increase 100');
-    assert.equal(commandDisplay(cmd(316, [1, 1, 1, 0, 1, false])).label, '◆Change Level: Party Member #1, Decrease 1');
-    assert.equal(commandDisplay(cmd(317, [1, 1, 2, 0, 0, 5])).label, '◆Change Parameter: Party Member #1, Attack, Increase 5');
-    assert.equal(commandDisplay(cmd(318, [0, 1, 1, 8])).label, '◆Change Skill: Actor #1, Forget #8');
+    assert.equal(commandDisplay(cmd(312, [0, 2, 0, 0, 30])).label, '◆Change MP: Actor 0002, Increase 30');
+    assert.equal(commandDisplay(cmd(326, [1, 3, 1, 0, 10])).label, '◆Change TP: Party Member 0003, Decrease 10');
+    assert.equal(commandDisplay(cmd(313, [0, 1, 0, 4])).label, '◆Change State: Actor 0001, Add 0004');
+    assert.equal(commandDisplay(cmd(315, [1, 1, 0, 0, 100, false])).label, '◆Change EXP: Party Member 0001, Increase 100');
+    assert.equal(commandDisplay(cmd(316, [1, 1, 1, 0, 1, false])).label, '◆Change Level: Party Member 0001, Decrease 1');
+    assert.equal(commandDisplay(cmd(317, [1, 1, 2, 0, 0, 5])).label, '◆Change Parameter: Party Member 0001, Attack, Increase 5');
+    assert.equal(commandDisplay(cmd(318, [0, 1, 1, 8])).label, '◆Change Skill: Actor 0001, Forget 0008');
   });
 
   test('Change Equipment (319) uses slot label', () => {
-    assert.equal(commandDisplay(cmd(319, [1, 0, 3])).label, '◆Change Equipment: #1, Weapon #3');
-    assert.equal(commandDisplay(cmd(319, [1, 2, 5])).label, '◆Change Equipment: #1, Head #5');
+    assert.equal(commandDisplay(cmd(319, [1, 0, 3])).label, '◆Change Equipment: 0001, Weapon 0003');
+    assert.equal(commandDisplay(cmd(319, [1, 2, 5])).label, '◆Change Equipment: 0001, Head 0005');
   });
 
   test('Change Name/Class/Nickname/Profile/Images (320/321/322/324/325)', () => {
-    assert.equal(commandDisplay(cmd(320, [1, 'Harold'])).label, '◆Change Name: #1, Harold');
-    assert.equal(commandDisplay(cmd(321, [1, 1, false])).label, '◆Change Class: #1, class #1');
-    assert.equal(commandDisplay(cmd(324, [1, 'Hal'])).label, '◆Change Nickname: #1, Hal');
-    assert.equal(commandDisplay(cmd(325, [1, 'A hero.'])).label, '◆Change Profile: #1, A hero.');
-    assert.equal(commandDisplay(cmd(322, [1, 'Actor1', 0, 'Actor1', 0, ''])).label, '◆Change Actor Images: #1, Actor1(0), Actor1(0)');
+    assert.equal(commandDisplay(cmd(320, [1, 'Harold'])).label, '◆Change Name: 0001, Harold');
+    assert.equal(commandDisplay(cmd(321, [1, 1, false])).label, '◆Change Class: 0001, class 0001');
+    assert.equal(commandDisplay(cmd(324, [1, 'Hal'])).label, '◆Change Nickname: 0001, Hal');
+    assert.equal(commandDisplay(cmd(325, [1, 'A hero.'])).label, '◆Change Profile: 0001, A hero.');
+    assert.equal(commandDisplay(cmd(322, [1, 'Actor1', 0, 'Actor1', 0, ''])).label, '◆Change Actor Images: 0001, Actor1(0), Actor1(0)');
   });
 
   test('Message group (103/104/105)', () => {
-    assert.equal(commandDisplay(cmd(103, [1, 4])).label, '◆Input Number: Variable #1, 4 digits');
-    assert.equal(commandDisplay(cmd(104, [1, 2])).label, '◆Select Item: Variable #1, Key Item');
+    assert.equal(commandDisplay(cmd(103, [1, 4])).label, '◆Input Number: Variable #0001, 4 digits');
+    assert.equal(commandDisplay(cmd(104, [1, 2])).label, '◆Select Item: Variable #0001, Key Item');
     assert.equal(commandDisplay(cmd(105, [2, false])).label, '◆Show Scrolling Text: speed 2');
   });
 
@@ -77,7 +77,7 @@ describe('commandDisplay renders RM-native summaries (no raw param dump)', () =>
 
   test('Picture group (233/234/235)', () => {
     assert.equal(commandDisplay(cmd(233, [1, 5])).label, '◆Rotate Picture: #1, speed 5');
-    assert.equal(commandDisplay(cmd(234, [1, [0, 0, 0, 0], 60, true])).label, '◆Tint Picture: #1');
+    assert.equal(commandDisplay(cmd(234, [1, [0, 0, 0, 0], 60, true])).label, '◆Tint Picture: #1, tone (R0 G0 B0 Gray0), 60 frames');
     assert.equal(commandDisplay(cmd(235, [1])).label, '◆Erase Picture: #1');
   });
 
@@ -99,10 +99,10 @@ describe('commandDisplay renders RM-native summaries (no raw param dump)', () =>
   });
 
   test('Scene Control group (301/302/303)', () => {
-    assert.equal(commandDisplay(cmd(301, [0, 1, true, false])).label, '◆Battle Processing: Direct #1');
+    assert.equal(commandDisplay(cmd(301, [0, 1, true, false])).label, '◆Battle Processing: Direct 0001');
     assert.equal(commandDisplay(cmd(301, [1, 2, true, false]), { variables: ['', 'Unused', 'Troop ID'] }).label, '◆Battle Processing: Variable {0002 Troop ID}');
     assert.equal(commandDisplay(cmd(302, [0, 1, 0, 0, false])).label, '◆Shop Processing');
-    assert.equal(commandDisplay(cmd(303, [1, 8])).label, '◆Name Input Processing: #1, 8 chars');
+    assert.equal(commandDisplay(cmd(303, [1, 8])).label, '◆Name Input Processing: 0001, 8 chars');
   });
 
   test('System Settings group (132/133/134-137/138/139/140/323)', () => {
@@ -121,24 +121,24 @@ describe('commandDisplay renders RM-native summaries (no raw param dump)', () =>
 
   test('Map group (281/282/283/284/285)', () => {
     assert.equal(commandDisplay(cmd(281, [0])).label, '◆Change Map Name Display: ON');
-    assert.equal(commandDisplay(cmd(282, [1])).label, '◆Change Tileset: #1');
+    assert.equal(commandDisplay(cmd(282, [1])).label, '◆Change Tileset: #0001');
     assert.equal(commandDisplay(cmd(283, ['bg1', 'bg2'])).label, '◆Change Battle Back: bg1/bg2');
     assert.equal(commandDisplay(cmd(284, ['p', false, false, 0, 0])).label, '◆Change Parallax: p');
-    assert.equal(commandDisplay(cmd(285, [1, 0, 0, 0, 0])).label, '◆Get Location Info: Variable #1, Terrain Tag, (0,0)');
-    assert.equal(commandDisplay(cmd(285, [1, 5, 1, 1, 2]), { variables: ['', 'Map X', 'Map Y'] }).label, '◆Get Location Info: Variable #1, Region ID, ({0001 Map X},{0002 Map Y})');
+    assert.equal(commandDisplay(cmd(285, [1, 0, 0, 0, 0])).label, '◆Get Location Info: Variable #0001, Terrain Tag, (0,0)');
+    assert.equal(commandDisplay(cmd(285, [1, 5, 1, 1, 2]), { variables: ['', 'Map X', 'Map Y'] }).label, '◆Get Location Info: Variable #0001 Map X, Region ID, ({0001 Map X},{0002 Map Y})');
   });
 
   test('Battle group (331-337/339/342) renders enemy index', () => {
     assert.equal(commandDisplay(cmd(331, [-1, 0, 0, 100, false])).label, '◆Change Enemy HP: All Enemies, Increase 100');
     assert.equal(commandDisplay(cmd(332, [0, 0, 0, 50])).label, '◆Change Enemy MP: #1, Increase 50');
     assert.equal(commandDisplay(cmd(342, [0, 1, 0, 10])).label, '◆Change Enemy TP: #1, Decrease 10');
-    assert.equal(commandDisplay(cmd(333, [-1, 0, 1])).label, '◆Change Enemy State: All Enemies, Add #1');
+    assert.equal(commandDisplay(cmd(333, [-1, 0, 1])).label, '◆Change Enemy State: All Enemies, Add 0001');
     assert.equal(commandDisplay(cmd(334, [-1])).label, '◆Enemy Recover All: All Enemies');
     assert.equal(commandDisplay(cmd(335, [0])).label, '◆Enemy Appear: #1');
-    assert.equal(commandDisplay(cmd(336, [0, 1])).label, '◆Enemy Transform: #1, #1');
-    assert.equal(commandDisplay(cmd(337, [-1, 1, false])).label, '◆Show Battle Animation: All Enemies, anim #1');
-    assert.equal(commandDisplay(cmd(339, [0, 0, 1, -1])).label, '◆Force Action: Enemy #1, skill #1');
-    assert.equal(commandDisplay(cmd(339, [1, 2, 1, -1])).label, '◆Force Action: Actor #2, skill #1');
+    assert.equal(commandDisplay(cmd(336, [0, 1])).label, '◆Enemy Transform: #1, 0001');
+    assert.equal(commandDisplay(cmd(337, [-1, 1, false])).label, '◆Show Battle Animation: All Enemies, anim #0001');
+    assert.equal(commandDisplay(cmd(339, [0, 0, 1, -1])).label, '◆Force Action: Enemy #1, skill #0001');
+    assert.equal(commandDisplay(cmd(339, [1, 2, 1, -1])).label, '◆Force Action: Actor #2, skill #0001');
   });
 
   test('Script (355) shows the script text', () => {
@@ -147,7 +147,7 @@ describe('commandDisplay renders RM-native summaries (no raw param dump)', () =>
 
   test('zh-CN renders the reported "更改透明状态" case without numeric tail', () => {
     assert.equal(commandDisplay(cmd(211, [0]), null, 'zh-CN').label, '◆更改透明状态：开');
-    assert.equal(commandDisplay(cmd(126, [1, 0, 0, 1]), null, 'zh-CN').label, '◆增减物品：#1，增加 1');
+    assert.equal(commandDisplay(cmd(126, [1, 0, 0, 1]), null, 'zh-CN').label, '◆增减物品：0001，增加 1');
   });
 
   test('MV and MZ standard command codes all use a semantic display path', () => {
@@ -174,7 +174,7 @@ describe('commandDisplay renders RM-native summaries (no raw param dump)', () =>
     assert.match(commandDisplay(cmd(224, [[255, 255, 255, 170], 30, true])).label, /R255.*G255.*B255.*A170/u);
     assert.match(commandDisplay(cmd(205, [-1, { list: [{ code: 14, parameters: [1, -1] }, { code: 44, parameters: [{ name: 'Step', volume: 80, pitch: 110, pan: 0 }] }, { code: 0, parameters: [] }], repeat: true, skippable: false, wait: true }])).label, /Jump.*Play SE.*repeat.*wait/u);
     assert.match(commandDisplay(cmd(505, [{ code: 14, parameters: [2, 3] }])).label, /Jump.*\(2,3\)/u);
-    assert.match(commandDisplay(cmd(605, [1, 7, 1, 250, false])).label, /Shop Goods Line.*Weapons.*#7.*250/u);
+    assert.match(commandDisplay(cmd(605, [1, 7, 1, 250, false])).label, /Shop Goods Line.*Weapons.*0007.*250/u);
     assert.match(commandDisplay(cmd(357, ['Plugin', 'Command', 'Display', { amount: '3', enabled: true }])).label, /Plugin:Command.*Display.*amount=3.*enabled=true/u);
     assert.equal(commandDisplay(cmd(657, ['amount=3'])).label, ':amount=3');
   });
@@ -183,5 +183,48 @@ describe('commandDisplay renders RM-native summaries (no raw param dump)', () =>
     const label = commandDisplay(cmd(998, [{ untouched: true }])).label;
     assert.match(label, /Raw command 998/u);
     assert.match(label, /untouched/u);
+  });
+
+  test('database ids resolve to RM-style "NNNN name" when catalog names are provided', () => {
+    const system = {
+      actors: ['', 'Hero A'],
+      classes: ['', 'Mage'],
+      skills: ['', 'Spark'],
+      items: ['', 'Potion'],
+      weapons: ['', 'Bronze Sword'],
+      armors: ['', 'Cloth Robe'],
+      states: ['', 'Poison'],
+      enemies: ['', 'Slime'],
+      troops: ['', 'Slime Pair'],
+      tilesets: ['', 'Field'],
+      commonEvents: ['', 'Intro'],
+      animations: ['', 'Hit Fire'],
+    };
+    assert.equal(commandDisplay(cmd(126, [1, 0, 0, 1]), system).label, '◆Change Items: 0001 Potion, Increase 1');
+    assert.equal(commandDisplay(cmd(127, [1, 0, 0, 1, false]), system).label, '◆Change Weapons: 0001 Bronze Sword, Increase 1');
+    assert.equal(commandDisplay(cmd(128, [1, 0, 0, 1, false]), system).label, '◆Change Armors: 0001 Cloth Robe, Increase 1');
+    assert.equal(commandDisplay(cmd(129, [1, 0, false]), system).label, '◆Change Party Member: 0001 Hero A, Add');
+    assert.equal(commandDisplay(cmd(117, [1]), system).label, '◆Common Event: 0001 Intro');
+    assert.equal(commandDisplay(cmd(212, [0, 1, false]), system).label, '◆Show Animation: This Event, 0001 Hit Fire');
+    assert.equal(commandDisplay(cmd(282, [1]), system).label, '◆Change Tileset: #0001 Field');
+    assert.equal(commandDisplay(cmd(301, [0, 1, true, false]), system).label, '◆Battle Processing: Direct 0001 Slime Pair');
+    assert.equal(commandDisplay(cmd(303, [1, 8]), system).label, '◆Name Input Processing: 0001 Hero A, 8 chars');
+    assert.equal(commandDisplay(cmd(311, [0, 1, 0, 0, 50, false]), system).label, '◆Change HP: Actor 0001 Hero A, Increase 50');
+    assert.equal(commandDisplay(cmd(313, [0, 1, 0, 1]), system).label, '◆Change State: Actor 0001 Hero A, Add 0001 Poison');
+    assert.equal(commandDisplay(cmd(318, [0, 1, 0, 1]), system).label, '◆Change Skill: Actor 0001 Hero A, Learn 0001 Spark');
+    assert.equal(commandDisplay(cmd(319, [1, 0, 1]), system).label, '◆Change Equipment: 0001 Hero A, Weapon 0001 Bronze Sword');
+    assert.equal(commandDisplay(cmd(321, [1, 1, false]), system).label, '◆Change Class: 0001 Hero A, class 0001 Mage');
+    assert.equal(commandDisplay(cmd(333, [-1, 0, 1]), system).label, '◆Change Enemy State: All Enemies, Add 0001 Poison');
+    assert.equal(commandDisplay(cmd(336, [0, 1]), system).label, '◆Enemy Transform: #1, 0001 Slime');
+    assert.equal(commandDisplay(cmd(337, [-1, 1, false]), system).label, '◆Show Battle Animation: All Enemies, anim #0001 Hit Fire');
+    assert.equal(commandDisplay(cmd(339, [1, 1, 1, -1]), system).label, '◆Force Action: Actor #1, skill #0001 Spark');
+    assert.match(commandDisplay(cmd(605, [0, 1, 1, 250, false]), system).label, /Shop Goods Line.*Items.*0001 Potion.*250/u);
+  });
+
+  test('zh-CN database ids resolve to names as well', () => {
+    const system = { items: ['', '药水'], actors: ['', '勇者甲'], troops: ['', '史莱姆一对'] };
+    assert.equal(commandDisplay(cmd(126, [1, 0, 0, 1]), system, 'zh-CN').label, '◆增减物品：0001 药水，增加 1');
+    assert.equal(commandDisplay(cmd(311, [0, 1, 0, 0, 50, false]), system, 'zh-CN').label, '◆增减HP：指定角色 0001 勇者甲，增加 50');
+    assert.equal(commandDisplay(cmd(301, [0, 1, true, false]), system, 'zh-CN').label, '◆战斗处理：直接指定 0001 史莱姆一对');
   });
 });

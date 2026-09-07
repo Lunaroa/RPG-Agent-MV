@@ -425,10 +425,32 @@ watch(findMatches, (matches) => {
 const CMD_LINE_H = 20, CMD_ROW_CHROME = 8, CMD_BLANK_H = 22;
 const listHost = ref<HTMLElement>();
 const listScrollTop = ref(0), listViewportH = ref(0);
+/** Catalog name arrays indexed by entry id, matching the SystemData shape commandSpanDisplay consumes. */
+function catalogNamedArray(entries: { id: number; name: string }[] | undefined): string[] {
+  const result: string[] = [];
+  for (const entry of entries || []) result[entry.id] = entry.name || '';
+  return result;
+}
 function buildSpanView(span: Parameters<typeof commandSpanDisplay>[0]): MvCommandSpanView {
+  const catalogSystemData = {
+    switches: props.systemData?.switches ?? [],
+    variables: props.systemData?.variables ?? [],
+    actors: catalogNamedArray(props.catalog?.actors),
+    classes: catalogNamedArray(props.catalog?.classes),
+    skills: catalogNamedArray(props.catalog?.skills),
+    items: catalogNamedArray(props.catalog?.items),
+    weapons: catalogNamedArray(props.catalog?.weapons),
+    armors: catalogNamedArray(props.catalog?.armors),
+    states: catalogNamedArray(props.catalog?.states),
+    enemies: catalogNamedArray(props.catalog?.enemies),
+    troops: catalogNamedArray(props.catalog?.troops),
+    tilesets: catalogNamedArray(props.catalog?.tilesets),
+    commonEvents: catalogNamedArray(props.catalog?.commonEvents),
+    animations: catalogNamedArray(props.catalog?.animations),
+  };
   const view = commandSpanDisplay(
     span,
-    props.systemData,
+    catalogSystemData,
     language.value,
     skipTerminatorSet.value.has(span.index),
     t('eventEditor.command.skipEnd'),

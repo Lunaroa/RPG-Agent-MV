@@ -104,6 +104,18 @@ const anchorBlockSelection = computed(() => {
 const systemData = computed(() => ({
   switches: namedArray(props.catalog?.switches || []),
   variables: namedArray(props.catalog?.variables || []),
+  actors: namedArray(props.catalog?.actors || []),
+  classes: namedArray(props.catalog?.classes || []),
+  skills: namedArray(props.catalog?.skills || []),
+  items: namedArray(props.catalog?.items || []),
+  weapons: namedArray(props.catalog?.weapons || []),
+  armors: namedArray(props.catalog?.armors || []),
+  states: namedArray(props.catalog?.states || []),
+  enemies: namedArray(props.catalog?.enemies || []),
+  troops: namedArray(props.catalog?.troops || []),
+  tilesets: namedArray(props.catalog?.tilesets || []),
+  commonEvents: namedArray(props.catalog?.commonEvents || []),
+  animations: namedArray(props.catalog?.animations || []),
 }));
 const spanViews = computed<SpanView[]>(() => spans.value.map((span) => displaySpan(span)));
 const insertionSlots = computed(() => commandInsertionSlots(commandList.value, spans.value));

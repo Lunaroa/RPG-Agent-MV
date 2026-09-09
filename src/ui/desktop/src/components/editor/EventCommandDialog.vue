@@ -575,7 +575,7 @@
               </div>
               <label class="check cond-else"><input :checked="elseBranchEnabled" type="checkbox" @change="toggleElseBranch" />{{ t('eventcmd.createElse') }}</label>
             </template>
-            <EventCommandFields v-else-if="commandDefinition(draft.code,currentEngine)" :command="draft" :engine="currentEngine" :catalog="catalog" :load-image="loadImage" :map-id="mapId" :current-events="currentEvents" :troop-members="troopMembers" :event-commands="eventCommandsForFields" :event-command-index="eventCommandIndexForFields" @change="touchCommand" />
+            <EventCommandFields v-else-if="commandDefinition(draft.code,currentEngine)" :command="draft" :engine="currentEngine" :catalog="catalog" :load-image="loadImage" :map-id="mapId" :current-events="currentEvents" :troop-members="troopMembers" :allow-this-event="allowThisEvent" :event-commands="eventCommandsForFields" :event-command-index="eventCommandIndexForFields" @change="touchCommand" />
             <p v-else class="form-note unsupported-command">
               {{ t('eventcmd.unsupportedEditor') }}
             </p>
@@ -586,7 +586,21 @@
           <button type="button" class="editor-btn" @click="close">{{ t('eventcmd.cancel') }}</button>
           <button type="button" class="editor-btn primary" :disabled="draft?.code === 102 && Boolean(choiceError)" @click="commit">{{ t('eventcmd.ok') }}</button>
         </footer>
-        <span v-if="!pickerOpen && draft" class="dialog-resize-handle" role="separator" :aria-label="t('eventcmd.resizeHandle')" :title="t('eventcmd.resizeHandle')" @pointerdown.prevent="onDialogResizeStart" @pointermove="onDialogResizeMove" @pointerup="onDialogResizeEnd" @dblclick="resetDialogSize" />
+        <template v-if="!pickerOpen && draft">
+          <span
+            v-for="edge in dialogResizeEdges"
+            :key="edge"
+            class="editor-dialog-resize-edge"
+            :class="edge"
+            :data-ui-id="`event-command-resize-${edge}`"
+            aria-hidden="true"
+            @pointerdown="onDialogResizeStart($event, edge)"
+            @pointermove="onDialogResizeMove"
+            @pointerup="onDialogResizeEnd"
+            @pointercancel="onDialogResizeEnd"
+            @dblclick="resetDialogSize"
+          />
+        </template>
       </section>
     </div>
   </teleport>
@@ -604,6 +618,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } fr
 import { ElMessage } from 'element-plus';
 import type { RpgMakerEngine } from '@contract/types';
 import { LAYER_Z } from '../../constants/layerZIndex';
+import { centeredDialogTranslation, DIALOG_RESIZE_EDGES, resizeDialogFromEdge, type DialogRect, type DialogResizeEdge } from '../../utils/dialog-edge-resize';
 import { useI18n } from '../../i18n';
 import { isTopmostEditorDialog } from '../../utils/editorDialogLayer';
 import { confirmAboveModal } from '../../utils/confirmAboveModal';
@@ -639,7 +654,7 @@ import ShopGoodsDialog, { type ShopGoodsEntry } from './ShopGoodsDialog.vue';
 import ToneColorSliders from './ToneColorSliders.vue';
 import SystemNamedEntrySelectorDialog from './SystemNamedEntrySelectorDialog.vue';
 import type { EditorEventListItem } from './editorTypes';
-const props = withDefaults(defineProps<{ mapId:number|null; catalog:EditorProjectCatalog|null; loadImage:(url:string)=>Promise<HTMLImageElement|null>; eventX?:number; eventY?:number; currentEvents?:EditorEventListItem[]; troopMembers?:string[] }>(), { eventX: 0, eventY: 0 });
+const props = withDefaults(defineProps<{ mapId:number|null; catalog:EditorProjectCatalog|null; loadImage:(url:string)=>Promise<HTMLImageElement|null>; eventX?:number; eventY?:number; currentEvents?:EditorEventListItem[]; troopMembers?:string[]; allowThisEvent?:boolean }>(), { eventX: 0, eventY: 0, allowThisEvent: true });
 const emit = defineEmits<{ commit:[payload:{commands:MvCommand[];editSpan:number|null;insertSpan:number|null}]; 'catalog-changed':[] }>();
 const projectStore = useProjectStore();
 const { language, t } = useI18n();
@@ -852,27 +867,28 @@ const PICKER_MODE_KEY='rpgmv.eventCommandPickerMode';
 const pickerViewMode=ref<'paged'|'table'>(readPickerViewMode());
 function readPickerViewMode():'paged'|'table'{try{return localStorage.getItem(PICKER_MODE_KEY)==='table'?'table':'paged';}catch{return 'paged';}}
 function setPickerViewMode(mode:'paged'|'table'){pickerViewMode.value=mode;try{localStorage.setItem(PICKER_MODE_KEY,mode);}catch{/* persistence is best-effort */}}
-// Per-command dialog size memory: the resize handle writes it, double-click clears it.
+// Per-command dialog size memory: border resizing writes it, double-click clears it.
 const SIZE_KEY='rpgmv.eventCommandDialogSize';
+const dialogResizeEdges=DIALOG_RESIZE_EDGES;
 const dialogShellRef=ref<HTMLElement>();
 const textInputWrapRef=ref<HTMLElement>();
 const textAreaRef=ref<HTMLTextAreaElement>();
 const measuredTextGuideLeft=ref(0);
 const dialogSize=ref<{w:number;h:number}|null>(null);
-let dialogResizeStart:{x:number;y:number;w:number;h:number;pointer:number}|null=null;
+const dialogOffset=ref<{x:number;y:number}|null>(null);
+let dialogResizeStart:{edge:DialogResizeEdge;x:number;y:number;rect:DialogRect;pointer:number}|null=null;
 const clampDialogW=(w:number)=>Math.round(Math.max(480,Math.min(window.innerWidth-32,w)));
 const clampDialogH=(h:number)=>Math.round(Math.max(320,Math.min(window.innerHeight-32,h)));
 function readDialogSizes():Record<string,{w:number;h:number}>{try{const parsed=JSON.parse(localStorage.getItem(SIZE_KEY)||'{}');return parsed&&typeof parsed==='object'&&!Array.isArray(parsed)?parsed as Record<string,{w:number;h:number}>:{};}catch{return{};}}
-function loadDialogSize(code:number){const entry=readDialogSizes()[String(code)];dialogSize.value=entry&&Number.isFinite(entry?.w)&&Number.isFinite(entry?.h)?{w:clampDialogW(entry.w),h:clampDialogH(entry.h)}:null;}
+function loadDialogSize(code:number){const entry=readDialogSizes()[String(code)];dialogSize.value=entry&&Number.isFinite(entry?.w)&&Number.isFinite(entry?.h)?{w:clampDialogW(entry.w),h:clampDialogH(entry.h)}:null;dialogOffset.value=null;}
 function saveDialogSize(){if(!draft.value)return;const sizes=readDialogSizes();if(dialogSize.value)sizes[String(draft.value.code)]=dialogSize.value;else delete sizes[String(draft.value.code)];try{localStorage.setItem(SIZE_KEY,JSON.stringify(sizes));}catch{/* persistence is best-effort */}}
-function resetDialogSize(){dialogSize.value=null;saveDialogSize();}
-function onDialogResizeStart(event:PointerEvent){const rect=dialogShellRef.value?.getBoundingClientRect();if(!rect)return;dialogResizeStart={x:event.clientX,y:event.clientY,w:rect.width,h:rect.height,pointer:event.pointerId};dialogSize.value={w:Math.round(rect.width),h:Math.round(rect.height)};(event.target as HTMLElement).setPointerCapture(event.pointerId);}
-// The overlay keeps the shell centered, so a corner drag moves half the size delta.
-function onDialogResizeMove(event:PointerEvent){if(dialogResizeStart?.pointer!==event.pointerId)return;dialogSize.value={w:clampDialogW(dialogResizeStart.w+(event.clientX-dialogResizeStart.x)*2),h:clampDialogH(dialogResizeStart.h+(event.clientY-dialogResizeStart.y)*2)};}
+function resetDialogSize(){dialogSize.value=null;dialogOffset.value=null;saveDialogSize();}
+function onDialogResizeStart(event:PointerEvent,edge:DialogResizeEdge){if(event.button!==0)return;const rect=dialogShellRef.value?.getBoundingClientRect();if(!rect)return;event.preventDefault();event.stopPropagation();dialogResizeStart={edge,x:event.clientX,y:event.clientY,rect:{left:rect.left,top:rect.top,width:rect.width,height:rect.height},pointer:event.pointerId};dialogSize.value={w:Math.round(rect.width),h:Math.round(rect.height)};try{(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);}catch{/* capture is best-effort */}}
+function onDialogResizeMove(event:PointerEvent){if(dialogResizeStart?.pointer!==event.pointerId)return;const next=resizeDialogFromEdge(dialogResizeStart.rect,dialogResizeStart.edge,event.clientX-dialogResizeStart.x,event.clientY-dialogResizeStart.y,{viewportWidth:window.innerWidth,viewportHeight:window.innerHeight,minWidth:Math.min(480,Math.max(1,window.innerWidth-32)),minHeight:Math.min(320,Math.max(1,window.innerHeight-32)),margin:16});dialogSize.value={w:next.width,h:next.height};dialogOffset.value=centeredDialogTranslation(next,window.innerWidth,window.innerHeight);}
 function onDialogResizeEnd(event:PointerEvent){if(dialogResizeStart?.pointer!==event.pointerId)return;dialogResizeStart=null;saveDialogSize();}
 const dialogStyle=computed(()=>{
   if(pickerOpen.value)return{width:pickerViewMode.value==='table'?'min(1400px,calc(100vw - 32px))':'min(700px,calc(100vw - 32px))'};
-  if(dialogSize.value)return{width:`${dialogSize.value.w}px`,height:`${dialogSize.value.h}px`,maxHeight:'calc(100vh - 32px)'};
+  if(dialogSize.value)return{width:`${dialogSize.value.w}px`,height:`${dialogSize.value.h}px`,maxHeight:'calc(100vh - 32px)',...(dialogOffset.value?{transform:`translate(${dialogOffset.value.x}px,${dialogOffset.value.y}px)`}:{})};
   return{width:'min(700px,calc(100vw - 32px))'};
 });
 const pluginCommandPlugins = shallowRef<ManagedPluginEntry[]>([]);
@@ -977,7 +993,7 @@ onUnmounted(() => {
   stopShakePreview();
 });
 
-function openPicker(at:number, indent=0){pickerOpen.value=true;pickerPage.value=1;pickerQuery.value='';activePickerIndex.value=0;draft.value=null;draftSpan.value=[];elseBranchEnabled.value=false;conditionalTypeDrafts.value={};variableOperandDrafts.value={};insertSpan.value=at;insertIndent.value=indent;editSpan.value=null;visible.value=true;void nextTick(()=>pickerSearchRef.value?.focus());}
+function openPicker(at:number, indent=0){pickerOpen.value=true;pickerPage.value=1;pickerQuery.value='';activePickerIndex.value=0;draft.value=null;draftSpan.value=[];elseBranchEnabled.value=false;conditionalTypeDrafts.value={};variableOperandDrafts.value={};insertSpan.value=at;insertIndent.value=indent;editSpan.value=null;dialogOffset.value=null;visible.value=true;void nextTick(()=>pickerSearchRef.value?.focus());}
 // Keep in sync with the bespoke editor templates dispatched by draft.code above.
 const CUSTOM_EDITOR_CODES=new Set([101,102,103,104,105,108,111,124,138,205,223,224,225,234,236,302,322,323,355,356,357]);
 // RM inserts parameterless commands directly; no editor page is shown for them.
@@ -1022,7 +1038,7 @@ function moveRouteTargetOptions(current:number):[number,string][]{
   return options;
 }
 function cancelMergedRoute(){if(draft.value?.code===205&&!visible.value)close();}
-function close(){visible.value=false;pickerOpen.value=false;pickerQuery.value='';draft.value=null;draftSpan.value=[];elseBranchEnabled.value=false;conditionalTypeDrafts.value={};variableOperandDrafts.value={};}
+function close(){visible.value=false;pickerOpen.value=false;pickerQuery.value='';draft.value=null;draftSpan.value=[];elseBranchEnabled.value=false;conditionalTypeDrafts.value={};variableOperandDrafts.value={};dialogOffset.value=null;dialogResizeStart=null;}
 function selectPickerPage(page:number){pickerPage.value=page;pickerQuery.value='';}
 function pickerOptionId(code:number){return `event-command-option-${code}`;}
 function activatePickerItem(code:number){const index=currentPickerItems.value.findIndex((item)=>item.code===code);if(index>=0)activePickerIndex.value=index;}
@@ -1337,7 +1353,6 @@ defineExpose({openPicker,openEditor});
   height:auto;
   max-height:min(850px,calc(100vh - 32px))
 }
-.dialog-resize-handle{position:absolute;right:2px;bottom:2px;width:14px;height:14px;border-radius:2px;cursor:nwse-resize;touch-action:none;background:linear-gradient(135deg,transparent 0 45%,var(--app-border-strong) 45% 55%,transparent 55% 68%,var(--app-border-strong) 68% 78%,transparent 78%)}
   .picker-shell{
     min-height:0;
     display:flex;

@@ -43,7 +43,7 @@ describe('extended tileset database transitions', { concurrency: false }, () => 
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  test('keeps types immutable, grows flags, and removes only an unused trailing sheet', async () => {
+  test('keeps types immutable, preserves flags until edited, and removes only an unused trailing sheet', async () => {
     await writeTilesetPng(project, 'ExtraNormal', 768, 768);
     await writeTilesetPng(project, 'ExtraA5', 384, 768);
     writeTilesets(project, Array(9).fill(''));
@@ -54,8 +54,11 @@ describe('extended tileset database transitions', { concurrency: false }, () => 
       value: { ...initial, tilesetNames: [...initial.tilesetNames, 'ExtraNormal'], rpgAgentExtendedTilesetTypes: ['normal'] },
     });
     const first = tilesetValue(root, project);
+    const firstInspection = getProjectManagedEntry(root, project, { kind: 'database', group: 'Tilesets', id: 1 }).inspection!;
     assert.deepEqual(first.rpgAgentExtendedTilesetTypes, ['normal']);
-    assert.equal(first.flags.length, 8448);
+    assert.deepEqual(first.flags, initial.flags);
+    assert.equal(firstInspection.diffs.some((diff) => diff.path.startsWith('/flags/')), false);
+    assert.equal(firstInspection.issues.some((issue) => issue.path === 'tilesets[1].tilesetNames'), false);
     assert.throws(() => updateProjectManagedEntry(root, project, {
       kind: 'database', group: 'Tilesets', id: 1,
       value: { ...first, rpgAgentExtendedTilesetTypes: ['A5'] },
@@ -70,13 +73,26 @@ describe('extended tileset database transitions', { concurrency: false }, () => 
       },
     });
     const second = tilesetValue(root, project);
-    assert.equal(second.flags.length, 8576);
+    assert.deepEqual(second.flags, initial.flags);
+
+    const editedFlags = [...second.flags];
+    editedFlags.length = 8576;
+    editedFlags.fill(0, second.flags.length);
+    editedFlags[8448] = 0x0f;
+    updateProjectManagedEntry(root, project, {
+      kind: 'database', group: 'Tilesets', id: 1,
+      value: { ...second, flags: editedFlags },
+    });
+    const flagged = tilesetValue(root, project);
+    assert.equal(flagged.flags.length, 8576);
+    assert.equal(flagged.flags[8448], 0x0f);
+
     writeMap(project, 8448);
     assert.throws(() => updateProjectManagedEntry(root, project, {
       kind: 'database', group: 'Tilesets', id: 1,
       value: {
-        ...second,
-        tilesetNames: second.tilesetNames.slice(0, -1),
+        ...flagged,
+        tilesetNames: flagged.tilesetNames.slice(0, -1),
         rpgAgentExtendedTilesetTypes: ['normal'],
       },
     }), /Map001 Sample Map/);
@@ -85,8 +101,8 @@ describe('extended tileset database transitions', { concurrency: false }, () => 
     assert.throws(() => updateProjectManagedEntry(root, project, {
       kind: 'database', group: 'Tilesets', id: 1,
       value: {
-        ...second,
-        tilesetNames: second.tilesetNames.slice(0, -1),
+        ...flagged,
+        tilesetNames: flagged.tilesetNames.slice(0, -1),
         rpgAgentExtendedTilesetTypes: ['normal'],
       },
     }), /Map001 Sample Map/);
@@ -95,8 +111,8 @@ describe('extended tileset database transitions', { concurrency: false }, () => 
     updateProjectManagedEntry(root, project, {
       kind: 'database', group: 'Tilesets', id: 1,
       value: {
-        ...second,
-        tilesetNames: second.tilesetNames.slice(0, -1),
+        ...flagged,
+        tilesetNames: flagged.tilesetNames.slice(0, -1),
         rpgAgentExtendedTilesetTypes: ['normal'],
       },
     });

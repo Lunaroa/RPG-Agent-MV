@@ -65,10 +65,10 @@ import {
   stringListHasReservedZero,
   troopPageConditionSummary,
 } from '../../utils/rmmvDatabaseEditor';
-import type { MvCommand } from '../../composables/useEventEditor';
+import { ensureTerminator, type MvCommand } from '../../composables/useEventEditor';
 import { eventCharacterFrame, type MvEventImage } from '../../composables/useMapRenderer';
 import { mvFaceSourceRect } from '../../utils/rmmvFace';
-import MvCommandListEditor from './MvCommandListEditor.vue';
+import EventCommandListEditor from '../editor/EventCommandListEditor.vue';
 import StructuredFieldsEditor from './StructuredFieldsEditor.vue';
 import ImageAssetPickerDialog from '../editor/ImageAssetPickerDialog.vue';
 import AnimationFrameCanvasEditor from './AnimationFrameCanvasEditor.vue';
@@ -80,7 +80,7 @@ import DatabaseTraitEditor from './DatabaseTraitEditor.vue';
 import TilesetFlagCanvasEditor from './TilesetFlagCanvasEditor.vue';
 import TroopFormationCanvas from './TroopFormationCanvas.vue';
 import DatabaseDocumentEditor from './DatabaseDocumentEditor.vue';
-import { enemyBattlerAssetKind } from '../../utils/rmmvBattleAssets.ts';
+import { enemyBattlerAssetKind, findEnemyBattlerAsset } from '../../utils/rmmvBattleAssets.ts';
 import type { DatabaseDocumentPage } from '../../utils/databaseDocumentPages';
 import { SYSTEM_FIELDS_EDITED_ELSEWHERE } from '../../utils/databaseDocumentPages';
 import {
@@ -252,7 +252,6 @@ const schemaFields = computed(() => {
   }
   return fields;
 });
-const references = computed(() => props.schema?.references || []);
 const schemaDriven = computed(() => schemaFields.value.length > 0);
 const localizedParamOptions = computed(() => localizedOptions(PARAM_OPTIONS));
 const localizedMenuCommandLabels = computed(() => MENU_COMMAND_LABELS.map(localizedLabel));
@@ -264,6 +263,7 @@ const localizedTermLabels = computed<Record<string, string[]>>(() => Object.from
 const isActorImageEditor = computed(() => props.group === 'Actors' && schemaDriven.value);
 const isEnemyEditor = computed(() => props.group === 'Enemies' || props.schema?.fileName === 'Enemies.json');
 const enemyImageAsset = computed(() => enemyBattlerAssetKind(props.catalog?.battle.sideView === true));
+const enemyBattlerPreviewError = ref('');
 const activeBattleback1Name = computed(() => props.battleback1Name ?? props.catalog?.battle.battleback1Name ?? '');
 const activeBattleback2Name = computed(() => props.battleback2Name ?? props.catalog?.battle.battleback2Name ?? '');
 const visibleSchemaFields = computed(() => (
@@ -1304,8 +1304,19 @@ async function paintBattlerPreview(): Promise<void> {
 async function paintEnemyBattlerPreview(): Promise<void> {
   const context = clearPreview(enemyBattlerPreviewCanvas.value);
   if (!context) return;
-  const image = await loadCatalogImage(enemyImageAsset.value, stringValue('battlerName'));
-  if (!image) return;
+  enemyBattlerPreviewError.value = '';
+  const battlerName = stringValue('battlerName');
+  if (!battlerName || !props.loadImage) return;
+  const asset = findEnemyBattlerAsset(imageAssets(enemyImageAsset.value), battlerName);
+  if (!asset) {
+    enemyBattlerPreviewError.value = t('db.troopMissingEnemyGraphic', { name: battlerName });
+    return;
+  }
+  const image = await props.loadImage(asset.url);
+  if (!image) {
+    enemyBattlerPreviewError.value = t('db.troopMissingEnemyGraphic', { name: battlerName });
+    return;
+  }
   drawCenteredImage(context, image, { sx: 0, sy: 0, sw: image.naturalWidth, sh: image.naturalHeight });
 }
 
@@ -1353,6 +1364,12 @@ function updateTroopPageCommands(index: number, list: MvCommand[]): void {
   const next = arrayRecords('pages');
   next[index] = { ...next[index], list };
   writePath('pages', next);
+}
+
+function troopPageCommands(page: Record<string, unknown>): MvCommand[] {
+  const list = Array.isArray(page.list) ? page.list as MvCommand[] : [];
+  ensureTerminator(list);
+  return list;
 }
 
 function addTroopPage(): void {
@@ -1596,17 +1613,17 @@ function updateSound(index: number, key: string, value: unknown): void {
             <div class="rm-image-row">
               <button type="button" class="rm-image-slot" @click="openActorFacePicker">
                 <span>{{ t('db.faceGraphic') }}</span>
-                <canvas ref="facePreviewCanvas" width="48" height="48" />
+                <canvas ref="facePreviewCanvas" width="96" height="96" />
                 <small>{{ imageValueLabel(stringValue('faceName')) }}</small>
               </button>
               <button type="button" class="rm-image-slot" @click="openActorCharacterPicker">
                 <span>{{ t('db.characterSprite') }}</span>
-                <canvas ref="characterPreviewCanvas" width="48" height="48" />
+                <canvas ref="characterPreviewCanvas" width="96" height="96" />
                 <small>{{ imageValueLabel(stringValue('characterName')) }}</small>
               </button>
               <button type="button" class="rm-image-slot" @click="openActorBattlerPicker">
                 <span>{{ t('db.svBattlerGraphic') }}</span>
-                <canvas ref="battlerPreviewCanvas" width="64" height="48" />
+                <canvas ref="battlerPreviewCanvas" width="128" height="96" />
                 <small>{{ imageValueLabel(stringValue('battlerName')) }}</small>
               </button>
             </div>
@@ -1696,7 +1713,7 @@ function updateSound(index: number, key: string, value: unknown): void {
           </article>
         </div>
       </section>
-      <div class="schema-field-layout" :class="{ 'rm-columns': hasRmLayout, 'rm-columns-particle': hasRmLayout && isMZParticleAnimation }">
+      <div class="schema-field-layout" :class="{ 'rm-columns': hasRmLayout, 'rm-columns-particle': hasRmLayout && isMZParticleAnimation, 'rm-columns-enemy': hasRmLayout && isEnemyEditor }">
         <div
           v-for="column in rmRenderColumns"
           :key="column.key"
@@ -1744,7 +1761,7 @@ function updateSound(index: number, key: string, value: unknown): void {
             <div
               v-for="row in panel.rows"
               :key="row.key"
-              :class="hasRmLayout ? 'rm-field-row' : 'field-grid'"
+              :class="[hasRmLayout ? 'rm-field-row' : 'field-grid', { 'enemy-basic-row': isEnemyEditor && row.fields.some((field) => field.path === 'battlerName') }]"
             >
               <template v-for="field in row.fields" :key="field.path">
           <section v-if="isTermsArrayField(field)" class="field full complex-editor rmmv-terms-editor">
@@ -1868,6 +1885,7 @@ function updateSound(index: number, key: string, value: unknown): void {
               <canvas ref="enemyBattlerPreviewCanvas" width="180" height="140" />
               <small>{{ imageValueLabel(stringValue(field.path)) }}</small>
             </button>
+            <small v-if="enemyBattlerPreviewError" class="enemy-battler-error">{{ enemyBattlerPreviewError }}</small>
           </section>
 
           <section v-else-if="field.path === 'traits'" class="field full complex-editor">
@@ -2118,7 +2136,7 @@ function updateSound(index: number, key: string, value: unknown): void {
             />
           </section>
 
-          <section v-else-if="field.path === 'params'" class="field full complex-editor">
+          <section v-else-if="field.path === 'params'" class="field full complex-editor" :class="{ 'enemy-param-editor': isEnemyEditor }">
             <div class="complex-title"><span>{{ fieldLabel(field) }}</span></div>
             <div class="complex-row param-row">
               <label v-for="param in localizedParamOptions" :key="param.value">
@@ -2432,12 +2450,14 @@ function updateSound(index: number, key: string, value: unknown): void {
               </div>
               <div class="troop-command-list">
                 <strong>{{ t('commonEvent.contents') }}</strong>
-                <MvCommandListEditor
-                  :model-value="page.list"
+                <EventCommandListEditor
+                  :model-value="troopPageCommands(page)"
                   :catalog="catalog"
                   :load-image="loadImage"
                   :empty-text="t('db.emptyBattleCommands')"
                   :troop-members="troopMemberNames()"
+                  :allow-this-event="false"
+                  :reset-key="index"
                   @update:model-value="updateTroopPageCommands(index, $event)"
                   @catalog-changed="emit('catalog-changed')"
                 />
@@ -2656,20 +2676,6 @@ function updateSound(index: number, key: string, value: unknown): void {
       </div>
     </section>
 
-    <section v-if="!documentPage && references.length" class="editor-section">
-      <div class="section-title">
-        <strong>{{ t('db.references') }}</strong>
-        <span>{{ t('db.referenceCount', { count: references.length }) }}</span>
-      </div>
-      <div class="reference-list">
-        <div v-for="ref in references" :key="`${ref.path}:${ref.target}`" class="reference-row">
-          <span>{{ sectionLabel(ref.path) }}</span>
-          <b>{{ ref.target }}</b>
-          <small v-if="ref.note">{{ ref.note }}</small>
-        </div>
-      </div>
-    </section>
-
     <section v-if="!documentPage && !schemaDriven" class="editor-section">
       <div class="section-title"><strong>{{ t('db.groupFields', { group: groupLabel }) }}</strong></div>
       <StructuredFieldsEditor :model-value="modelValue" :label="t('sf.field')" @update:model-value="$emit('update:modelValue', $event)" />
@@ -2845,8 +2851,8 @@ function updateSound(index: number, key: string, value: unknown): void {
 .rm-image-slot:hover { border-color: var(--console-accent,#be5630); }
 .rm-image-slot>span { font-weight: 650; color: var(--console-text-soft,#5a5247); }
 .rm-image-slot canvas {
-  width: 100%;
-  max-width: 64px;
+  width: auto;
+  max-width: 100%;
   height: auto;
   border: 1px solid var(--console-border-strong,#ddd3c2);
   border-radius: 3px;
@@ -3049,6 +3055,7 @@ function updateSound(index: number, key: string, value: unknown): void {
 .field-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; }
 /* Stock RM composition: grouped boxes in a wide main column plus a traits/note side column. */
 .rm-columns { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: 6px; align-items: start; }
+.rm-columns.rm-columns-enemy { grid-template-columns: minmax(0, 1.65fr) minmax(340px, 1fr); }
 /* Particle animation tab flips the balance like the stock MZ editor: narrow form
    column, wide preview column with the timing tables underneath. */
 .rm-columns.rm-columns-particle { grid-template-columns: minmax(300px, 1fr) minmax(0, 2fr); }
@@ -3056,6 +3063,19 @@ function updateSound(index: number, key: string, value: unknown): void {
 .rm-field-row { display: flex; gap: 4px; align-items: start; }
 .rm-field-row > .field,
 .rm-field-row > .check-field { flex: 1 1 0; min-width: 0; }
+.enemy-basic-row > .image-field-editor { flex: 0 0 220px; }
+.enemy-basic-row > .enemy-param-editor { flex: 1 1 auto; }
+.rm-columns-enemy .rm-panel,
+.rm-columns-enemy .complex-row {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+}
+.enemy-battler-error {
+  color: var(--app-danger,#b42318);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
 .rm-field-row > .check-field { align-self: end; padding-bottom: 4px; }
 /* Stock RM group boxes stack the label above the control; the 72px side-label
    grid would eat the width of three- and four-field rows. */
@@ -3121,20 +3141,6 @@ textarea { resize: vertical; line-height: 1.45; }
 .json-field small,
 .complex-editor small { color: var(--console-text-muted,#9a8e7e); line-height: 1.4; }
 .json-field em { color: var(--app-danger); font-style: normal; font-size: 11px; }
-.reference-list { display: grid; gap: 6px; }
-.reference-row {
-  display: grid;
-  grid-template-columns: 120px minmax(0, 1fr);
-  gap: 6px 10px;
-  padding: 8px;
-  border: 1px solid var(--console-border,#e4dcce);
-  border-radius: 7px;
-  background: var(--console-paper,#fffdfa);
-  font-size: 11px;
-}
-.reference-row span { color: var(--console-text-muted,#9a8e7e); }
-.reference-row b { color: var(--console-text-soft,#5a5247); font-weight: 650; }
-.reference-row small { grid-column: 1 / -1; color: var(--console-text-muted,#9a8e7e); line-height: 1.4; }
 .complex-editor {
   gap: 4px;
   padding: 6px;
@@ -3585,6 +3591,11 @@ textarea { resize: vertical; line-height: 1.45; }
 }
 @container (max-width: 899px) {
   .rm-columns { grid-template-columns: minmax(0, 1fr); }
+  .enemy-basic-row { flex-direction: column; }
+  .enemy-basic-row > .image-field-editor {
+    flex-basis: auto;
+    width: 100%;
+  }
 }
 @container (max-width: 640px) {
   .troop-formation-layout { grid-template-columns: minmax(0, 1fr); }
@@ -3610,7 +3621,6 @@ textarea { resize: vertical; line-height: 1.45; }
   }
   .field-grid,
   .actor-image-grid,
-  .reference-row,
   .complex-row,
   .compact-row,
   .string-list-row,

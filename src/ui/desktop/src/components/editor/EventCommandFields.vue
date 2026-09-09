@@ -121,6 +121,8 @@ const props = defineProps<{
    * caller supplies its position instead.
    */
   eventCommandIndex?: number | null;
+  /** "本事件" only exists when editing a map event; common/troop hosts pass false. */
+  allowThisEvent?: boolean;
 }>();
 const emit = defineEmits<{ change: [] }>();
 const { language, t } = useI18n();
@@ -301,7 +303,7 @@ function eventTargetOptions(field: CommandField): [number, string][] {
   const config = field.eventTarget;
   if (!config) throw new Error(`Event target field is missing its target policy: ${field.label}`);
   const options: [number, string][] = [];
-  if (config.allowThisEvent) options.push([0, t('cmdFields.thisEvent')]);
+  if (config.allowThisEvent && props.allowThisEvent !== false) options.push([0, t('cmdFields.thisEvent')]);
   if (config.allowPlayer) options.push([-1, t('cmdFields.player')]);
   if (config.allowMapEvents) {
     const seen = new Set<number>();

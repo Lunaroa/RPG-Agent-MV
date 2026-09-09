@@ -65,6 +65,8 @@ describe('plugin manager structure', () => {
     const engineTagsIndex = paneSource.indexOf('<PluginEngineTags :targets="plugin.header.target"');
     assert.ok(colorSwatchIndex >= 0);
     assert.ok(colorSwatchIndex < engineTagsIndex);
+    assert.match(paneSource, /<el-color-picker[\s\S]{0,320}class="plugin-color-swatch"[\s\S]{0,500}@change="applyPluginColor\(plugin\.name, \$event\)"/);
+    assert.doesNotMatch(paneSource, /colorPickerPlugin|handleColorPickerOutside|plugin-color-picker-title/);
     assert.match(engineTagsSource, /class="plugin-engine-tag"/);
     assert.match(engineTagsSource, /plugin-engine-tag\.mv/);
     assert.match(engineTagsSource, /plugin-engine-tag\.mz/);

@@ -654,7 +654,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
         ? (extraIndex != null ? -1 : typeof selection === 'number' ? selection : null)
         : null,
       eventOpacity: eventMode ? 1 : MAP_MODE_EVENT_OPACITY,
-      selectedEventId: eventMode ? options.selectedEventId.value : null,
+      selectedEventId: options.selectedEventId.value,
       hoveredEventId: eventMode ? options.hoveredEventId?.value : null,
       getCharacterImage: options.getCharacterImage,
     });

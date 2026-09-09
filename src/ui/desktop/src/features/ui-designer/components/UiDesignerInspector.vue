@@ -14,7 +14,8 @@ import { normalizeUiSingleLineText } from '../fabric/uiSingleLineText'
 import UiButtonStatesEditor from './UiButtonStatesEditor.vue'
 import UiFrameListEditor from './UiFrameListEditor.vue'
 import ProjectAssetsWorkspace from '../../../components/ProjectAssetsWorkspace.vue'
-import { resizeDialogFromEdge, type UiDialogRect, type UiDialogResizeEdge } from '../models/dialog-edge-resize'
+import { DIALOG_RESIZE_EDGES, resizeDialogFromEdge, type DialogRect, type DialogResizeEdge } from '../../../utils/dialog-edge-resize'
+import { appTitlebarHeight } from '../../../utils/appTitlebar'
 
 type InspectorPurpose = 'identity' | 'geometry' | 'contentResources' | 'appearance' | 'behavior' | 'advanced'
 
@@ -84,7 +85,7 @@ const resourceWorkspaceSize = ref({ width: 1180, height: 760 })
 const resourceWorkspacePosition = ref<{ left: number; top: number }>()
 const resourceWorkspaceDialogElement = ref<HTMLElement>()
 const resourceWorkspaceChromeHeight = ref(0)
-const resourceWorkspaceResizeEdges: UiDialogResizeEdge[] = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw']
+const resourceWorkspaceResizeEdges = DIALOG_RESIZE_EDGES
 const resourceWorkspaceDialogStyle = computed(() => resourceWorkspacePosition.value
   ? { position: 'fixed', margin: '0', left: `${resourceWorkspacePosition.value.left}px`, top: `${resourceWorkspacePosition.value.top}px` }
   : undefined)
@@ -97,10 +98,10 @@ const resourceWorkspaceResizeFrameStyle = computed(() => resourceWorkspacePositi
     }
   : undefined)
 let resourceWorkspaceResize: {
-  edge: UiDialogResizeEdge
+  edge: DialogResizeEdge
   startX: number
   startY: number
-  rect: UiDialogRect
+  rect: DialogRect
   chromeHeight: number
 } | undefined
 const clampResourceWorkspaceSize = (width: number, height: number) => {
@@ -130,7 +131,7 @@ const endResourceWorkspaceResize = () => {
   window.removeEventListener('pointerup', endResourceWorkspaceResize)
   window.removeEventListener('pointercancel', endResourceWorkspaceResize)
 }
-const beginResourceWorkspaceResize = (event: PointerEvent, edge: UiDialogResizeEdge) => {
+const beginResourceWorkspaceResize = (event: PointerEvent, edge: DialogResizeEdge) => {
   event.preventDefault()
   event.stopPropagation()
   const dialog = resourceWorkspaceDialogElement.value
@@ -148,6 +149,39 @@ const beginResourceWorkspaceResize = (event: PointerEvent, edge: UiDialogResizeE
   window.addEventListener('pointerup', endResourceWorkspaceResize)
   window.addEventListener('pointercancel', endResourceWorkspaceResize)
 }
+let resourceWorkspaceDrag: {
+  startX: number
+  startY: number
+  left: number
+  top: number
+  pointer: number
+} | undefined
+let resourceWorkspaceHeaderElement: HTMLElement | undefined
+const moveResourceWorkspaceDrag = (event: PointerEvent) => {
+  if (resourceWorkspaceDrag?.pointer !== event.pointerId) return
+  const dialog = resourceWorkspaceDialogElement.value
+  const width = dialog?.offsetWidth ?? resourceWorkspaceSize.value.width
+  const minVisible = 48
+  const left = Math.min(Math.max(resourceWorkspaceDrag.left + (event.clientX - resourceWorkspaceDrag.startX), minVisible - width), window.innerWidth - minVisible)
+  const top = Math.min(Math.max(resourceWorkspaceDrag.top + (event.clientY - resourceWorkspaceDrag.startY), appTitlebarHeight()), window.innerHeight - minVisible)
+  resourceWorkspacePosition.value = { left: Math.round(left), top: Math.round(top) }
+}
+const endResourceWorkspaceDrag = () => {
+  resourceWorkspaceDrag = undefined
+  window.removeEventListener('pointermove', moveResourceWorkspaceDrag)
+  window.removeEventListener('pointerup', endResourceWorkspaceDrag)
+  window.removeEventListener('pointercancel', endResourceWorkspaceDrag)
+}
+const onResourceWorkspaceHeaderPointerDown = (event: PointerEvent) => {
+  if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return
+  const position = resourceWorkspacePosition.value
+  if (!position) return
+  event.preventDefault()
+  resourceWorkspaceDrag = { startX: event.clientX, startY: event.clientY, left: position.left, top: position.top, pointer: event.pointerId }
+  window.addEventListener('pointermove', moveResourceWorkspaceDrag)
+  window.addEventListener('pointerup', endResourceWorkspaceDrag)
+  window.addEventListener('pointercancel', endResourceWorkspaceDrag)
+}
 const handleResourceWorkspaceOpened = async () => {
   await nextTick()
   const dialog = document.querySelector<HTMLElement>('.el-dialog[data-ui-id="ui-designer-resource-workspace-dialog"]')
@@ -156,9 +190,14 @@ const handleResourceWorkspaceOpened = async () => {
   resourceWorkspaceDialogElement.value = dialog
   resourceWorkspaceChromeHeight.value = Math.max(0, bounds.height - resourceWorkspaceSize.value.height)
   resourceWorkspacePosition.value = { left: Math.round(bounds.left), top: Math.round(bounds.top) }
+  resourceWorkspaceHeaderElement = dialog.querySelector<HTMLElement>('.el-dialog__header') ?? undefined
+  resourceWorkspaceHeaderElement?.addEventListener('pointerdown', onResourceWorkspaceHeaderPointerDown)
 }
 const handleResourceWorkspaceClosed = () => {
   endResourceWorkspaceResize()
+  endResourceWorkspaceDrag()
+  resourceWorkspaceHeaderElement?.removeEventListener('pointerdown', onResourceWorkspaceHeaderPointerDown)
+  resourceWorkspaceHeaderElement = undefined
   resourceWorkspaceDialogElement.value = undefined
   resourceWorkspacePosition.value = undefined
 }
@@ -208,6 +247,7 @@ const closeResourceWorkspace = (visible: boolean) => {
 }
 onBeforeUnmount(() => {
   endResourceWorkspaceResize()
+  endResourceWorkspaceDrag()
   commitNodeName()
   unregisterNodeNameDraft()
   settleResourceWorkspace(null)

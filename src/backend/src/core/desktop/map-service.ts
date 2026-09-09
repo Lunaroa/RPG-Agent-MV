@@ -379,10 +379,6 @@ export function postMapTiles(workflowRoot: string, project: string, mapId: numbe
       throw new Error('[UNLIMITED_TILESETS_DATA_INVALID] The selected map has no configured extended tileset sheets.');
     }
     validateExtendedTilesetResources(workflowRoot, project, descriptors, state.tileSize);
-    const end = descriptors.at(-1)!.firstTileId + descriptors.at(-1)!.capacity;
-    if (state.flags.length < end) {
-      throw new Error(`[UNLIMITED_TILESETS_DATA_INVALID] Tileset flags must contain at least ${end} entries before painting extended tiles.`);
-    }
   }
   const staged = withStagedMapMutation(
     workflowRoot,
@@ -401,7 +397,7 @@ function readExtendedTilesetPaintState(
   workflowRoot: string,
   project: string,
   mapId: number,
-): { descriptors: ReturnType<typeof buildExtendedTilesetDescriptors>; flags: unknown[]; tileSize: number } {
+): { descriptors: ReturnType<typeof buildExtendedTilesetDescriptors>; tileSize: number } {
   const mapFile = getMapFileForRead(workflowRoot, project, mapId);
   if (!mapFile || !fs.existsSync(mapFile)) throw new Error(mapNotFound(mapId));
   const map = readJson(mapFile) as Record<string, unknown>;
@@ -421,7 +417,6 @@ function readExtendedTilesetPaintState(
   const names = Array.isArray(tileset.tilesetNames) ? tileset.tilesetNames : [];
   return {
     descriptors: buildExtendedTilesetDescriptors(names, tileset.rpgAgentExtendedTilesetTypes),
-    flags: Array.isArray(tileset.flags) ? tileset.flags : [],
     tileSize: inspectRmmvProject(project).tileSize,
   };
 }

@@ -5,6 +5,8 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 
+import sharp from 'sharp';
+
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { getProjectFileForRead, getProjectStagingStatus } from './staging-service.ts';
@@ -127,6 +129,30 @@ describe('managed unlimited tilesets runtime', { concurrency: false }, () => {
     assert.throws(() => postMapTiles(root, project, 1, [edit]), /UNLIMITED_TILESETS_RUNTIME_INVALID/);
     setManagedUnlimitedTilesetsEnabled(root, project, true);
     assert.throws(() => postMapTiles(root, project, 1, [edit]), /image is missing/i);
+  });
+
+  test('paints extended tiles without materializing default flag entries', async () => {
+    const project = createProject(root, 'MV');
+    const dataDir = path.join(project, 'www', 'data');
+    const flags = Array(8192).fill(0);
+    fs.writeFileSync(path.join(dataDir, 'Tilesets.json'), JSON.stringify([null, {
+      id: 1,
+      tilesetNames: [...Array(9).fill(''), 'Extra'],
+      flags,
+      rpgAgentExtendedTilesetTypes: ['normal'],
+    }]), 'utf8');
+    fs.mkdirSync(path.join(project, 'www', 'img', 'tilesets'), { recursive: true });
+    await sharp({
+      create: { width: 768, height: 768, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+    }).png().toFile(path.join(project, 'www', 'img', 'tilesets', 'Extra.png'));
+    setManagedUnlimitedTilesetsEnabled(root, project, true);
+
+    postMapTiles(root, project, 1, [{ kind: 'tile', x: 0, y: 0, layer: 0, tileId: 8192 }]);
+
+    const map = JSON.parse(fs.readFileSync(getProjectFileForRead(root, project, 'www/data/Map001.json')!, 'utf8'));
+    const tilesets = JSON.parse(fs.readFileSync(getProjectFileForRead(root, project, 'www/data/Tilesets.json')!, 'utf8'));
+    assert.equal(map.data[0], 8192);
+    assert.equal(tilesets[1].flags.length, flags.length);
   });
 
   for (const engine of ['rpg-maker-mv', 'rpg-maker-mz'] as const) {

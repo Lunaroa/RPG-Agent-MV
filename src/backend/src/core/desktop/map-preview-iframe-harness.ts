@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { MapPreviewOverrides } from '../../../../contract/types.ts';
+import type { MapPreviewUiRuntimePayload } from './map-preview-app-preparation.ts';
 
 export interface MapPreviewIframeHarnessOptions {
   sessionId: string;
@@ -14,6 +15,7 @@ export interface MapPreviewIframeHarnessOptions {
   tileSize: number;
   geometry: { pixelWidth: number; pixelHeight: number };
   overrides: MapPreviewOverrides;
+  uiRuntime?: MapPreviewUiRuntimePayload;
 }
 
 export function injectMapPreviewIframeHarness(resourceRootInput: string, options: MapPreviewIframeHarnessOptions): void {
@@ -102,7 +104,10 @@ function markerSource(): string {
 }
 
 function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
-  const config = JSON.stringify(options).replace(/</g, '\\u003c');
+  const config = JSON.stringify(options)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
   return `/* Generated only inside an isolated RPG Agent map preview. */
 (function () {
   'use strict';
@@ -279,6 +284,30 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
     reportError(event && event.reason);
   });
 
+  function installUiRuntimePayload() {
+    var payload = config.uiRuntime;
+    var runtime = window.MZUIRuntime;
+    if (!payload || !runtime) return;
+    if (!Array.isArray(payload.scenes)) {
+      throw previewFailure('The isolated UI scene payload is invalid.', 'map-render-failed', 'install-ui-runtime-data');
+    }
+    // Global UI data is only meaningful when this map actually has a
+    // Scene_Map UI document.  An unrelated project UI runtime must not become
+    // a prerequisite for ordinary map preview.
+    if (!payload.scenes.length) return;
+    runtimeStage = 'install-ui-runtime-data';
+    if (typeof runtime.registerScene !== 'function' || typeof runtime.installGlobalData !== 'function') {
+      throw previewFailure('The enabled UI runtime cannot accept isolated preview data.', 'map-render-failed', runtimeStage);
+    }
+    runtime.installGlobalData(payload.globalData);
+    payload.scenes.forEach(function (scene) {
+      var sceneName = scene && scene.meta && scene.meta.sceneName;
+      if (!sceneName) throw previewFailure('An isolated UI scene has no stable scene name.', 'map-render-failed', runtimeStage);
+      if (typeof runtime.isRegistered === 'function' && runtime.isRegistered(sceneName)) return;
+      runtime.registerScene(sceneName, scene.meta.sceneBase, scene);
+    });
+    runtimeStage = 'bootstrap';
+  }
   function waitFor(predicate, label, timeout) {
     var deadline = Date.now() + (timeout || 15000);
     return new Promise(function (resolve, reject) {
@@ -807,6 +836,7 @@ function iframeHarnessSource(options: MapPreviewIframeHarnessOptions): string {
       await waitFor(function () {
         return window.DataManager && window.SceneManager && window.Scene_Map && DataManager.isDatabaseLoaded && DataManager.isDatabaseLoaded();
       }, 'RPG Maker database', 18000);
+      installUiRuntimePayload();
       if (window.__rpgAgentPreviewMarkerConflict) {
         throw previewFailure(window.__rpgAgentPreviewMarkerConflict, 'preview-debug-marker-conflict', 'preview-debug-marker');
       }

@@ -416,6 +416,23 @@ describe("RMMV prospective database validation", () => {
     assert.ok(paths.includes("system.windowTone"));
   });
 
+  test("accepts extended tileset slots while requiring all stock slots", () => {
+    const snapshot = validSnapshot();
+    const tileset = (snapshot.tilesets as Array<Record<string, unknown> | null>)[1]!;
+    const stockNames = tileset.tilesetNames as unknown[];
+    tileset.tilesetNames = [...stockNames, "Extra"];
+
+    const extended = validateRmmvDatabaseSnapshot(snapshot, { mapIds: [1] });
+    assert.equal(extended.issues.some((issue) => issue.source.path === "tilesets[1].tilesetNames"), false);
+
+    tileset.tilesetNames = stockNames.slice(0, 8);
+    const incomplete = validateRmmvDatabaseSnapshot(snapshot, { mapIds: [1] });
+    assert.ok(incomplete.issues.some((issue) => (
+      issue.code === "DB_MINIMUM_ARRAY_LENGTH"
+      && issue.source.path === "tilesets[1].tilesetNames"
+    )));
+  });
+
   test("transition validation ignores unchanged legacy errors but blocks newly introduced errors", () => {
     const before = validSnapshot();
     (before.items as Array<Record<string, unknown> | null>)[1]!.price = -1;

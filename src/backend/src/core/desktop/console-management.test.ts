@@ -25,6 +25,7 @@ import {
   applyProjectStaging,
   getProjectFileForRead,
   getProjectStagingStatus,
+  writeStagedProjectJson,
 } from './staging-service.ts';
 
 describe('console management services', { concurrency: false }, () => {
@@ -356,6 +357,29 @@ describe('console management services', { concurrency: false }, () => {
       })),
       /balloonId.*<= 10/,
     );
+  });
+
+  test('keeps unrelated staged errors out of troop inspection without weakening Apply All', () => {
+    writeJson(path.join(project, 'www', 'data', 'Enemies.json'), [
+      null,
+      createDefaultRmmvDatabaseEntry('Enemies', 1),
+    ]);
+    const actors = readJson(path.join(project, 'www', 'data', 'Actors.json')) as Array<Record<string, unknown> | null>;
+    actors[1] = { ...actors[1]!, classId: 99 };
+    writeStagedProjectJson(root, project, 'www/data/Actors.json', actors);
+
+    const current = getProjectManagedEntry(root, project, { kind: 'database', group: 'Troops', id: 1 });
+    const members = [{ enemyId: 1, x: 700, y: 600, hidden: false, plugin: 'preserved' }];
+    const updated = updateProjectManagedEntry(root, project, {
+      kind: 'database',
+      group: 'Troops',
+      id: 1,
+      value: { ...(current.value as Record<string, unknown>), name: 'Updated Troop', members },
+    });
+
+    assert.deepEqual((updated.value as Record<string, unknown>).members, members);
+    assert.equal(updated.inspection?.issues.some((issue) => issue.table === 'actors'), false);
+    assert.throws(() => preflightProjectManagedStagingApply(root, project), /actors\[1\]\.classId/);
   });
 
   test('reverts only the selected System-backed document group', () => {

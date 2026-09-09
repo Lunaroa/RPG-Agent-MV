@@ -5,8 +5,9 @@
  * components do not wire their own move logic:
  * - self-made `.editor-modal-overlay > .editor-modal-shell` dialogs
  *   (styles/editor-dialog.css), where the overlay is a centered flexbox and
- *   the offset is applied as margins — composing with per-dialog resize
- *   logic that only changes width/height;
+ *   the offset is applied as equal-and-opposite margin pairs. This preserves
+ *   the shell's centered layout footprint while composing with per-dialog
+ *   resize logic that only changes width/height;
  * - Element Plus `.el-dialog` instances, where the default layout is
  *   `margin: <top> auto 50px` — the offset is applied as a translate so the
  *   auto-margin centering stays intact. Dialogs already positioned by their
@@ -149,7 +150,9 @@ function applyOffset(state: DragState): void {
   if (nextTop > maxTop) state.offsetY -= nextTop - maxTop;
   if (state.mode === 'margin') {
     state.shell.style.marginLeft = `${Math.round(state.offsetX)}px`;
+    state.shell.style.marginRight = `${Math.round(-state.offsetX)}px`;
     state.shell.style.marginTop = `${Math.round(state.offsetY)}px`;
+    state.shell.style.marginBottom = `${Math.round(-state.offsetY)}px`;
   } else {
     state.shell.style.transform = `translate(${Math.round(state.offsetX)}px, ${Math.round(state.offsetY)}px)`;
   }

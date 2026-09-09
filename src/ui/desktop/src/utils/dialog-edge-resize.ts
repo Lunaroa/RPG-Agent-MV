@@ -1,13 +1,15 @@
-export type UiDialogResizeEdge = 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'nw'
+export const DIALOG_RESIZE_EDGES = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'] as const
 
-export interface UiDialogRect {
+export type DialogResizeEdge = (typeof DIALOG_RESIZE_EDGES)[number]
+
+export interface DialogRect {
   left: number
   top: number
   width: number
   height: number
 }
 
-export interface UiDialogResizeConstraints {
+export interface DialogResizeConstraints {
   viewportWidth: number
   viewportHeight: number
   minWidth: number
@@ -18,12 +20,12 @@ export interface UiDialogResizeConstraints {
 const clamp = (value: number, minimum: number, maximum: number) => Math.min(maximum, Math.max(minimum, value))
 
 export function resizeDialogFromEdge(
-  origin: UiDialogRect,
-  edge: UiDialogResizeEdge,
+  origin: DialogRect,
+  edge: DialogResizeEdge,
   deltaX: number,
   deltaY: number,
-  constraints: UiDialogResizeConstraints,
-): UiDialogRect {
+  constraints: DialogResizeConstraints,
+): DialogRect {
   const margin = Math.max(0, constraints.margin ?? 8)
   const viewportRight = Math.max(margin, constraints.viewportWidth - margin)
   const viewportBottom = Math.max(margin, constraints.viewportHeight - margin)
@@ -47,5 +49,16 @@ export function resizeDialogFromEdge(
     top: Math.round(top),
     width: Math.round(right - left),
     height: Math.round(bottom - top),
+  }
+}
+
+export function centeredDialogTranslation(
+  rect: DialogRect,
+  viewportWidth: number,
+  viewportHeight: number,
+): { x: number; y: number } {
+  return {
+    x: Math.round(rect.left - (viewportWidth - rect.width) / 2),
+    y: Math.round(rect.top - (viewportHeight - rect.height) / 2),
   }
 }

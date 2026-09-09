@@ -181,6 +181,7 @@ export class MapPreviewIframeService {
         tileSize: prepared.tileSize,
         geometry,
         overrides,
+        uiRuntime: prepared.uiRuntime,
       }));
       this.#attestPreparation();
       const iframeUrl = this.#dependencies.registerPreviewRoot(this.#protocolKey, prepared.appDirectory, project, {
@@ -603,6 +604,7 @@ export class MapPreviewIframeService {
       tileSize: this.#preparation.tileSize,
       geometry: target.geometry,
       overrides: request.overrides,
+      uiRuntime: this.#preparation.uiRuntime,
     }));
     this.#update({
       operationId,

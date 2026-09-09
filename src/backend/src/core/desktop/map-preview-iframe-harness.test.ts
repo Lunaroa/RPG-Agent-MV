@@ -88,6 +88,20 @@ test('authenticates parent commands with both session and channel token', () => 
   }
 });
 
+test('does not require UI runtime preview hooks when the map has no Scene_Map document', () => {
+  const root = fixture('mz');
+  try {
+    injectMapPreviewIframeHarness(root, { ...options, uiRuntime: { scenes: [], globalData: {} } });
+    const harness = fs.readFileSync(path.join(root, 'js', 'rpg-agent-preview-iframe.js'), 'utf8');
+    const emptySceneGuard = harness.indexOf('if (!payload.scenes.length) return;');
+    const runtimeContract = harness.indexOf("typeof runtime.registerScene !== 'function'");
+    assert.ok(emptySceneGuard >= 0);
+    assert.ok(emptySceneGuard < runtimeContract);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('captures console output and evaluates code only through authenticated frame commands', () => {
   const root = fixture('mv');
   try {

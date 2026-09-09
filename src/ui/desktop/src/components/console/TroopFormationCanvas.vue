@@ -4,7 +4,7 @@ import type { EditorEnemyCatalogEntry, EditorProjectCatalog } from '../../api/cl
 import { useI18n } from '../../i18n';
 import { normalizeTroopMembers, type MvTroopMember } from '../../utils/rmmvDatabaseEditor';
 import { rotateHuePixelsLikeMv } from '../../utils/rmmvHue';
-import { enemyBattlerAssetKind } from '../../utils/rmmvBattleAssets.ts';
+import { enemyBattlerAssetKind, findEnemyBattlerAsset } from '../../utils/rmmvBattleAssets.ts';
 
 const props = defineProps<{
   modelValue: unknown[];
@@ -124,7 +124,7 @@ async function loadEnemyImage(
     return null;
   }
   const kind = enemyBattlerAssetKind(props.catalog?.battle.sideView === true);
-  const asset = props.catalog?.assets[kind].find((entry) => entry.name === enemy.battlerName);
+  const asset = findEnemyBattlerAsset(props.catalog?.assets[kind] || [], enemy.battlerName);
   if (!asset) {
     nextErrors.push(t('db.troopMissingEnemyGraphic', { name: enemy.battlerName }));
     return null;

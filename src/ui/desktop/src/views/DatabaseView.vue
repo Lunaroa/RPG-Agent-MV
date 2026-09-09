@@ -493,10 +493,6 @@ async function activateProjectManagement(): Promise<void> {
   }
 }
 
-watch(searchQuery, () => {
-  resetGroupVisibleLimits();
-});
-
 watch(() => projectStore.currentProject, (project) => {
   if (project) void ensureCatalog();
 });
@@ -525,21 +521,8 @@ watch(readIssues, (issues) => {
     return;
   }
   lastReadIssueSignature = signature;
-  // Missing map files never block the workspace: report them as a transient
-  // warning (skipped) instead of a sticky error, while other failures stay errors.
   const isSkippedMapIssue = (issue: ProjectOverviewReadIssue) => issue.scope === 'map' && issue.code === 'missing-file';
-  const skippedMapIssues = issues.filter(isSkippedMapIssue);
   const blockingIssues = issues.filter((issue) => !isSkippedMapIssue(issue));
-  if (skippedMapIssues.length) {
-    ElNotification({
-      type: 'warning',
-      title: t('story.readIssuesSkipped', { count: skippedMapIssues.length }),
-      message: skippedMapIssues.map((issue) => issue.relativePath).join('\n'),
-      duration: 8000,
-      position: 'bottom-right',
-      customClass: 'read-issue-notification',
-    });
-  }
   if (blockingIssues.length) {
     ElNotification({
       type: 'error',
@@ -668,12 +651,9 @@ const selectedDbGroupMetadata = computed((): ProjectOverviewDbGroup => {
     ?? { exists: false, readState: 'missing', count: 0, named: [] };
 });
 
-const visibleDbEntries = computed(() =>
-  visibleGroupSlice('database', selectedDbGroup.value, activeDbGroup.value.named),
-);
+const visibleDbEntries = computed(() => activeDbGroup.value.named);
 
-const visibleSystemNamedEntries = computed(() =>
-  visibleGroupSlice('database', selectedDbGroup.value, filteredSystemNamedEntries.value));
+const visibleSystemNamedEntries = computed(() => filteredSystemNamedEntries.value);
 
 const activeDbKey = computed(() => {
   if (pmDetail.value?.kind !== 'managed' || pmDetail.value.entry.kind !== 'database') return '';
@@ -681,59 +661,7 @@ const activeDbKey = computed(() => {
   return `${entry.group}:${entry.id}`;
 });
 
-const hasMoreDbEntries = computed(() =>
-  hasMoreGroupItems('database', selectedDbGroup.value, activeDbGroup.value.named.length),
-);
-
-const hasMoreSystemNamedEntries = computed(() =>
-  hasMoreGroupItems('database', selectedDbGroup.value, filteredSystemNamedEntries.value.length));
-
-const remainingSystemNamedEntries = computed(() =>
-  remainingGroupItems('database', selectedDbGroup.value, filteredSystemNamedEntries.value.length));
-
-const remainingDbEntries = computed(() =>
-  remainingGroupItems('database', selectedDbGroup.value, activeDbGroup.value.named.length),
-);
-
 const pmListHeaderTitle = computed(() => dbLabel(selectedDbGroup.value));
-
-const GROUP_PAGE_SIZE = 60;
-const groupVisibleLimits = ref<Record<string, number>>({});
-
-type PmGroupTab = 'database';
-
-function groupLimitKey(tab: PmGroupTab, groupKey: string): string {
-  return `${tab}:${groupKey}`;
-}
-
-function resetGroupVisibleLimits(): void {
-  groupVisibleLimits.value = {};
-}
-
-function groupVisibleLimit(tab: PmGroupTab, groupKey: string): number {
-  return groupVisibleLimits.value[groupLimitKey(tab, groupKey)] ?? GROUP_PAGE_SIZE;
-}
-
-function visibleGroupSlice<T>(tab: PmGroupTab, groupKey: string, items: T[]): T[] {
-  return items.slice(0, groupVisibleLimit(tab, groupKey));
-}
-
-function hasMoreGroupItems(tab: PmGroupTab, groupKey: string, total: number): boolean {
-  return total > groupVisibleLimit(tab, groupKey);
-}
-
-function remainingGroupItems(tab: PmGroupTab, groupKey: string, total: number): number {
-  return Math.min(GROUP_PAGE_SIZE, total - groupVisibleLimit(tab, groupKey));
-}
-
-function showMoreGroupItems(tab: PmGroupTab, groupKey: string, total: number): void {
-  const key = groupLimitKey(tab, groupKey);
-  const current = groupVisibleLimits.value[key] ?? GROUP_PAGE_SIZE;
-  groupVisibleLimits.value = {
-    ...groupVisibleLimits.value,
-    [key]: Math.min(current + GROUP_PAGE_SIZE, total),
-  };
-}
 
 function dbLabel(key: string): string {
   if (key === 'Switches') return DATABASE_CATEGORY_LABELS.switches[language.value];
@@ -753,10 +681,6 @@ function itemCountLabel(count: number): string {
 
 function unnamedLabel(): string {
   return t('story.unnamed');
-}
-
-function showMoreLabel(count: number): string {
-  return t('story.showMore', { count });
 }
 
 function isCommonEventsGroup(group?: string): boolean {
@@ -831,7 +755,6 @@ function selectDbGroup(key: string, syncRoute = true): void {
       void router.replace({ path: '/database', query: { ...route.query, section } });
     }
   }
-  resetGroupVisibleLimits();
   if (preserveSharedSystemDraft) return;
   closeDetail();
   if (isSystemNamedGroup(key)) return;
@@ -1354,14 +1277,6 @@ function detailTitle(): string {
                 <span class="row-id">{{ String(entry.id).padStart(4, '0') }}</span>
                 <span class="row-name">{{ entry.name || unnamedLabel() }}</span>
               </button>
-              <button
-                v-if="hasMoreSystemNamedEntries"
-                type="button"
-                class="load-more"
-                @click="showMoreGroupItems('database', selectedDbGroup, filteredSystemNamedEntries.length)"
-              >
-                {{ showMoreLabel(remainingSystemNamedEntries) }}
-              </button>
               <div v-if="!visibleSystemNamedEntries.length" class="empty-hint">
                 {{ t('story.noMatchEntries') }}
               </div>
@@ -1407,14 +1322,6 @@ function detailTitle(): string {
               >
                 <span class="row-id">{{ String(entry.id).padStart(4, '0') }}</span>
                 <span class="row-name">{{ entry.name || unnamedLabel() }}</span>
-              </button>
-              <button
-                v-if="hasMoreDbEntries"
-                type="button"
-                class="load-more"
-                @click="showMoreGroupItems('database', selectedDbGroup, activeDbGroup.named.length)"
-              >
-                {{ showMoreLabel(remainingDbEntries) }}
               </button>
               <div v-if="!visibleDbEntries.length" class="empty-hint">
                 {{ database[selectedDbGroup] ? t('story.noMatchEntries') : t('story.noDatabaseData') }}
@@ -1830,17 +1737,6 @@ function detailTitle(): string {
 .row-meta { font-size: 10px; color: var(--console-muted,#8a7f72); min-width: 24px; text-align: right; }
 .audio-row .row-name,
 .image-row .row-name { flex: 1; min-width: 0; }
-.load-more {
-  width: 100%;
-  padding: 9px;
-  border: 0;
-  background: transparent;
-  color: var(--console-accent,#be5630);
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-}
-.load-more:hover { background: #fbf1e9; }
 .pm-detail {
   min-width: 0;
   display: flex;

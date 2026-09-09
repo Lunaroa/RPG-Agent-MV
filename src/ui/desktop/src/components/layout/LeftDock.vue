@@ -634,10 +634,7 @@ onMounted(() => {
 .palette-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; margin:0; background: var(--app-bg-sunken); }
 .palette-canvas { display: block; width:auto; max-width:100%; height:auto; cursor: default; image-rendering: pixelated; }
 .map-tree { flex: 1; overflow: auto; padding: 2px 3px 6px; background: repeating-linear-gradient(to bottom, transparent 0, transparent 22px, var(--app-bg-soft) 22px, var(--app-bg-soft) 44px); background-attachment: local; background-origin: content-box; }
-.tree-node { position:relative; width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 5px; overflow: hidden; cursor:grab; }
-.map-tree.searching .tree-node{cursor:pointer}
-.preview-mode .tree-node{cursor:pointer}
-.tree-node:active { cursor:grabbing; }
+.tree-node { position:relative; width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 5px; overflow: hidden; cursor:default; }
 .node-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color:var(--app-ink); font-size: 12px; line-height:1; }
 .node-main { min-width:0; display:flex; align-items:center; gap:2px; }
 .node-fav { flex:0 0 auto; display:none; width:16px; height:16px; padding:0; border:0; border-radius:3px; background:transparent; color:var(--app-ink-muted); cursor:pointer; align-items:center; justify-content:center; }
@@ -655,7 +652,7 @@ onMounted(() => {
 .map-tree :deep(.el-tree) { background: transparent; color: var(--app-ink); --el-tree-node-hover-bg-color: var(--app-bg-soft); }
 /* 缩进改由嵌套 children 的 margin 累积承担（覆盖 el-tree 内联 padding-left），
    使每一层 children 都能画出一条引导竖线，深层嵌套可顺线回溯父级。 */
-.map-tree :deep(.el-tree-node__content) { height:22px; min-height:22px; padding-left:8px !important; padding-right:3px; border-radius:4px; color:var(--app-ink); }
+.map-tree :deep(.el-tree-node__content) { height:22px; min-height:22px; padding-left:8px !important; padding-right:3px; border-radius:4px; color:var(--app-ink); cursor:default; }
 .map-tree :deep(.el-tree-node__children) { margin-left:10px; border-left:1px solid var(--app-border-strong); }
 .map-tree :deep(.el-tree-node__content:hover) { background:var(--app-bg-sunken); }
 .map-tree :deep(.el-tree--highlight-current .el-tree-node.is-current > .el-tree-node__content) { background:var(--app-accent-soft); color:var(--app-accent); font-weight:700; box-shadow: inset 3px 0 0 var(--app-accent); }

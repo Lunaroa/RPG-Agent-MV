@@ -15,6 +15,9 @@ describe('map tree search and character asset browser', () => {
     assert.match(leftDockSource, /if \(!mapTreeSearchActive\.value\) emit\('node-expand', data\)/);
     assert.match(leftDockSource, /if \(!mapTreeSearchActive\.value\) emit\('node-collapse', data\)/);
     assert.match(leftDockSource, /@node-click="handleTreeNodeClick"/);
+    assert.match(leftDockSource, /\.tree-node\s*\{[^}]*cursor:default/);
+    assert.match(leftDockSource, /\.el-tree-node__content\)[^}]*cursor:default/);
+    assert.doesNotMatch(leftDockSource, /\.tree-node[^{}]*\{[^}]*cursor:(?:pointer|grab|grabbing)/);
   });
 
   test('uses one shared browser for list and lazy gallery selection without replacing precise canvas picking', () => {

@@ -1,6 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import type { UiRuntimeSceneExport } from '../../../../contract/ui-designer.ts';
+import { normalizeUiRuntimeSceneGeometry } from '../../../../contract/ui-designer-geometry.ts';
+import { canonicalUiRuntimeSceneExport } from '../../../../contract/ui-designer-script.ts';
 import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import type { RpgMakerEngine } from '../rmmv/rpg-maker-engine.ts';
 import {
@@ -9,6 +12,7 @@ import {
 } from './isolated-project-preparation.ts';
 import { writeMapPreviewIframeAppShell } from './map-preview-iframe-harness.ts';
 import { getProjectFileForRead } from './staging-service.ts';
+import { validateUiRuntimeSceneExport } from './ui-designer-validation.ts';
 import {
   attestOwnedIsolatedProject,
   cleanupOwnedIsolatedProject,
@@ -40,8 +44,14 @@ export interface MapPreviewAppPreparation {
   screenHeight: number;
   tileSize: number;
   staging: IsolatedStagingSnapshot;
+  uiRuntime: MapPreviewUiRuntimePayload;
   /** Resource-root-relative staged deletions the protocol must 404. */
   deniedPaths: string[];
+}
+
+export interface MapPreviewUiRuntimePayload {
+  scenes: UiRuntimeSceneExport[];
+  globalData: unknown;
 }
 
 export interface MapPreviewAppPreparationDependencies {
@@ -107,6 +117,13 @@ export function prepareMapPreviewApp(
       readEffectiveText(workflowRoot, project, resourceRoot, getEffectiveFile, 'index.html'),
       readEffectiveText(workflowRoot, project, resourceRoot, getEffectiveFile, 'js/main.js'),
     ));
+    const uiRuntime = buildMapPreviewUiRuntimePayload(
+      workflowRoot,
+      project,
+      resourceRoot,
+      getEffectiveFile,
+      staging,
+    );
     // Warm map syncs target the app data directory; keep it resolvable even
     // before the first synced map lands.
     ownedWrite(() => fs.mkdirSync(path.join(appDirectory, 'data'), { recursive: true }));
@@ -122,6 +139,7 @@ export function prepareMapPreviewApp(
       screenHeight: manifest.screenHeight,
       tileSize: manifest.tileSize,
       staging,
+      uiRuntime,
       deniedPaths,
     };
   } catch (error) {
@@ -136,6 +154,116 @@ export function cleanupMapPreviewApp(preparation: MapPreviewAppPreparation): voi
     temporaryProject: preparation.appDirectory,
     ownership: preparation.ownership,
   });
+}
+
+function buildMapPreviewUiRuntimePayload(
+  workflowRoot: string,
+  project: string,
+  resourceRoot: string,
+  getEffectiveFile: typeof getProjectFileForRead,
+  staging: IsolatedStagingSnapshot,
+): MapPreviewUiRuntimePayload {
+  const sceneDirectoryRelative = 'data/ui-scenes';
+  const mapSceneFileName = effectiveMapUiSceneFileName(project, resourceRoot, staging, sceneDirectoryRelative);
+  const scenes = mapSceneFileName ? [mapSceneFileName].map((fileName) => {
+    const file = effectiveOptionalResourceFile(
+      workflowRoot,
+      project,
+      resourceRoot,
+      getEffectiveFile,
+      staging,
+      `${sceneDirectoryRelative}/${fileName}`,
+    );
+    if (!file) throw new MapPreviewAppPreparationError(`UI scene is missing: ${fileName}`);
+    let value: unknown;
+    try { value = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); }
+    catch (error) {
+      throw new MapPreviewAppPreparationError(`UI scene ${fileName} is not valid JSON: ${errorMessage(error)}`);
+    }
+    let scene: UiRuntimeSceneExport;
+    try {
+      scene = normalizeUiRuntimeSceneGeometry(canonicalUiRuntimeSceneExport(value));
+    } catch (error) {
+      throw new MapPreviewAppPreparationError(`UI scene ${fileName} could not be prepared: ${errorMessage(error)}`);
+    }
+    const validation = validateUiRuntimeSceneExport(scene);
+    if (!validation.valid) {
+      throw new MapPreviewAppPreparationError(
+        `UI scene ${fileName} is invalid: ${validation.errors.map((issue) => issue.message).join('; ')}`,
+      );
+    }
+    if (`${scene.meta.sceneName}.mzui` !== fileName) {
+      throw new MapPreviewAppPreparationError(`UI scene ${fileName} does not match its scene name ${scene.meta.sceneName}.`);
+    }
+    return scene;
+  }) : [];
+
+  let globalData: unknown = {};
+  if (scenes.length) {
+    const globalFile = effectiveOptionalResourceFile(
+      workflowRoot,
+      project,
+      resourceRoot,
+      getEffectiveFile,
+      staging,
+      'data/GlobalUI.json',
+    );
+    if (globalFile) {
+      try { globalData = JSON.parse(fs.readFileSync(globalFile, 'utf8').replace(/^\uFEFF/, '')); }
+      catch (error) {
+        throw new MapPreviewAppPreparationError(`Global UI data is not valid JSON: ${errorMessage(error)}`);
+      }
+      if ((!globalData || typeof globalData !== 'object') && !Array.isArray(globalData)) {
+        throw new MapPreviewAppPreparationError('Global UI data must be a JSON object or array.');
+      }
+    }
+  }
+  return { scenes, globalData };
+}
+
+function effectiveMapUiSceneFileName(
+  project: string,
+  resourceRoot: string,
+  staging: IsolatedStagingSnapshot,
+  sceneDirectoryRelative: string,
+): string | null {
+  const targetRelative = `${sceneDirectoryRelative}/Scene_Map.mzui`.toLowerCase();
+  for (const entry of staging.files) {
+    const rootRelative = resourceRootRelative(project, resourceRoot, entry.relativePath);
+    if (!rootRelative || rootRelative.toLowerCase() !== targetRelative) continue;
+    return entry.delete ? null : path.posix.basename(rootRelative);
+  }
+
+  const sourceDirectory = path.join(resourceRoot, ...sceneDirectoryRelative.split('/'));
+  if (!fs.existsSync(sourceDirectory)) return null;
+  const directoryStat = fs.lstatSync(sourceDirectory);
+  if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) {
+    throw new MapPreviewAppPreparationError('The UI scene directory is not a safe project directory.');
+  }
+  const entry = fs.readdirSync(sourceDirectory, { withFileTypes: true })
+    .find((candidate) => candidate.name.toLowerCase() === 'scene_map.mzui');
+  if (!entry) return null;
+  if (!entry.isFile() || entry.isSymbolicLink()) {
+    throw new MapPreviewAppPreparationError(`UI scene ${entry.name} is not a safe project file.`);
+  }
+  return entry.name;
+}
+
+function effectiveOptionalResourceFile(
+  workflowRoot: string,
+  project: string,
+  resourceRoot: string,
+  getEffectiveFile: typeof getProjectFileForRead,
+  staging: IsolatedStagingSnapshot,
+  rootRelative: string,
+): string | null {
+  const projectRelative = normalizeRelative(path.relative(project, path.join(resourceRoot, ...rootRelative.split('/'))));
+  const staged = staging.files.find((entry) => normalizeRelative(entry.relativePath).toLowerCase() === projectRelative.toLowerCase());
+  if (staged?.delete) return null;
+  const effective = getEffectiveFile(workflowRoot, project, projectRelative);
+  if (effective && isFile(effective)) return effective;
+  const source = path.join(resourceRoot, ...rootRelative.split('/'));
+  return isFile(source) ? source : null;
 }
 
 function readEffectiveText(
@@ -176,4 +304,8 @@ function normalizeRelative(value: string): string {
 
 function isFile(filePath: string): boolean {
   return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

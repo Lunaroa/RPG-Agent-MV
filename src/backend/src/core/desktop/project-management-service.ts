@@ -34,6 +34,7 @@ import {
   type RmmvDatabaseChange,
   validateEffectiveRmmvDatabaseStagingTransition,
 } from '../rmmv/database-changes.ts';
+import type { RmmvDatabaseSemanticIssue } from '../rmmv/database-validation.ts';
 import { getCommonEvent, updateCommonEvent } from './common-event-service.ts';
 import {
   projectManagedCreateDatabaseOnly,
@@ -218,15 +219,9 @@ function normalizeExtendedTilesetTransition(
 
   next.tilesetNames = nextNames;
   next.rpgAgentExtendedTilesetTypes = nextTypes;
-  const flags = Array.isArray(next.flags) ? next.flags.map((value) => Number(value) || 0) : [];
-  const requiredLength = Math.max(EXTENDED_TILESET_FIRST_TILE_ID, nextEnd);
-  if (flags.length < requiredLength) {
-    const previousLength = flags.length;
-    flags.length = requiredLength;
-    flags.fill(0, previousLength);
+  if (removesSheet && Array.isArray(next.flags) && next.flags.length > nextEnd) {
+    next.flags = next.flags.slice(0, nextEnd);
   }
-  if (removesSheet && flags.length > requiredLength) flags.length = requiredLength;
-  next.flags = flags;
 }
 
 export function validateExtendedTilesetResources(
@@ -603,7 +598,7 @@ function withEntryInspection(
     conflict: stagedFile.conflict,
     ...(stagedFile.operationId ? { operationId: stagedFile.operationId } : {}),
     diffs,
-    issues: (validation?.issues ?? []).map((issue) => ({
+    issues: inspectionIssuesForManagedEntry(request, validation?.issues ?? []).map((issue) => ({
       code: issue.code,
       severity: issue.severity,
       table: issue.source.table,
@@ -614,6 +609,22 @@ function withEntryInspection(
     limitations: [...(validation?.limitations ?? [])],
   };
   return { ...entry, inspection };
+}
+
+function inspectionIssuesForManagedEntry(
+  request: { kind: ProjectManagedEntry['kind']; group?: string; id: number },
+  issues: readonly RmmvDatabaseSemanticIssue[],
+): readonly RmmvDatabaseSemanticIssue[] {
+  if (request.kind === 'switch' || request.kind === 'variable') {
+    const key = request.kind === 'switch' ? 'switches' : 'variables';
+    const pathPrefix = `system.${key}[${validId(request.id)}]`;
+    return issues.filter((issue) => issue.source.table === 'system' && issue.source.path.startsWith(pathPrefix));
+  }
+
+  const schema = schemaForManagedEntry(request);
+  if (!schema.isArrayTable) return issues;
+  const id = validId(request.id);
+  return issues.filter((issue) => issue.source.table === schema.key && issue.source.id === id);
 }
 
 function emptyInspection(): ProjectManagedEntryInspection {

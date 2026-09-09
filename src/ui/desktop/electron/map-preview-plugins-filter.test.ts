@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   filterMapPreviewPluginsJs,
+  findSyntacticallyInvalidMapPreviewPlugins,
   isMapPreviewPluginsJsPath,
 } from './map-preview-plugins-filter.ts';
 
@@ -51,7 +52,59 @@ test('filter returns null when nothing changes', () => {
   assert.equal(filterMapPreviewPluginsJs(SAMPLE, ['MadeWithMv']), null);
 });
 
+test('disables MZUIRuntime disk auto-registration only in the preview copy', () => {
+  const source = `var $plugins = [
+{"name":"MZUIRuntime","status":true,"description":"UI runtime","parameters":{"SceneDirectory":"data/ui-scenes"}},
+{"name":"Other","status":true,"description":"Other plugin","parameters":{"AutoRegister":"true"}}
+];`;
+  const filtered = filterMapPreviewPluginsJs(source, []);
+  assert.ok(filtered);
+  const list = JSON.parse(filtered.slice(filtered.indexOf('['), filtered.lastIndexOf(']') + 1)) as Array<{
+    name: string;
+    status: boolean;
+    parameters: Record<string, string>;
+  }>;
+  assert.deepEqual(list[0]!.parameters, {
+    SceneDirectory: 'data/ui-scenes',
+    AutoRegister: 'false',
+  });
+  assert.equal(list[1]!.parameters.AutoRegister, 'true');
+  assert.match(source, /"SceneDirectory":"data\/ui-scenes"\}\}/);
+});
+
 test('filter refuses to touch unparseable sources', () => {
   assert.equal(filterMapPreviewPluginsJs('var $plugins = [oops];', ['X']), null);
   assert.equal(filterMapPreviewPluginsJs('no array here', ['X']), null);
+});
+
+test('finds enabled plugin scripts that cannot be parsed without executing valid plugins', () => {
+  const source = `var $plugins = [
+{"name":"Valid","status":true,"parameters":{}},
+{"name":"BinaryPlugin","status":true,"parameters":{}},
+{"name":"AlreadyDisabled","status":false,"parameters":{}},
+{"name":"Missing","status":true,"parameters":{}}
+  ];`;
+  delete (globalThis as { previewPluginExecuted?: boolean }).previewPluginExecuted;
+  const scripts: Record<string, string | null> = {
+    Valid: 'globalThis.previewPluginExecuted = true;',
+    BinaryPlugin: '\uFFFDGJ\u001f\uFFFD$',
+    AlreadyDisabled: '\uFFFD',
+    Missing: null,
+  };
+  const invalid = findSyntacticallyInvalidMapPreviewPlugins(source, (name) => scripts[name] ?? null);
+
+  assert.deepEqual(invalid, ['BinaryPlugin']);
+  assert.equal((globalThis as { previewPluginExecuted?: boolean }).previewPluginExecuted, undefined);
+  const filtered = filterMapPreviewPluginsJs(source, invalid);
+  assert.ok(filtered);
+  const list = JSON.parse(filtered.slice(filtered.indexOf('['), filtered.lastIndexOf(']') + 1)) as Array<{
+    name: string;
+    status: boolean;
+  }>;
+  assert.deepEqual(list.map((entry) => [entry.name, entry.status]), [
+    ['Valid', true],
+    ['BinaryPlugin', false],
+    ['AlreadyDisabled', false],
+    ['Missing', true],
+  ]);
 });

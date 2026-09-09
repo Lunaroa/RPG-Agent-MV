@@ -98,4 +98,15 @@ describe('DatabaseView single-document layout', () => {
       /watch\(\(\) => route\.query\.section[\s\S]*?if \(sectionForDbGroup\(selectedDbGroup\.value\) === normalized\) return;[\s\S]*?selectDbGroup\(dbGroupForSection\(normalized\), false\);/,
     );
   });
+
+  test('renders complete filtered lists and skips missing-map notifications', () => {
+    assert.match(source, /const visibleDbEntries = computed\(\(\) => activeDbGroup\.value\.named\)/);
+    assert.match(source, /const visibleSystemNamedEntries = computed\(\(\) => filteredSystemNamedEntries\.value\)/);
+    assert.doesNotMatch(source, /class="load-more"|GROUP_PAGE_SIZE|groupVisibleLimits/);
+    assert.match(
+      source,
+      /const isSkippedMapIssue = \(issue: ProjectOverviewReadIssue\) => issue\.scope === 'map' && issue\.code === 'missing-file'/,
+    );
+    assert.match(source, /const blockingIssues = issues\.filter\(\(issue\) => !isSkippedMapIssue\(issue\)\)/);
+  });
 });

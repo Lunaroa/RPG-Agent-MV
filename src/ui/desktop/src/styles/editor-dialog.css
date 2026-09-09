@@ -25,6 +25,80 @@
   animation: editor-dialog-in var(--app-dur) var(--app-ease);
 }
 
+.editor-dialog-resize-edge {
+  position: absolute;
+  z-index: 10;
+  background: transparent;
+  touch-action: none;
+  user-select: none;
+}
+
+.editor-dialog-resize-edge.n {
+  top: 0;
+  right: 12px;
+  left: 12px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.editor-dialog-resize-edge.e {
+  top: 12px;
+  right: 0;
+  bottom: 12px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.editor-dialog-resize-edge.s {
+  right: 12px;
+  bottom: 0;
+  left: 12px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.editor-dialog-resize-edge.w {
+  top: 12px;
+  bottom: 12px;
+  left: 0;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.editor-dialog-resize-edge.ne,
+.editor-dialog-resize-edge.sw {
+  width: 12px;
+  height: 12px;
+  cursor: nesw-resize;
+}
+
+.editor-dialog-resize-edge.nw,
+.editor-dialog-resize-edge.se {
+  width: 12px;
+  height: 12px;
+  cursor: nwse-resize;
+}
+
+.editor-dialog-resize-edge.ne,
+.editor-dialog-resize-edge.nw {
+  top: 0;
+}
+
+.editor-dialog-resize-edge.se,
+.editor-dialog-resize-edge.sw {
+  bottom: 0;
+}
+
+.editor-dialog-resize-edge.ne,
+.editor-dialog-resize-edge.se {
+  right: 0;
+}
+
+.editor-dialog-resize-edge.nw,
+.editor-dialog-resize-edge.sw {
+  left: 0;
+}
+
 .editor-modal-header,
 .editor-modal-footer {
   min-height: 38px;

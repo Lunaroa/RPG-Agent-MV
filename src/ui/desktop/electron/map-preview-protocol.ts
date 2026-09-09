@@ -10,6 +10,7 @@ import {
 } from './map-preview-protocol-policy.js';
 import {
   filterMapPreviewPluginsJs,
+  findSyntacticallyInvalidMapPreviewPlugins,
   isMapPreviewPluginsJsPath,
 } from './map-preview-plugins-filter.js';
 
@@ -83,9 +84,15 @@ export function registerMapPreviewProtocol(): void {
     }
 
     // Preview-only plugin toggle: rewrite the served plugins.js, never the file on disk.
-    if (entry.disabledPlugins.length && isMapPreviewPluginsJsPath(relative)) {
+    if (isMapPreviewPluginsJsPath(relative)) {
       try {
-        const filtered = filterMapPreviewPluginsJs(fs.readFileSync(target, 'utf8'), entry.disabledPlugins);
+        const source = fs.readFileSync(target, 'utf8');
+        const invalidPlugins = findSyntacticallyInvalidMapPreviewPlugins(source, (pluginName) => {
+          const pluginTarget = resolveMapPreviewResource(entry, mapPreviewPluginScriptPath(relative, pluginName));
+          if (!pluginTarget || !fs.existsSync(pluginTarget) || !fs.statSync(pluginTarget).isFile()) return null;
+          return fs.readFileSync(pluginTarget, 'utf8');
+        });
+        const filtered = filterMapPreviewPluginsJs(source, [...entry.disabledPlugins, ...invalidPlugins]);
         if (filtered !== null) {
           return mapPreviewTextResponse(request.method, filtered, 'text/javascript; charset=utf-8');
         }
@@ -113,6 +120,11 @@ export function registerMapPreviewProtocol(): void {
     }
   });
   registered = true;
+}
+
+function mapPreviewPluginScriptPath(pluginsJsPath: string, pluginName: string): string {
+  const normalized = pluginsJsPath.replace(/\\/g, '/').replace(/^\/+/, '');
+  return path.posix.join(path.posix.dirname(normalized), 'plugins', `${pluginName}.js`);
 }
 
 export function mapPreviewProtocolErrorResponse(

@@ -143,34 +143,6 @@ const previewEnabledForSelected = computed(() => {
 
 /** Per-plugin color overrides keyed by plugin name (also lives in .luna_rpg/config.json). */
 const pluginColors = ref<Record<string, string>>({});
-const colorPickerPlugin = ref<string | null>(null);
-
-function handleColorPickerOutside(event: PointerEvent): void {
-  const target = event.target as HTMLElement | null;
-  if (target?.closest?.('.plugin-color-swatch, .plugin-color-picker, .el-color-dropdown')) return;
-  colorPickerPlugin.value = null;
-}
-
-function handleColorPickerEscape(event: KeyboardEvent): void {
-  if (event.key !== 'Escape') return;
-  event.stopPropagation();
-  colorPickerPlugin.value = null;
-}
-
-watch(colorPickerPlugin, (name) => {
-  if (name) {
-    document.addEventListener('pointerdown', handleColorPickerOutside, true);
-    document.addEventListener('keydown', handleColorPickerEscape, true);
-  } else {
-    document.removeEventListener('pointerdown', handleColorPickerOutside, true);
-    document.removeEventListener('keydown', handleColorPickerEscape, true);
-  }
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', handleColorPickerOutside, true);
-  document.removeEventListener('keydown', handleColorPickerEscape, true);
-});
 
 async function loadPreviewDisabledPlugins(project: string): Promise<void> {
   const config = await projectConfigApi.get(project);
@@ -1468,37 +1440,17 @@ function resizeKeydown(event: KeyboardEvent): void {
               </span>
               <span class="plugin-main">
                 <span class="plugin-title-line">
-                  <el-popover
+                  <el-color-picker
                     v-if="plugin.name"
-                    placement="bottom"
-                    :width="220"
-                    trigger="click"
-                    :visible="colorPickerPlugin === plugin.name"
-                    @show="colorPickerPlugin = plugin.name"
-                    @hide="colorPickerPlugin = null"
-                  >
-                    <template #reference>
-                      <button
-                        type="button"
-                        class="plugin-color-swatch"
-                        :style="{ background: resolvePluginColor(plugin.name, pluginColors) }"
-                        :aria-label="t('eventcmd.pluginColor')"
-                        :title="t('eventcmd.pluginColor')"
-                        @click.stop="colorPickerPlugin = colorPickerPlugin === plugin.name ? null : plugin.name"
-                      />
-                    </template>
-                    <div class="plugin-color-picker" @click.stop>
-                      <div class="plugin-color-picker-title">{{ t('eventcmd.pluginColor') }}</div>
-                      <el-color-picker
-                        :model-value="pluginColors[plugin.name] || resolvePluginColor(plugin.name, pluginColors)"
-                        color-format="hex"
-                        @update:model-value="applyPluginColor(plugin.name, $event); colorPickerPlugin = null"
-                      />
-                      <button type="button" class="plugin-color-reset editor-btn" @click="applyPluginColor(plugin.name, null)">
-                        {{ t('eventcmd.clearPluginColor') }}
-                      </button>
-                    </div>
-                  </el-popover>
+                    class="plugin-color-swatch"
+                    size="small"
+                    :model-value="pluginColors[plugin.name] || resolvePluginColor(plugin.name, pluginColors)"
+                    color-format="hex"
+                    :aria-label="t('eventcmd.pluginColor')"
+                    :title="t('eventcmd.pluginColor')"
+                    @dblclick.stop
+                    @change="applyPluginColor(plugin.name, $event)"
+                  />
                   <PluginEngineTags :targets="plugin.header.target" />
                   <strong>{{ plugin.name || `#${plugin.index + 1}` }}</strong>
                 </span>
@@ -2059,26 +2011,16 @@ input:focus-visible {
 }
 .plugin-color-swatch {
   flex: 0 0 auto;
-  width: 12px;
-  height: 12px;
-  padding: 0;
-  border: 1px solid var(--el-border-color, rgba(0, 0, 0, 0.15));
+}
+.plugin-color-swatch :deep(.el-color-picker__trigger) {
+  padding: 1px;
   border-radius: 3px;
-  background-clip: padding-box;
-  cursor: pointer;
 }
-.plugin-color-picker {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
+.plugin-color-swatch :deep(.el-color-picker__color) {
+  border: 0;
 }
-.plugin-color-picker-title {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
-.plugin-color-reset {
-  font-size: 12px;
+.plugin-color-swatch :deep(.el-color-picker__color-inner) {
+  border-radius: 2px;
 }
 .plugin-main strong,
 .plugin-main small {

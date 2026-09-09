@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { MapPreviewRuntimeCommand, MapPreviewRuntimeEvent, MapPreviewSession } from '../../../../contract/types.ts';
+import type { UiRuntimeSceneExport } from '../../../../contract/ui-designer.ts';
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { MapPreviewIframeService } from './map-preview-iframe-service.ts';
@@ -131,6 +132,66 @@ test('keeps one isolated iframe runtime warm across suspend and resume', async (
     assert.equal(service.current().session?.status, 'stopped');
     assert.equal(roots.size, 0);
     assert.equal(fs.existsSync(isolatedRoot), false);
+  } finally {
+    service.shutdownSync();
+    closeDatabase();
+    fs.rmSync(workflowRoot, { recursive: true, force: true });
+  }
+});
+
+test('embeds UI runtime scenes without changing the project plugin configuration', async () => {
+  const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-ui-runtime-'));
+  const project = createMZProject(workflowRoot);
+  const pluginsPath = path.join(project, 'js', 'plugins.js');
+  const pluginsSource = `var $plugins = ${JSON.stringify([{
+    name: 'MZUIRuntime',
+    status: true,
+    description: 'UI runtime',
+    parameters: { AutoRegister: 'true' },
+  }])};`;
+  fs.writeFileSync(pluginsPath, pluginsSource, 'utf8');
+  fs.mkdirSync(path.join(project, 'data', 'ui-scenes'), { recursive: true });
+  fs.writeFileSync(
+    path.join(project, 'data', 'ui-scenes', 'Scene_Map.mzui'),
+    JSON.stringify(uiRuntimeScene()),
+    'utf8',
+  );
+  fs.writeFileSync(
+    path.join(project, 'data', 'ui-scenes', 'Scene_Unused.mzui'),
+    JSON.stringify({
+      version: '1.1.0',
+      runtimeVersion: 'unsupported',
+      meta: { sceneName: 'Scene_Unused', sceneBase: 'Scene_Base' },
+    }),
+    'utf8',
+  );
+  fs.writeFileSync(path.join(project, 'data', 'GlobalUI.json'), JSON.stringify({ menuList: ['Source'] }), 'utf8');
+  let isolatedRoot = '';
+  const service = new MapPreviewIframeService(workflowRoot, {
+    registerPreviewRoot(key, resourceRoot) {
+      isolatedRoot = resourceRoot;
+      return `rpg-agent-preview://${key}/index.html`;
+    },
+    unregisterPreviewRoot() {},
+    verifyFrameIsolation: () => true,
+  });
+
+  try {
+    await bootstrapDatabase(workflowRoot, { importLegacyJson: false });
+    writeStagedProjectJson(workflowRoot, project, 'data/ui-scenes/Scene_Map.mzui', {
+      ...uiRuntimeScene(),
+      meta: { ...uiRuntimeScene().meta, description: 'staged scene' },
+    });
+    writeStagedProjectJson(workflowRoot, project, 'data/GlobalUI.json', { menuList: ['Staged'] });
+    await service.start(project, 1);
+    const harness = fs.readFileSync(path.join(isolatedRoot, 'js', 'rpg-agent-preview-iframe.js'), 'utf8');
+    assert.match(harness, /"sceneName":"Scene_Map"/);
+    assert.match(harness, /"description":"staged scene"/);
+    assert.doesNotMatch(harness, /"sceneName":"Scene_Unused"/);
+    assert.match(harness, /"menuList":\["Staged"\]/);
+    assert.doesNotMatch(harness, /"menuList":\["Source"\]/);
+    assert.match(harness, /runtime\.registerScene\(sceneName, scene\.meta\.sceneBase, scene\)/);
+    assert.equal(fs.readFileSync(pluginsPath, 'utf8'), pluginsSource);
   } finally {
     service.shutdownSync();
     closeDatabase();
@@ -554,4 +615,24 @@ function createMZProject(workflowRoot: string): string {
   fs.writeFileSync(path.join(data, 'Map001.json'), JSON.stringify({ width: 20, height: 15, tilesetId: 1, events: [null], data: [] }), 'utf8');
   fs.writeFileSync(path.join(data, 'Map002.json'), JSON.stringify({ width: 15, height: 10, tilesetId: 1, events: [null], data: [] }), 'utf8');
   return project;
+}
+
+function uiRuntimeScene(): UiRuntimeSceneExport {
+  return {
+    version: '1.1.0',
+    runtimeVersion: '>=1.1.0',
+    meta: {
+      sceneName: 'Scene_Map',
+      sceneBase: 'Scene_Map',
+      canvasWidth: 816,
+      canvasHeight: 624,
+      author: '',
+      description: '',
+    },
+    transitions: { enter: { type: 'none', duration: 0 }, exit: { type: 'none', duration: 0 } },
+    globalFilter: { blur: 0, glow: 0, preset: '' },
+    nodes: [],
+    zOrder: [],
+    sceneScript: { version: '1.1.0', source: '' },
+  };
 }

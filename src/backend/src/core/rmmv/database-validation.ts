@@ -1,6 +1,7 @@
 import { Script } from "node:vm";
 import { isDeepStrictEqual } from "node:util";
 
+import { STOCK_TILESET_SHEET_COUNT } from "../../../../contract/extended-tileset.ts";
 import {
   getRmmvDatabaseSchemaByKey,
   listRmmvDatabaseSchemas,
@@ -663,7 +664,13 @@ class SnapshotValidator {
   private validateTilesets(): void {
     this.forEachRecord("tilesets", (tileset, id) => {
       this.fixedRange("DB_TILESET_MODE", "tilesets", id, `tilesets[${id}].mode`, tileset.mode, 0, 1);
-      this.fixedArrayLength("tilesets", id, `tilesets[${id}].tilesetNames`, tileset.tilesetNames, 9);
+      this.minimumArrayLength(
+        "tilesets",
+        id,
+        `tilesets[${id}].tilesetNames`,
+        tileset.tilesetNames,
+        STOCK_TILESET_SHEET_COUNT,
+      );
       const flags = asArray(tileset.flags);
       flags.forEach((flag, index) => {
         this.fixedRange("DB_TILESET_FLAG", "tilesets", id, `tilesets[${id}].flags[${index}]`, flag, 0, 0xffff);
@@ -1585,6 +1592,23 @@ class SnapshotValidator {
       table,
       path,
       `Array must contain exactly ${expectedLength} values; received ${value.length}.`,
+      id,
+    );
+  }
+
+  private minimumArrayLength(
+    table: RmmvDatabaseIssueTable,
+    id: number | undefined,
+    path: string,
+    value: unknown,
+    minimumLength: number,
+  ): void {
+    if (!Array.isArray(value) || value.length >= minimumLength) return;
+    this.add(
+      "DB_MINIMUM_ARRAY_LENGTH",
+      table,
+      path,
+      `Array must contain at least ${minimumLength} values; received ${value.length}.`,
       id,
     );
   }

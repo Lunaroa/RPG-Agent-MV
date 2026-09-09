@@ -7,7 +7,7 @@ import {
   ensureTerminator,
   type MvCommand,
 } from '../../composables/useEventEditor';
-import MvCommandListEditor from './MvCommandListEditor.vue';
+import EventCommandListEditor from '../editor/EventCommandListEditor.vue';
 
 interface CommonEventDraft {
   id: number;
@@ -92,10 +92,11 @@ function updateList(list: MvCommand[]) {
 
     <section class="editor-section commands">
       <div class="section-title"><strong>{{ t('commonEvent.contents') }}</strong></div>
-      <MvCommandListEditor
+      <EventCommandListEditor
         :model-value="draft.list"
         :catalog="catalog"
         :load-image="loadImage"
+        :allow-this-event="false"
         :empty-text="t('commonEvent.emptyHint')"
         @update:model-value="updateList"
         @catalog-changed="emit('catalog-changed')"

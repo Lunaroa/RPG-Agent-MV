@@ -256,14 +256,14 @@ describe('editor semantic controls', () => {
     assert.match(editorViewSource, /:selected-map-id="requestedMapId \?\? selectedMapId"/);
   });
 
-  test('matches MV event-layer and grid semantics across editor modes', () => {
+  test('fades the event layer without changing selected-event geometry across editor modes', () => {
     assert.match(editorViewSource, /const showGrid = ref\(false\)/);
     assert.doesNotMatch(editorViewSource, /showEvents/);
     assert.doesNotMatch(mapCanvasEditorSource, /showEvents/);
     assert.match(mapCanvasEditorSource, /drawMapContent\(context, map,/);
     assert.match(mapCanvasEditorSource, /eventOpacity: eventMode \? 1 : MAP_MODE_EVENT_OPACITY/);
     assert.match(mapCanvasEditorSource, /showGrid: eventMode \|\| options\.showGrid\.value/);
-    assert.match(mapCanvasEditorSource, /selectedEventId: eventMode \? options\.selectedEventId\.value : null/);
+    assert.match(mapCanvasEditorSource, /selectedEventId: options\.selectedEventId\.value/);
     assert.match(mapCanvasEditorSource, /hoveredEventId: eventMode \? options\.hoveredEventId\?\.value : null/);
   });
 

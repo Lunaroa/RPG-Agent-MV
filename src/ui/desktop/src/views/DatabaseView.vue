@@ -1785,6 +1785,9 @@ function detailTitle(): string {
   overflow: auto;
   padding: 8px;
 }
+/* The classic MV animation editor uses a fit-to-screen layout: let it fill the
+   pane height (its own container query handles the wide/narrow modes). */
+.pm-detail-body:has(> .db-editor--animation-classic) { display: flex; flex-direction: column; }
 .pm-detail>footer {
   flex: 0 0 auto;
   display: flex;

@@ -161,6 +161,7 @@ const battlerPreviewCanvas = ref<HTMLCanvasElement | null>(null);
 const enemyBattlerPreviewCanvas = ref<HTMLCanvasElement | null>(null);
 const imagePicker = ref<InstanceType<typeof ImageAssetPickerDialog> | null>(null);
 const selectedTroopMemberIndex = ref(0);
+const expandedTimingIndex = ref<number | null>(null);
 const enemyActionErrors = reactive<Record<number, string>>({});
 const troopEditorError = ref('');
 const troopPageClipboard = ref<DbRecord | null>(null);
@@ -1498,6 +1499,21 @@ function animationTimings(path: string) {
   return normalizeAnimationTimings(readPath(path));
 }
 
+// Timing rows render as one-line summaries; only the clicked row expands into
+// the full editor grid. Switching entries collapses whatever was open.
+watch(() => [props.group, Number(record.value.id) || 0], () => {
+  expandedTimingIndex.value = null;
+});
+
+function toggleTimingExpanded(index: number): void {
+  expandedTimingIndex.value = expandedTimingIndex.value === index ? null : index;
+}
+
+function animationTimingFlashLabel(scope: number): string {
+  const option = localizedOptions(MV_ANIMATION_FLASH_SCOPES).find((entry) => Number(entry.value) === scope);
+  return option?.label || String(scope);
+}
+
 function addAnimationTiming(path: string): void {
   writePath(path, appendAnimationTiming(readPath(path)));
 }
@@ -2512,7 +2528,33 @@ function updateSound(index: number, key: string, value: unknown): void {
               <button type="button" @click="addAnimationTiming(field.path)">{{ t('db.addTiming') }}</button>
             </div>
             <div v-if="!animationTimings(field.path).length" class="empty-note">{{ t('db.noTimings') }}</div>
-            <div v-for="(timing, index) in animationTimings(field.path)" :key="`timing-${index}`" class="complex-row timing-row">
+            <template v-else>
+              <div class="timing-head" aria-hidden="true">
+                <span>{{ t('db.frame') }}</span>
+                <span>SE</span>
+                <span>{{ t('moveRoute.volume') }}/{{ t('moveRoute.pitch') }}</span>
+                <span>Flash</span>
+                <span>{{ t('db.duration') }}</span>
+                <span />
+              </div>
+              <div v-for="(timing, index) in animationTimings(field.path)" :key="`timing-${index}`" class="timing-item">
+                <div
+                  class="timing-summary"
+                  :class="{ expanded: expandedTimingIndex === index }"
+                  role="button"
+                  tabindex="0"
+                  @click="toggleTimingExpanded(index)"
+                  @keydown.enter.prevent="toggleTimingExpanded(index)"
+                  @keydown.space.prevent="toggleTimingExpanded(index)"
+                >
+                  <span class="ts-frame">{{ timing.frame }}</span>
+                  <span class="ts-se">{{ timing.se.name || '—' }}</span>
+                  <span class="ts-vp">{{ timing.se.volume }} / {{ timing.se.pitch }}</span>
+                  <span class="ts-flash" :class="{ 'ts-flash-active': timing.flashScope !== 0 }">{{ animationTimingFlashLabel(timing.flashScope) }}</span>
+                  <span class="ts-duration">{{ timing.flashDuration }}</span>
+                  <button type="button" class="danger ts-delete" @click.stop="removeAnimationTiming(field.path, index)">{{ t('cmdList.delete') }}</button>
+                </div>
+                <div v-if="expandedTimingIndex === index" class="complex-row timing-row timing-row--expanded">
               <label><span>{{ t('db.frame') }}</span><input type="number" min="0" :max="Math.max(0, animationFrameCount('frames') - 1)" :value="timing.frame" @input="updateAnimationTiming(field.path, index, 'frame', Number(($event.target as HTMLInputElement).value))" /></label>
               <label>
                 <span>SE</span>
@@ -2534,8 +2576,9 @@ function updateSound(index: number, key: string, value: unknown): void {
                 <input type="number" min="0" max="255" :value="timing.flashColor[colorIndex]" @input="updateAnimationTimingFlash(field.path, index, colorIndex, Number(($event.target as HTMLInputElement).value))" />
               </label>
               <label><span>{{ t('db.duration') }}</span><input type="number" min="1" max="200" :value="timing.flashDuration" @input="updateAnimationTiming(field.path, index, 'flashDuration', Number(($event.target as HTMLInputElement).value))" /></label>
-              <button type="button" class="danger" @click="removeAnimationTiming(field.path, index)">{{ t('cmdList.delete') }}</button>
-            </div>
+                </div>
+              </div>
+            </template>
             </section>
 
           <section v-else-if="field.path === 'rotation' && isMZParticleAnimation" class="field full complex-editor particle-rotation-editor">
@@ -3084,10 +3127,17 @@ function updateSound(index: number, key: string, value: unknown): void {
    column, wide preview column with the timing tables underneath. */
 .rm-columns.rm-columns-particle { grid-template-columns: minmax(300px, 1fr) minmax(0, 2fr); }
 /* Classic MV frame animation tab: left fields/timings, growing cell canvas in
-   the center, playback preview pinned right — everything fits without paging. */
-.rm-columns.rm-columns-animation-classic { grid-template-columns: minmax(230px, 280px) minmax(0, 1fr) minmax(230px, 280px); }
+   the center, playback preview pinned right — everything fits without paging.
+   The fill rules must live outside the @container block: .db-editor is itself
+   the query container, and container queries never style the container. */
+.rm-columns.rm-columns-animation-classic { grid-template-columns: minmax(280px, 340px) minmax(0, 1fr) minmax(240px, 300px); }
+.db-editor--animation-classic { flex: 1 1 auto; min-height: 0; grid-template-rows: minmax(0, 1fr); }
+@container (max-width: 899px) {
+  /* Stacked narrow fallback: the fixed-height root would clip the stacked
+     columns, so the section scrolls internally instead. */
+  .db-editor--animation-classic .editor-section { min-height: 0; overflow-y: auto; }
+}
 @container (min-width: 900px) {
-  .db-editor--animation-classic { height: 100%; grid-template-rows: minmax(0, 1fr); }
   .db-editor--animation-classic .editor-section { min-height: 0; display: flex; flex-direction: column; }
   .db-editor--animation-classic .rm-columns-animation-classic { flex: 1; min-height: 0; align-items: stretch; }
   .db-editor--animation-classic .rm-column { min-height: 0; }
@@ -3096,14 +3146,15 @@ function updateSound(index: number, key: string, value: unknown): void {
   .db-editor--animation-classic .rm-column-canvas .rm-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .db-editor--animation-classic .rm-column-canvas .rm-field-row { flex: 1; min-height: 0; align-items: stretch; }
   .db-editor--animation-classic .rm-column-canvas .rm-field-row > .field { display: flex; flex-direction: column; min-height: 0; }
-  .db-editor--animation-classic .rm-column-canvas :deep(.animation-editor) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  .db-editor--animation-classic .rm-column-canvas :deep(.cell-toolbar) { order: 1; flex: 0 0 auto; }
-  .db-editor--animation-classic .rm-column-canvas :deep(.frame-toolbar) { order: 3; flex: 0 0 auto; }
-  .db-editor--animation-classic .rm-column-canvas :deep(.canvas-workspace) { order: 2; flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr) 190px; align-items: stretch; }
-  .db-editor--animation-classic .rm-column-canvas :deep(.canvas-column) { min-height: 0; display: flex; align-items: center; justify-content: center; }
-  .db-editor--animation-classic .rm-column-canvas :deep(.canvas-column > canvas) { width: auto; height: auto; max-width: 100%; max-height: 100%; }
-  .db-editor--animation-classic .rm-column-canvas :deep(.cell-controls) { min-height: 0; overflow-y: auto; }
-  .db-editor--animation-classic .rm-column-canvas :deep(.plugin-note) { order: 4; flex: 0 0 auto; }
+  /* The canvas editor itself stacks toolbar / canvas / property bar / frame
+     strip; here it just gets the space the column chain grants it. */
+  .db-editor--animation-classic .rm-column-canvas :deep(.animation-editor) { flex: 1; min-height: 0; }
+  /* The playback preview fills the whole right column instead of capping its
+     canvas at dialog size (the cap stays for the shared dialog usage). */
+  .db-editor--animation-classic .rm-column-side { align-content: stretch; }
+  .db-editor--animation-classic .rm-column-side .animation-preview-panel { height: 100%; box-sizing: border-box; display: flex; flex-direction: column; }
+  .db-editor--animation-classic .rm-column-side :deep(.animation-frame-preview) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .db-editor--animation-classic .rm-column-side :deep(.preview-canvas) { flex: 1; min-height: 0; max-height: none; height: 100%; }
 }
 .rm-column { display: grid; gap: 4px; min-width: 0; align-content: start; }
 .rm-field-row { display: flex; gap: 4px; align-items: start; }
@@ -3392,9 +3443,33 @@ textarea { resize: vertical; line-height: 1.45; }
   font-weight: 700;
 }
 .animation-cell-row { grid-template-columns: repeat(8,minmax(64px,1fr)) auto; }
-.timing-row { grid-template-columns: 70px minmax(0,1.3fr) repeat(3,76px) 100px repeat(4,62px) 70px auto; }
-/* In the classic animation fit-layout the timing table sits on the narrow left
-   column; wrap its twelve controls into compact four-column rows. */
+.timing-row { grid-template-columns: 70px minmax(0,1.3fr) repeat(3,76px) 100px repeat(4,62px) 70px; }
+/* Classic animation timing table: each timing collapses to a one-line summary
+   (frame / SE / volume·pitch / flash / duration / delete); clicking the row
+   expands the full editor grid underneath. */
+.timing-head,
+.timing-summary { display: grid; grid-template-columns: 30px minmax(0,1.2fr) minmax(0,.9fr) minmax(0,.7fr) 34px auto; gap: 4px; align-items: center; }
+.timing-head { padding: 0 6px 2px; font-size: 10px; color: var(--console-text-muted,#9a8e7e); }
+.timing-item { margin-bottom: 4px; }
+.timing-summary {
+  padding: 3px 6px;
+  border: 1px solid var(--console-border,#3c424a);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 11px;
+  min-width: 0;
+}
+.timing-summary:hover { border-color: var(--el-color-primary); }
+.timing-summary.expanded {
+  border-color: var(--el-color-primary);
+  background: color-mix(in srgb, var(--el-color-primary) 8%, transparent);
+}
+.timing-summary > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.timing-summary .ts-flash-active { color: var(--el-color-primary); font-weight: 600; }
+.timing-summary .ts-delete { padding: 1px 7px; font-size: 10px; }
+.timing-row--expanded { margin-top: 4px; }
+/* In the classic animation fit-layout the expanded timing editor sits on the
+   narrow left column; wrap its eleven controls into compact four-column rows. */
 .db-editor--animation-classic .rm-column-main .timing-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .particle-rotation-row { grid-template-columns: repeat(3, minmax(90px, 1fr)); }
 .particle-flash-row { grid-template-columns: repeat(2, minmax(0, .9fr)) repeat(4, minmax(0, .7fr)) auto; }

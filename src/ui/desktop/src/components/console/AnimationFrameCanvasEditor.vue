@@ -407,24 +407,6 @@ function clamp(value: number, minimum: number, maximum: number): number {
 
 <template>
   <div class="animation-editor">
-    <div class="frame-toolbar">
-      <div class="frame-strip" :aria-label="t('db.animationFrames')">
-        <button
-          v-for="(_frame, index) in frames"
-          :key="`frame-${index}`"
-          type="button"
-          :class="{ active: selectedFrameIndex === index }"
-          @click="chooseFrame(index)"
-        >
-          {{ index + 1 }}
-        </button>
-      </div>
-      <span>{{ frames.length }} / 200</span>
-      <button type="button" :disabled="frames.length >= 200" @click="addFrame">{{ t('db.addFrame') }}</button>
-      <button type="button" :disabled="!frames.length || frames.length >= 200" @click="duplicateFrame">{{ t('db.duplicateFrame') }}</button>
-      <button type="button" class="danger" :disabled="!frames.length" @click="deleteFrame">{{ t('db.deleteFrame') }}</button>
-    </div>
-
     <div v-if="!frames.length" class="empty-note">{{ t('db.noAnimFrames') }}</div>
     <template v-else>
       <div class="cell-toolbar">
@@ -444,88 +426,154 @@ function clamp(value: number, minimum: number, maximum: number): number {
         <button type="button" class="danger" :disabled="!selectedCell" @click="deleteCell">{{ t('cmdList.delete') }}</button>
       </div>
 
-      <div class="canvas-workspace">
-        <div class="canvas-column">
-          <canvas
-            ref="canvas"
-            :width="width"
-            :height="height"
-            :style="{ aspectRatio: `${width} / ${height}` }"
-            :aria-label="t('db.animationCanvas')"
-            @pointerdown="startDrag"
-            @pointermove="previewDrag"
-            @pointerup="finishDrag"
-            @pointercancel="cancelDrag"
-          />
-          <div v-if="errors.length" class="animation-errors" role="alert">
-            <span v-for="message in errors" :key="message">{{ message }}</span>
-          </div>
-        </div>
-
-        <aside v-if="selectedCell" class="cell-controls">
-          <label>
-            <span>{{ fieldLabel(0) }}</span>
-            <input type="number" min="-1" max="199" :value="selectedCell[0]" @input="updateCell(0, ($event.target as HTMLInputElement).value)" />
-          </label>
-          <details class="pattern-palette">
-            <summary>{{ t('db.chooseAnimationPattern') }}</summary>
-            <div class="palette-scroll">
-              <canvas
-                ref="paletteCanvas"
-                :width="PALETTE_COLUMNS * PALETTE_CELL"
-                :height="PALETTE_ROWS_PER_SHEET * 2 * PALETTE_CELL"
-                @click="choosePattern"
-              />
-            </div>
-          </details>
-          <div class="control-grid">
-            <label><span>{{ fieldLabel(1) }}</span><input type="number" min="-408" max="408" :value="selectedCell[1]" @input="updateCell(1, ($event.target as HTMLInputElement).value)" /></label>
-            <label><span>{{ fieldLabel(2) }}</span><input type="number" min="-312" max="312" :value="selectedCell[2]" @input="updateCell(2, ($event.target as HTMLInputElement).value)" /></label>
-            <label><span>{{ fieldLabel(3) }} %</span><input type="number" min="20" max="800" :value="selectedCell[3]" @input="updateCell(3, ($event.target as HTMLInputElement).value)" /></label>
-            <label><span>{{ fieldLabel(4) }} °</span><input type="number" min="-360" max="360" :value="selectedCell[4]" @input="updateCell(4, ($event.target as HTMLInputElement).value)" /></label>
-            <label><span>{{ fieldLabel(6) }}</span><input type="number" min="0" max="255" :value="selectedCell[6]" @input="updateCell(6, ($event.target as HTMLInputElement).value)" /></label>
-            <label>
-              <span>{{ fieldLabel(7) }}</span>
-              <select :value="selectedCell[7]" @change="updateCell(7, ($event.target as HTMLSelectElement).value)">
-                <option v-for="option in blendModes" :key="option.value" :value="option.value">{{ option.label }}</option>
-              </select>
-            </label>
-          </div>
-          <label class="mirror"><input type="checkbox" :checked="selectedCell[5] === 1" @change="toggleMirror" /> {{ fieldLabel(5) }}</label>
-          <small>{{ t('db.animationDragHint') }}</small>
-        </aside>
+      <div class="canvas-column">
+        <canvas
+          ref="canvas"
+          :width="width"
+          :height="height"
+          :style="{ aspectRatio: `${width} / ${height}` }"
+          :aria-label="t('db.animationCanvas')"
+          @pointerdown="startDrag"
+          @pointermove="previewDrag"
+          @pointerup="finishDrag"
+          @pointercancel="cancelDrag"
+        />
       </div>
+      <div v-if="errors.length" class="animation-errors" role="alert">
+        <span v-for="message in errors" :key="message">{{ message }}</span>
+      </div>
+
+      <aside v-if="selectedCell" class="cell-controls">
+        <label>
+          <span>{{ fieldLabel(0) }}</span>
+          <input type="number" min="-1" max="199" :value="selectedCell[0]" @input="updateCell(0, ($event.target as HTMLInputElement).value)" />
+        </label>
+        <details class="pattern-palette">
+          <summary>{{ t('db.chooseAnimationPattern') }}</summary>
+          <div class="palette-scroll">
+            <canvas
+              ref="paletteCanvas"
+              :width="PALETTE_COLUMNS * PALETTE_CELL"
+              :height="PALETTE_ROWS_PER_SHEET * 2 * PALETTE_CELL"
+              @click="choosePattern"
+            />
+          </div>
+        </details>
+        <label><span>{{ fieldLabel(1) }}</span><input type="number" min="-408" max="408" :value="selectedCell[1]" @input="updateCell(1, ($event.target as HTMLInputElement).value)" /></label>
+        <label><span>{{ fieldLabel(2) }}</span><input type="number" min="-312" max="312" :value="selectedCell[2]" @input="updateCell(2, ($event.target as HTMLInputElement).value)" /></label>
+        <label><span>{{ fieldLabel(3) }} %</span><input type="number" min="20" max="800" :value="selectedCell[3]" @input="updateCell(3, ($event.target as HTMLInputElement).value)" /></label>
+        <label><span>{{ fieldLabel(4) }} °</span><input type="number" min="-360" max="360" :value="selectedCell[4]" @input="updateCell(4, ($event.target as HTMLInputElement).value)" /></label>
+        <label><span>{{ fieldLabel(6) }}</span><input type="number" min="0" max="255" :value="selectedCell[6]" @input="updateCell(6, ($event.target as HTMLInputElement).value)" /></label>
+        <label>
+          <span>{{ fieldLabel(7) }}</span>
+          <select :value="selectedCell[7]" @change="updateCell(7, ($event.target as HTMLSelectElement).value)">
+            <option v-for="option in blendModes" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
+        </label>
+        <label class="mirror"><input type="checkbox" :checked="selectedCell[5] === 1" @change="toggleMirror" /> {{ fieldLabel(5) }}</label>
+        <small class="cell-hint">{{ t('db.animationDragHint') }}</small>
+      </aside>
     </template>
+
+    <div class="frame-toolbar">
+      <div class="frame-strip" :aria-label="t('db.animationFrames')">
+        <button
+          v-for="(_frame, index) in frames"
+          :key="`frame-${index}`"
+          type="button"
+          :class="{ active: selectedFrameIndex === index }"
+          @click="chooseFrame(index)"
+        >
+          {{ index + 1 }}
+        </button>
+      </div>
+      <span>{{ frames.length }} / 200</span>
+      <button type="button" :disabled="frames.length >= 200" @click="addFrame">{{ t('db.addFrame') }}</button>
+      <button type="button" :disabled="!frames.length || frames.length >= 200" @click="duplicateFrame">{{ t('db.duplicateFrame') }}</button>
+      <button type="button" class="danger" :disabled="!frames.length" @click="deleteFrame">{{ t('db.deleteFrame') }}</button>
+    </div>
 
     <small v-if="hasPluginCellData" class="plugin-note">{{ t('db.pluginAnimationCellReadonly') }}</small>
   </div>
 </template>
 
 <style scoped>
-.animation-editor { display: grid; gap: 8px; min-width: 0; }
-.frame-toolbar, .cell-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.animation-editor { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
+.frame-toolbar, .cell-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; flex: 0 0 auto; }
 .frame-toolbar > span, .cell-toolbar > span { color: var(--el-text-color-secondary); font-size: 10px; white-space: nowrap; }
 .frame-strip, .cell-strip { display: flex; flex: 1 0 100%; gap: 3px; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
 .frame-strip button { min-width: 34px; padding: 4px 6px; }
 .cell-strip button { display: grid; min-width: 42px; padding: 3px 5px; line-height: 1.1; }
 .cell-strip small { color: var(--el-text-color-secondary); font-size: 9px; }
 .frame-strip button.active, .cell-strip button.active { color: var(--el-color-primary); border-color: var(--el-color-primary); background: color-mix(in srgb, var(--el-color-primary) 12%, transparent); }
-.canvas-workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; align-items: start; }
-.canvas-column { min-width: 0; }
-.canvas-column > canvas { display: block; width: 100%; border: 1px solid var(--console-border, #3c424a); border-radius: 5px; cursor: move; image-rendering: auto; }
-.cell-controls { display: grid; gap: 7px; }
-.cell-controls label { display: grid; gap: 3px; }
+.frame-toolbar { order: 10; }
+.plugin-note { order: 11; }
+/* Canvas fills whatever space the toolbars and cell property bar leave over,
+   staying centered and aspect-locked instead of drifting with the content. */
+.canvas-column { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; }
+.canvas-column > canvas {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  border: 1px solid var(--console-border, #3c424a);
+  border-radius: 5px;
+  cursor: move;
+  image-rendering: auto;
+}
+/* Missing-sheet reports sit in one banner directly under the canvas. */
+.animation-errors {
+  display: flex; flex-wrap: wrap; gap: 4px 12px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--el-color-danger) 35%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--el-color-danger) 8%, transparent);
+  color: var(--el-color-danger);
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+/* Cell properties form a fixed bar under the canvas: one row of fields plus a
+   second row with the mirror toggle and drag hint. */
+.cell-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  gap: 6px 8px;
+  align-items: end;
+  flex: 0 0 auto;
+  border-top: 1px solid var(--console-border, #3c424a);
+  padding-top: 7px;
+}
+.cell-controls label { display: grid; gap: 3px; min-width: 0; }
 .cell-controls label > span { color: var(--el-text-color-secondary); font-size: 10px; }
 .cell-controls input, .cell-controls select { width: 100%; min-width: 0; }
-.control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.cell-controls .mirror { display: flex; align-items: center; gap: 6px; color: var(--el-text-color-secondary); font-size: 11px; }
+.cell-controls .mirror { display: flex; align-items: center; gap: 6px; color: var(--el-text-color-secondary); font-size: 11px; padding-bottom: 4px; }
 .cell-controls .mirror input { width: auto; }
-.cell-controls > small { color: var(--el-text-color-secondary); font-size: 10px; }
-.pattern-palette { border-top: 1px solid var(--console-border, #3c424a); border-bottom: 1px solid var(--console-border, #3c424a); padding: 6px 0; }
-.pattern-palette summary { color: var(--el-text-color-secondary); cursor: pointer; font-size: 11px; }
-.palette-scroll { max-height: 290px; margin-top: 6px; overflow: auto; background: #171a1f; }
+.cell-hint { grid-column: 2 / -1; color: var(--el-text-color-secondary); font-size: 10px; align-self: center; }
+.pattern-palette { position: relative; min-width: 0; padding-bottom: 4px; }
+.pattern-palette summary {
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+  border: 1px solid var(--console-border, #3c424a);
+  border-radius: 4px;
+  padding: 5px 7px;
+}
+.pattern-palette[open] summary { border-color: var(--el-color-primary); color: var(--el-color-primary); }
+.palette-scroll {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  z-index: 5;
+  width: 232px;
+  max-height: 290px;
+  overflow: auto;
+  background: #171a1f;
+  border: 1px solid var(--console-border, #3c424a);
+  border-radius: 5px;
+}
 .palette-scroll canvas { display: block; width: 100%; height: auto; cursor: crosshair; image-rendering: auto; }
-.animation-errors { display: grid; gap: 2px; padding: 5px 7px; color: var(--el-color-danger); font-size: 10px; }
-.plugin-note { padding: 5px 7px; border: 1px dashed var(--console-border, #3c424a); border-radius: 4px; color: var(--el-text-color-secondary); font-size: 10px; }
+.plugin-note { padding: 5px 7px; border: 1px dashed var(--console-border, #3c424a); border-radius: 4px; color: var(--el-text-color-secondary); font-size: 10px; flex: 0 0 auto; }
 button.danger { color: var(--el-color-danger); }
 </style>

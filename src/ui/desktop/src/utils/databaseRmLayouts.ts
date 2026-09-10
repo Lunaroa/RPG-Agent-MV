@@ -8,7 +8,7 @@ import type { MessageKey } from '../i18n/messages';
 export interface RmPanelLayout {
   /** i18n key for the group box title; '' lets a complex field keep its own title. */
   titleKey: MessageKey | '';
-  column: 'main' | 'side';
+  column: 'main' | 'side' | 'canvas';
   rows: string[][];
 }
 
@@ -83,19 +83,15 @@ export const DATABASE_RM_LAYOUTS: Partial<Record<string, RmPanelLayout[]>> = {
     { titleKey: '', column: 'side', rows: [['traits']] },
     { titleKey: '', column: 'side', rows: [['note']] },
   ],
+  // Enemies mirror the stock RM tab: battler image + rewards pinned to a narrow
+  // left column, name/params/traits/drops in the middle, actions + note right.
   Enemies: [
-    {
-      titleKey: 'db.panelBasic',
-      column: 'main',
-      rows: [
-        ['name'],
-        ['battlerName', 'params'],
-      ],
-    },
-    { titleKey: 'db.panelRewards', column: 'main', rows: [['exp', 'gold']] },
+    { titleKey: '', column: 'canvas', rows: [['battlerName'], ['battlerHue']] },
+    { titleKey: 'db.panelRewards', column: 'canvas', rows: [['exp', 'gold']] },
+    { titleKey: 'db.panelBasic', column: 'main', rows: [['name'], ['params']] },
+    { titleKey: '', column: 'main', rows: [['traits']] },
     { titleKey: '', column: 'main', rows: [['dropItems']] },
-    { titleKey: '', column: 'main', rows: [['actions']] },
-    { titleKey: '', column: 'side', rows: [['traits']] },
+    { titleKey: '', column: 'side', rows: [['actions']] },
     { titleKey: '', column: 'side', rows: [['note']] },
   ],
   States: [
@@ -185,6 +181,9 @@ export const ANIMATION_PARTICLE_RM_LAYOUT: RmPanelLayout[] = [
   { titleKey: '', column: 'side', rows: [['soundTimings', 'flashTimings']] },
 ];
 
+// MV classic frame animations use a three-region fit-to-screen layout: basic
+// settings + timing table on the left, the cell canvas in the growing center
+// column, and the playback preview pinned to the right column.
 export const ANIMATION_CLASSIC_RM_LAYOUT: RmPanelLayout[] = [
   {
     titleKey: 'db.panelBasic',
@@ -196,8 +195,8 @@ export const ANIMATION_CLASSIC_RM_LAYOUT: RmPanelLayout[] = [
       ['position'],
     ],
   },
-  { titleKey: '', column: 'main', rows: [['frames']] },
-  { titleKey: '', column: 'side', rows: [['timings']] },
+  { titleKey: '', column: 'main', rows: [['timings']] },
+  { titleKey: '', column: 'canvas', rows: [['frames']] },
 ];
 
 /** Fields never routed to the leftover panel: the id is already shown in the detail header. */

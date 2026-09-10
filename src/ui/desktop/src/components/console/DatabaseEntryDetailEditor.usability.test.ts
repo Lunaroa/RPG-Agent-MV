@@ -42,7 +42,9 @@ describe('database entry detail usability', () => {
     assert.match(source, /findEnemyBattlerAsset\(imageAssets\(enemyImageAsset\.value\), battlerName\)/);
     assert.match(source, /enemyBattlerPreviewError/);
     assert.match(source, /rm-columns-enemy/);
-    assert.match(source, /enemy-basic-row/);
-    assert.match(source, /enemy-param-editor/);
+    // Stock RM enemy tab: image + rewards pinned left via the canvas column,
+    // params/traits/drops center, actions + note right.
+    assert.match(source, /column\.key === 'canvas'/);
+    assert.doesNotMatch(source, /enemy-basic-row|enemy-param-editor/);
   });
 });

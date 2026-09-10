@@ -366,7 +366,13 @@ export function commandSpanLength(list: MvCommand[], index: number): number {
 export function commandStructureBlocks(spans: MvCommandSpan[]): MvCommandStructureBlock[] {
   // Callers may construct spans themselves in tests; annotate a copy so this
   // helper never mutates a caller-owned array.
-  return buildStructureAnalysis(spans.map((span) => ({ ...span, commands: span.commands.map((command) => ({ ...command, parameters: [...command.parameters] })) })));
+  return buildStructureAnalysis(spans.map((span) => ({
+    ...span,
+    commands: span.commands.map((command) => ({
+      ...command,
+      parameters: Array.isArray(command.parameters) ? [...command.parameters] : [],
+    })),
+  })));
 }
 
 /** Stable branch scope used by Shift-selection. Empty means the top-level list. */

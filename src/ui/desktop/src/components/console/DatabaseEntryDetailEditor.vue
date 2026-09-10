@@ -192,6 +192,11 @@ function setParticleFrameRef(el: unknown): void {
   particleFrameRef.value = el as InstanceType<typeof ParticleAnimationPreviewFrame> | null;
 }
 
+/** Same v-for caveat as the particle frame: collect the enemy battler canvas via a function ref. */
+function setEnemyBattlerPreviewRef(el: unknown): void {
+  enemyBattlerPreviewCanvas.value = (el as HTMLCanvasElement | null) ?? null;
+}
+
 // The stock editor idles on the battle background: whenever a particle animation
 // entry is shown, load an idle backdrop scene so the panel never sits black.
 const particleBackdropKey = computed(() => (
@@ -277,7 +282,7 @@ const visibleSchemaFields = computed(() => (
 // exactly one copy of the field branch chain.
 interface RmRenderRow { key: string; fields: RmmvDatabaseFieldSchema[] }
 interface RmRenderPanel { key: string; titleKey: RmPanelLayout['titleKey']; rows: RmRenderRow[] }
-interface RmRenderColumn { key: 'main' | 'side' | 'flat'; panels: RmRenderPanel[] }
+interface RmRenderColumn { key: 'main' | 'side' | 'canvas' | 'flat'; panels: RmRenderPanel[] }
 const hasRmLayout = computed(() => Boolean(animationRmLayout.value || DATABASE_RM_LAYOUTS[props.group || '']));
 const rmRenderColumns = computed<RmRenderColumn[]>(() => {
   const layout = animationRmLayout.value || DATABASE_RM_LAYOUTS[props.group || ''];
@@ -291,6 +296,7 @@ const rmRenderColumns = computed<RmRenderColumn[]>(() => {
   const referenced = new Set<string>();
   const columns: RmRenderColumn[] = [
     { key: 'main', panels: [] },
+    { key: 'canvas', panels: [] },
     { key: 'side', panels: [] },
   ];
   layout.forEach((panel, panelIndex) => {
@@ -318,7 +324,19 @@ const rmRenderColumns = computed<RmRenderColumn[]>(() => {
       rows: leftover.map((field, index) => ({ key: `leftover-${index}`, fields: [field] })),
     });
   }
-  return columns.filter((column) => column.panels.length);
+  const filled = columns.filter((column) => column.panels.length);
+  // The animation playback preview is pinned to the side column even when the
+  // layout routed every panel elsewhere (classic frame animations).
+  if (props.group === 'Animations' && !filled.some((column) => column.key === 'side')) {
+    filled.push({ key: 'side', panels: [] });
+  }
+  // Enemy pages pin battler image + rewards to a narrow left column; the shared
+  // main/canvas/side order would otherwise place that column mid-page.
+  if (isEnemyEditor.value) {
+    const canvasIndex = filled.findIndex((column) => column.key === 'canvas');
+    if (canvasIndex > 0) filled.unshift(...filled.splice(canvasIndex, 1));
+  }
+  return filled;
 });
 // Stock RM actor rows: name+nickname share a row, class+levels share a row; id lives in the header.
 const ACTOR_RM_BASIC_ROWS = [['name', 'nickname'], ['classId', 'initialLevel', 'maxLevel']] as const;
@@ -1367,7 +1385,11 @@ function updateTroopPageCommands(index: number, list: MvCommand[]): void {
 }
 
 function troopPageCommands(page: Record<string, unknown>): MvCommand[] {
-  const list = Array.isArray(page.list) ? page.list as MvCommand[] : [];
+  // ensureTerminator mutates its input; never let it touch the reactive draft,
+  // otherwise the template binding rewrites page.list on every render and the
+  // editor loops on its own updates.
+  const source = Array.isArray(page.list) ? page.list as MvCommand[] : [];
+  const list = source.map((command) => ({ ...command }));
   ensureTerminator(list);
   return list;
 }
@@ -1559,6 +1581,7 @@ function updateSound(index: number, key: string, value: unknown): void {
     class="db-editor db-editor--compact"
     :class="{
       'db-editor--actors-rm': isActorImageEditor,
+      'db-editor--animation-classic': isClassicAnimation,
       'db-editor--types': group === 'Types',
       'db-editor--terms': group === 'Terms',
       'db-editor--document': Boolean(documentPage),
@@ -1713,7 +1736,7 @@ function updateSound(index: number, key: string, value: unknown): void {
           </article>
         </div>
       </section>
-      <div class="schema-field-layout" :class="{ 'rm-columns': hasRmLayout, 'rm-columns-particle': hasRmLayout && isMZParticleAnimation, 'rm-columns-enemy': hasRmLayout && isEnemyEditor }">
+      <div class="schema-field-layout" :class="{ 'rm-columns': hasRmLayout, 'rm-columns-particle': hasRmLayout && isMZParticleAnimation, 'rm-columns-enemy': hasRmLayout && isEnemyEditor, 'rm-columns-animation-classic': isClassicAnimation }">
         <div
           v-for="column in rmRenderColumns"
           :key="column.key"
@@ -1761,7 +1784,7 @@ function updateSound(index: number, key: string, value: unknown): void {
             <div
               v-for="row in panel.rows"
               :key="row.key"
-              :class="[hasRmLayout ? 'rm-field-row' : 'field-grid', { 'enemy-basic-row': isEnemyEditor && row.fields.some((field) => field.path === 'battlerName') }]"
+              :class="hasRmLayout ? 'rm-field-row' : 'field-grid'"
             >
               <template v-for="field in row.fields" :key="field.path">
           <section v-if="isTermsArrayField(field)" class="field full complex-editor rmmv-terms-editor">
@@ -1882,7 +1905,7 @@ function updateSound(index: number, key: string, value: unknown): void {
           <section v-else-if="isEnemyBattlerField(field)" class="field full complex-editor image-field-editor">
             <div class="complex-title"><span>{{ fieldLabel(field) }}</span></div>
             <button type="button" class="image-picker-card enemy-battler-card" @click="openEnemyBattlerPicker(field.path)">
-              <canvas ref="enemyBattlerPreviewCanvas" width="180" height="140" />
+              <canvas :ref="setEnemyBattlerPreviewRef" width="180" height="140" />
               <small>{{ imageValueLabel(stringValue(field.path)) }}</small>
             </button>
             <small v-if="enemyBattlerPreviewError" class="enemy-battler-error">{{ enemyBattlerPreviewError }}</small>
@@ -2136,7 +2159,7 @@ function updateSound(index: number, key: string, value: unknown): void {
             />
           </section>
 
-          <section v-else-if="field.path === 'params'" class="field full complex-editor" :class="{ 'enemy-param-editor': isEnemyEditor }">
+          <section v-else-if="field.path === 'params'" class="field full complex-editor">
             <div class="complex-title"><span>{{ fieldLabel(field) }}</span></div>
             <div class="complex-row param-row">
               <label v-for="param in localizedParamOptions" :key="param.value">
@@ -3055,22 +3078,48 @@ function updateSound(index: number, key: string, value: unknown): void {
 .field-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; }
 /* Stock RM composition: grouped boxes in a wide main column plus a traits/note side column. */
 .rm-columns { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: 6px; align-items: start; }
-.rm-columns.rm-columns-enemy { grid-template-columns: minmax(0, 1.65fr) minmax(340px, 1fr); }
+/* Stock RM enemy tab: image + rewards left, params/traits/drops center, actions right. */
+.rm-columns.rm-columns-enemy { grid-template-columns: minmax(210px, 240px) minmax(0, 1.6fr) minmax(300px, 1fr); }
 /* Particle animation tab flips the balance like the stock MZ editor: narrow form
    column, wide preview column with the timing tables underneath. */
 .rm-columns.rm-columns-particle { grid-template-columns: minmax(300px, 1fr) minmax(0, 2fr); }
+/* Classic MV frame animation tab: left fields/timings, growing cell canvas in
+   the center, playback preview pinned right — everything fits without paging. */
+.rm-columns.rm-columns-animation-classic { grid-template-columns: minmax(230px, 280px) minmax(0, 1fr) minmax(230px, 280px); }
+@container (min-width: 900px) {
+  .db-editor--animation-classic { height: 100%; grid-template-rows: minmax(0, 1fr); }
+  .db-editor--animation-classic .editor-section { min-height: 0; display: flex; flex-direction: column; }
+  .db-editor--animation-classic .rm-columns-animation-classic { flex: 1; min-height: 0; align-items: stretch; }
+  .db-editor--animation-classic .rm-column { min-height: 0; }
+  .db-editor--animation-classic .rm-column-main { overflow-y: auto; }
+  .db-editor--animation-classic .rm-column-canvas { display: flex; flex-direction: column; }
+  .db-editor--animation-classic .rm-column-canvas .rm-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .db-editor--animation-classic .rm-column-canvas .rm-field-row { flex: 1; min-height: 0; align-items: stretch; }
+  .db-editor--animation-classic .rm-column-canvas .rm-field-row > .field { display: flex; flex-direction: column; min-height: 0; }
+  .db-editor--animation-classic .rm-column-canvas :deep(.animation-editor) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .db-editor--animation-classic .rm-column-canvas :deep(.cell-toolbar) { order: 1; flex: 0 0 auto; }
+  .db-editor--animation-classic .rm-column-canvas :deep(.frame-toolbar) { order: 3; flex: 0 0 auto; }
+  .db-editor--animation-classic .rm-column-canvas :deep(.canvas-workspace) { order: 2; flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr) 190px; align-items: stretch; }
+  .db-editor--animation-classic .rm-column-canvas :deep(.canvas-column) { min-height: 0; display: flex; align-items: center; justify-content: center; }
+  .db-editor--animation-classic .rm-column-canvas :deep(.canvas-column > canvas) { width: auto; height: auto; max-width: 100%; max-height: 100%; }
+  .db-editor--animation-classic .rm-column-canvas :deep(.cell-controls) { min-height: 0; overflow-y: auto; }
+  .db-editor--animation-classic .rm-column-canvas :deep(.plugin-note) { order: 4; flex: 0 0 auto; }
+}
 .rm-column { display: grid; gap: 4px; min-width: 0; align-content: start; }
 .rm-field-row { display: flex; gap: 4px; align-items: start; }
 .rm-field-row > .field,
 .rm-field-row > .check-field { flex: 1 1 0; min-width: 0; }
-.enemy-basic-row > .image-field-editor { flex: 0 0 220px; }
-.enemy-basic-row > .enemy-param-editor { flex: 1 1 auto; }
 .rm-columns-enemy .rm-panel,
 .rm-columns-enemy .complex-row {
   box-sizing: border-box;
   min-width: 0;
   max-width: 100%;
 }
+/* Enemy actions sit in the narrow right column: wrap each action's cells
+   two-per-row instead of the wide single line used by the main column. */
+.rm-columns-enemy .rm-column-side .semantic-action-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.rm-columns-enemy .rm-column-side .semantic-action-row .action-condition-fields,
+.rm-columns-enemy .rm-column-side .semantic-action-row .plugin-condition-note { grid-column: 1 / -1; }
 .enemy-battler-error {
   color: var(--app-danger,#b42318);
   line-height: 1.35;
@@ -3344,6 +3393,9 @@ textarea { resize: vertical; line-height: 1.45; }
 }
 .animation-cell-row { grid-template-columns: repeat(8,minmax(64px,1fr)) auto; }
 .timing-row { grid-template-columns: 70px minmax(0,1.3fr) repeat(3,76px) 100px repeat(4,62px) 70px auto; }
+/* In the classic animation fit-layout the timing table sits on the narrow left
+   column; wrap its twelve controls into compact four-column rows. */
+.db-editor--animation-classic .rm-column-main .timing-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .particle-rotation-row { grid-template-columns: repeat(3, minmax(90px, 1fr)); }
 .particle-flash-row { grid-template-columns: repeat(2, minmax(0, .9fr)) repeat(4, minmax(0, .7fr)) auto; }
 .particle-sound-row { grid-template-columns: minmax(0, .8fr) minmax(0, 1.5fr) repeat(3, minmax(0, .8fr)) auto; }
@@ -3591,11 +3643,8 @@ textarea { resize: vertical; line-height: 1.45; }
 }
 @container (max-width: 899px) {
   .rm-columns { grid-template-columns: minmax(0, 1fr); }
-  .enemy-basic-row { flex-direction: column; }
-  .enemy-basic-row > .image-field-editor {
-    flex-basis: auto;
-    width: 100%;
-  }
+  .rm-columns.rm-columns-animation-classic { grid-template-columns: minmax(0, 1fr); }
+  .rm-columns.rm-columns-enemy { grid-template-columns: minmax(0, 1fr); }
 }
 @container (max-width: 640px) {
   .troop-formation-layout { grid-template-columns: minmax(0, 1fr); }

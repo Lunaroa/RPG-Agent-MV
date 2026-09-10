@@ -27,13 +27,23 @@ describe('stock RM database layouts', () => {
   })
 
   it('keeps traits/damage and note in the side column like the stock editor', () => {
-    for (const group of ENTRY_GROUPS) {
+    // Enemies follow the stock tab instead: traits sit mid-column under params,
+    // while actions + note take the right column.
+    for (const group of ENTRY_GROUPS.filter((name) => name !== 'Enemies')) {
       const sidePaths = (DATABASE_RM_LAYOUTS[group] || [])
         .filter((panel) => panel.column === 'side')
         .flatMap((panel) => panel.rows.flat())
       expect(sidePaths, group).toContain('note')
       expect(sidePaths.some((path) => path === 'traits' || path === 'damage'), group).toBe(true)
     }
+    const enemySide = (DATABASE_RM_LAYOUTS.Enemies || [])
+      .filter((panel) => panel.column === 'side')
+      .flatMap((panel) => panel.rows.flat())
+    expect(enemySide).toEqual(['actions', 'note'])
+    const enemyLeft = (DATABASE_RM_LAYOUTS.Enemies || [])
+      .filter((panel) => panel.column === 'canvas')
+      .flatMap((panel) => panel.rows.flat())
+    expect(enemyLeft).toEqual(['battlerName', 'battlerHue', 'exp', 'gold'])
   })
 
   it('uses db-scoped i18n keys for titled panels and hides the id field', () => {

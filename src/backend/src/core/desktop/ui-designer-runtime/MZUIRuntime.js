@@ -1180,6 +1180,12 @@
       if (match) { flush(); color = textColorForIndex(Number(match[1])); index += match[0].length; continue; }
       match = rest.match(/^\\i\[(\d+)\]/i);
       if (match) { flush(); runs.push({ kind: 'icon', iconId: Number(match[1]), color: color, bold: bold, italic: italic }); index += match[0].length; continue; }
+      if (source[index] === '\r' || source[index] === '\n') {
+        flush();
+        runs.push({ kind: 'newline' });
+        index += source[index] === '\r' && source[index + 1] === '\n' ? 2 : 1;
+        continue;
+      }
       if (rest.startsWith('\\n')) { flush(); runs.push({ kind: 'newline' }); index += 2; continue; }
       if (/^<b>/i.test(rest)) { flush(); bold = true; index += 3; continue; }
       if (/^<\/b>/i.test(rest)) { flush(); bold = false; index += 4; continue; }
@@ -1207,8 +1213,8 @@
 
   function renderTextRuns(view, props, context) {
     if (!view || !view.__mzuiTextRuns || typeof view.addChild === 'undefined') return;
-    var resolved = parseTextRuns(singleLineText(props.content), context);
-    var key = JSON.stringify({ content: props.content, variables: context && context.variables, font: props.fontFile, size: props.fontSize, color: props.textColor, width: props.width, align: props.align });
+    var resolved = parseTextRuns(props.content, context);
+    var key = JSON.stringify({ content: props.content, variables: context && context.variables, font: props.fontFile, size: props.fontSize, color: props.textColor, width: props.width, height: props.height, align: props.align, verticalAlign: props.verticalAlign });
     if (view.__mzuiTextRunsKey === key) return;
     view.__mzuiTextRunsKey = key;
     if (Array.isArray(view.children) && typeof view.removeChild === 'function') {
@@ -1221,8 +1227,19 @@
     var fontSize = finite(props.fontSize, nativeTextProfile().fontSize);
     var stroke = nativeStroke(props);
     var cursorX = 0;
+    var cursorY = 0;
+    var lineIndex = 0;
+    var lineHeight = Math.max(1, Math.ceil(fontSize * 1.2));
+    var lineWidths = [0];
     resolved.forEach(function (run) {
-      if (run.kind === 'newline') return;
+      if (run.kind === 'newline') {
+        lineWidths[lineIndex] = cursorX;
+        lineIndex += 1;
+        lineWidths[lineIndex] = 0;
+        cursorX = 0;
+        cursorY += lineHeight;
+        return;
+      }
       if (run.kind === 'icon') {
         if (global.Sprite && typeof global.Sprite === 'function') {
           var icon = new global.Sprite(loadBitmap('img/system/IconSet'));
@@ -1232,9 +1249,10 @@
             var size = 32;
             icon.setFrame((run.iconId % columns) * size, Math.floor(run.iconId / columns) * size, size, size);
           }
-          icon.x = cursorX; icon.y = 0; icon.width = fontSize; icon.height = fontSize;
+          icon.x = cursorX; icon.y = cursorY; icon.width = fontSize; icon.height = fontSize; icon.__mzuiTextLine = lineIndex;
           view.addChild(icon);
           cursorX += fontSize;
+          lineWidths[lineIndex] = cursorX;
         }
         return;
       }
@@ -1250,21 +1268,30 @@
         stroke: stroke.color,
         strokeThickness: stroke.width,
       });
-      text.x = cursorX; text.y = 0;
+      text.x = cursorX; text.y = cursorY; text.__mzuiTextLine = lineIndex;
       view.addChild(text);
       if (typeof text.updateText === 'function') { try { text.updateText(true); } catch (_) {} }
       var measuredWidth = finite(text.width, 0) || run.text.length * fontSize * 0.5;
       cursorX += measuredWidth;
+      lineWidths[lineIndex] = cursorX;
     });
-    var compression = horizontalTextScale(props.width, cursorX);
-    var renderedWidth = cursorX * compression;
-    var start = props.align === 'right' ? Math.max(0, finite(props.width, 0) - renderedWidth)
-      : props.align === 'center' ? Math.max(0, (finite(props.width, 0) - renderedWidth) / 2) : 0;
+    lineWidths[lineIndex] = cursorX;
+    var naturalWidth = lineWidths.reduce(function (maximum, width) { return Math.max(maximum, width); }, 0);
+    var compression = horizontalTextScale(props.width, naturalWidth);
+    var totalHeight = lineHeight * lineWidths.length;
+    var spareHeight = Math.max(0, finite(props.height, 0) - totalHeight);
+    var verticalStart = props.verticalAlign === 'bottom' ? spareHeight : props.verticalAlign === 'middle' ? spareHeight / 2 : 0;
     if (Array.isArray(view.children)) view.children.forEach(function (child) {
+      var childLine = Math.max(0, Math.round(finite(child.__mzuiTextLine, 0)));
+      var renderedWidth = finite(lineWidths[childLine], 0) * compression;
+      var start = props.align === 'right' ? Math.max(0, finite(props.width, 0) - renderedWidth)
+        : props.align === 'center' ? Math.max(0, (finite(props.width, 0) - renderedWidth) / 2) : 0;
       child.x = start + finite(child.x, 0) * compression;
+      child.y = verticalStart + finite(child.y, 0);
       child.scale = child.scale || { x: 1, y: 1 };
       child.scale.x = finite(child.scale.x, 1) * compression;
     });
+    view.__mzuiTextNaturalWidth = naturalWidth;
     view.__mzuiTextHorizontalScale = 1;
     view.__mzuiRichText = 'safe-runs';
     renderTextBackground(view, props);
@@ -1276,7 +1303,7 @@
   // engine's native window-text outline unless the designer sets a stroke.
   function applyPlainTextStyle(view, props) {
     if (!view) return;
-    view.text = singleLineText(props.content);
+    view.text = String(props.content == null ? '' : props.content);
     view.style = view.style || {};
     var native = nativeTextProfile();
     var stroke = nativeStroke(props);

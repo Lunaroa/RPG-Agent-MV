@@ -16,6 +16,8 @@ import type {
   UiDesignerRendererResourceSyncResult,
   UiDesignerSceneDataReadResult,
   UiDesignerSceneDataReadRequest,
+  UiDesignerSceneDeleteInspection,
+  UiDesignerSceneDeleteResult,
   UiDesignerResourceRequest,
   UiFileResult,
   UiProjectResourceCatalog,
@@ -65,6 +67,12 @@ export const unavailableFileAdapter: UiDesignerPersistenceAdapter = {
   },
   async removeRecentFile() {
     return unavailable('Recent-file adapter is not connected.')
+  },
+  async inspectSceneDeletion() {
+    return unavailable('Scene deletion is not connected.')
+  },
+  async deleteScene() {
+    return unavailable('Scene deletion is not connected.')
   },
   async listRecovery() {
     return unavailable('Recovery adapter is not connected.')
@@ -178,6 +186,8 @@ export function createDesktopUiDesignerAdapters(projectPath?: string, lifecycle?
     async revealSource(sourcePath) { return asResult(await api.uiDesigner.revealSource(sourcePath), 'The source file could not be revealed.') },
     async listRecentFiles() { return asResult(await api.uiDesigner.listRecentFiles({ project: projectPath }), 'Recent UI designer files are unavailable.') },
     async removeRecentFile(path) { return asResult(await api.uiDesigner.removeRecentFile(path), 'The recent UI designer file record could not be removed.') },
+    async inspectSceneDeletion(path) { return asResult<UiDesignerSceneDeleteInspection>(await api.uiDesigner.inspectSceneDeletion({ path, project: projectPath }), 'The scene deletion could not be inspected.') },
+    async deleteScene(request) { return asResult<UiDesignerSceneDeleteResult>(await api.uiDesigner.deleteScene({ ...request, project: projectPath }), 'The scene could not be moved to the Recycle Bin.') },
     async writeRecovery(document, request) { return asResult(await api.uiDesigner.writeRecovery({ document, ...request }), 'The recovery snapshot could not be written.') },
     async listRecovery() { return asResult(await api.uiDesigner.listRecovery(), 'Recovery snapshots are unavailable.') },
     async readRecovery(id) { return asResult(await api.uiDesigner.readRecovery(id), 'The recovery snapshot could not be read.') },

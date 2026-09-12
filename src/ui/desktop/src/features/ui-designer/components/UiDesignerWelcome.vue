@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import type { UiDesignerSceneFileRecord } from '@contract/ui-designer'
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import { useUiDesignerI18n, type UiDesignerMessageKey } from '../i18n'
 import { documentation, system } from '../../../api/client'
 
 const props = defineProps<{ designer: UiDesignerController }>()
-const emit = defineEmits<{ newScene: []; open: []; returnToScene: []; sceneReady: [] }>()
+const emit = defineEmits<{ newScene: []; open: []; returnToScene: []; sceneReady: []; deleteScene: [scene: UiDesignerSceneFileRecord] }>()
 const designer = props.designer
 const { t, language } = useUiDesignerI18n()
 const learningError = ref('')
@@ -65,14 +66,17 @@ const loadSceneTemplate = async (name: string) => {
       <div class="list-title">{{ t('currentProjectScenes') }}</div>
       <div v-if="!designer.sceneFiles.length" class="welcome-empty">{{ t('noProjectScenes') }}</div>
       <div class="scene-card-grid">
-        <button v-for="(item, index) in designer.sceneFiles" :key="item.sourcePath" :data-testid="`ui-designer-project-open-${index}`" class="scene-card" type="button" @click="void openScene(item.sourcePath)">
-          <span class="scene-thumbnail">
-            <img v-if="item.thumbnailUrl" :src="item.thumbnailUrl" alt="" />
-            <span v-else class="scene-thumbnail-placeholder">UI</span>
-          </span>
-          <span class="scene-card-name">{{ item.sceneName }}</span>
-          <span class="scene-card-meta">{{ t('modifiedTime') }} {{ formatDate(item.modifiedAt) }}</span>
-        </button>
+        <el-dropdown v-for="(item, index) in designer.sceneFiles" :key="item.sourcePath" class="project-scene-dropdown" trigger="contextmenu" @command="$event === 'delete' && emit('deleteScene', item)">
+          <button :data-testid="`ui-designer-project-open-${index}`" class="scene-card" type="button" @click="void openScene(item.sourcePath)">
+            <span class="scene-thumbnail">
+              <img v-if="item.thumbnailUrl" :src="item.thumbnailUrl" alt="" />
+              <span v-else class="scene-thumbnail-placeholder">UI</span>
+            </span>
+            <span class="scene-card-name">{{ item.sceneName }}</span>
+            <span class="scene-card-meta">{{ t('modifiedTime') }} {{ formatDate(item.modifiedAt) }}</span>
+          </button>
+          <template #dropdown><el-dropdown-menu><el-dropdown-item command="delete">{{ t('deleteScene') }}</el-dropdown-item></el-dropdown-menu></template>
+        </el-dropdown>
       </div>
     </div>
     <div v-if="designer.recentFiles.length" class="welcome-list">
@@ -123,6 +127,8 @@ p { margin: 2px 0 0; color: var(--app-ink-soft); font-size: 12px; line-height: 1
 .welcome-list { width: min(720px, 100%); margin-top: 12px; text-align: left; }.list-title { margin-bottom: 7px; color: var(--app-ink-soft); font-size: 11px; font-weight: 650; }.welcome-row { display: flex; align-items: center; gap: 8px; min-height: 28px; border-top: 1px solid var(--app-border); font-size: 11px; }.welcome-row > button { flex: 1; overflow: hidden; border: 0; background: none; color: var(--app-ink); cursor: pointer; text-align: left; text-overflow: ellipsis; white-space: nowrap; }.welcome-row > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .welcome-empty { padding: 14px 0; border-top: 1px solid var(--app-border); color: var(--app-ink-soft); font-size: 11px; }
 .scene-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; width: 100%; }
+.project-scene-dropdown { display: block; min-width: 0; width: 100%; }
+.project-scene-dropdown :deep(.el-tooltip__trigger) { display: block; width: 100%; }
 .scene-card-shell { position: relative; min-width: 0; }
 .scene-card { display: flex; flex-direction: column; gap: 5px; width: 100%; min-width: 0; padding: 7px; overflow: hidden; border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-bg); color: var(--app-ink); cursor: pointer; text-align: left; }
 .scene-card:hover { border-color: var(--app-accent); }

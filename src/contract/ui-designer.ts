@@ -830,6 +830,35 @@ export interface UiDesignerProjectRequest {
   project?: string
 }
 
+export interface UiDesignerSceneDeleteRequest extends UiDesignerProjectRequest {
+  path: string
+  expected: Pick<UiDesignerFileMetadata, 'digest' | 'mtimeMs'>
+}
+
+export interface UiDesignerSceneReference {
+  sourcePath: string
+  sceneName: string
+  nodeId: string
+  nodeName: string
+  event: UiEventName
+}
+
+export interface UiDesignerSceneDeleteInspection {
+  sourcePath: string
+  sceneName: string
+  metadata: UiDesignerFileMetadata
+  references: UiDesignerSceneReference[]
+}
+
+export interface UiDesignerSceneDeleteResult {
+  sourcePath: string
+  sceneName: string
+  cleanupWarnings: Array<{
+    kind: 'project-thumbnail' | 'recent-file' | 'recovery'
+    message: string
+  }>
+}
+
 /** Project-wide UI data saved to the game as data/GlobalUI.json and read
  * in scripts through $global / $dataGlobalUI. Roots are plain JSON values. */
 export type UiDesignerGlobalDataValue = Record<string, unknown> | unknown[]
@@ -904,6 +933,8 @@ export interface UiDesignerPersistenceAdapter {
   saveAs(document: UiDesignerDocument, request?: UiDesignerFileRequest): Promise<UiDesignerSaveResult<UiDesignerDocument>>
   listRecentFiles(): Promise<UiFileResult<UiDesignerRecentFileRecord[]>>
   removeRecentFile(path: string): Promise<UiFileResult<null>>
+  inspectSceneDeletion(path: string): Promise<UiFileResult<UiDesignerSceneDeleteInspection>>
+  deleteScene(request: Pick<UiDesignerSceneDeleteRequest, 'path' | 'expected'>): Promise<UiFileResult<UiDesignerSceneDeleteResult>>
   writeRecovery(document: UiDesignerDocument, request?: { sourcePath?: string; sourceMetadata?: Pick<UiDesignerFileMetadata, 'digest' | 'mtimeMs'>; key?: string }): Promise<UiFileResult<UiDesignerRecoveryRecord>>
   listRecovery(): Promise<UiFileResult<UiDesignerRecoveryRecord[]>>
   readRecovery(recoveryId: string): Promise<UiFileResult<{ record: UiDesignerRecoveryRecord; document: UiDesignerDocument }>>

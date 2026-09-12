@@ -4,7 +4,10 @@ import { useUiDesignerI18n } from '../i18n'
 import UiNamedEntryField from './UiNamedEntryField.vue'
 
 const props = defineProps<{ modelValue: boolean; designer: UiDesignerController }>()
-const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
+const emit = defineEmits<{
+  'update:modelValue': [value: boolean]
+  deleteScene: [scene: { sourcePath: string; sceneName: string }]
+}>()
 const { t } = useUiDesignerI18n()
 </script>
 
@@ -23,6 +26,16 @@ const { t } = useUiDesignerI18n()
       <el-form-item :label="t('enterAnimation')"><div class="inline-fields"><el-select :model-value="designer.document.transitions.enter.type" @update:model-value="designer.setTransition('enter', 'type', $event)"><el-option value="none" :label="t('transitionNone')" /><el-option value="fade" :label="t('transitionFade')" /><el-option value="slideLeft" :label="t('transitionSlideLeft')" /><el-option value="slideRight" :label="t('transitionSlideRight')" /></el-select><el-input-number :model-value="designer.document.transitions.enter.duration" :min="0" @change="designer.setTransition('enter', 'duration', Number($event ?? 0))" /></div></el-form-item>
       <el-form-item :label="t('exitAnimation')"><div class="inline-fields"><el-select :model-value="designer.document.transitions.exit.type" @update:model-value="designer.setTransition('exit', 'type', $event)"><el-option value="none" :label="t('transitionNone')" /><el-option value="fade" :label="t('transitionFade')" /><el-option value="slideLeft" :label="t('transitionSlideLeft')" /><el-option value="slideRight" :label="t('transitionSlideRight')" /></el-select><el-input-number :model-value="designer.document.transitions.exit.duration" :min="0" @change="designer.setTransition('exit', 'duration', Number($event ?? 0))" /></div></el-form-item>
     </el-form>
+    <template #footer>
+      <el-button
+        v-if="designer.activeScene?.sourcePath"
+        data-testid="ui-designer-scene-settings-delete"
+        type="danger"
+        :disabled="designer.fileStatus === 'busy'"
+        @click="emit('deleteScene', { sourcePath: designer.activeScene.sourcePath, sceneName: designer.document.meta.sceneName })"
+      >{{ t('deleteScene') }}</el-button>
+      <el-button @click="emit('update:modelValue', false)">{{ t('close') }}</el-button>
+    </template>
   </el-dialog>
 </template>
 

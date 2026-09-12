@@ -36,6 +36,9 @@ import type {
   UiDesignerResourceRequest,
   UiDesignerSceneDataReadRequest,
   UiDesignerSceneDataReadResult,
+  UiDesignerSceneDeleteInspection,
+  UiDesignerSceneDeleteRequest,
+  UiDesignerSceneDeleteResult,
   UiDesignerRendererHostSession,
   UiDesignerRendererHostStopReason,
   UiDesignerRendererResourceSyncRequest,
@@ -176,6 +179,8 @@ declare global {
         revealSource(sourcePath: string): Promise<UiFileResult<null>>;
         getProjectProfile(request?: UiDesignerProjectProfileRequest): Promise<UiFileResult<UiDesignerProjectProfileResult>>;
         listSceneFiles(request?: UiDesignerProjectRequest): Promise<UiFileResult<UiDesignerSceneFileRecord[]>>;
+        inspectSceneDeletion(request: Pick<UiDesignerSceneDeleteRequest, 'path' | 'project'>): Promise<UiFileResult<UiDesignerSceneDeleteInspection>>;
+        deleteScene(request: UiDesignerSceneDeleteRequest): Promise<UiFileResult<UiDesignerSceneDeleteResult>>;
         listResources(request?: UiDesignerResourceRequest): Promise<UiFileResult<UiProjectResourceCatalog>>;
         listResourceReferences(request?: UiDesignerResourceRequest): Promise<UiFileResult<UiProjectResourceCatalog>>;
         readSceneData(request: UiDesignerSceneDataReadRequest): Promise<UiFileResult<UiDesignerSceneDataReadResult>>;
@@ -639,6 +644,8 @@ export const uiDesigner = {
   revealSource(sourcePath: string) { return desktopApi().uiDesigner.revealSource(sourcePath) },
   getProjectProfile(request?: UiDesignerProjectProfileRequest) { return desktopApi().uiDesigner.getProjectProfile(request ? toPlain(request) : undefined) },
   listSceneFiles(request?: UiDesignerProjectRequest) { return desktopApi().uiDesigner.listSceneFiles(toPlain(request ?? {})) },
+  inspectSceneDeletion(request: Pick<UiDesignerSceneDeleteRequest, 'path' | 'project'>) { return desktopApi().uiDesigner.inspectSceneDeletion(toPlain(request)) },
+  deleteScene(request: UiDesignerSceneDeleteRequest) { return desktopApi().uiDesigner.deleteScene(toPlain(request)) },
   listResources(request?: UiDesignerResourceRequest) { return desktopApi().uiDesigner.listResources(toPlain(request)) },
   listResourceReferences(request?: UiDesignerResourceRequest) { return desktopApi().uiDesigner.listResourceReferences(toPlain(request)) },
   readSceneData(request: UiDesignerSceneDataReadRequest) { return desktopApi().uiDesigner.readSceneData(toPlain(request)) },

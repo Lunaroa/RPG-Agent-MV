@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UiDesignerAdapterBundle, UiDesignerLifecycleAdapter } from '@contract/ui-designer'
 import { useUiDesigner, type UiDesignerController } from '../composables/useUiDesigner'
@@ -32,7 +32,7 @@ const props = withDefaults(defineProps<{
   lifecycleAdapter?: UiDesignerLifecycleAdapter
   manageProjectContext?: boolean
 }>(), { adapters: undefined, projectPath: undefined, lifecycleAdapter: undefined, manageProjectContext: true })
-const { t } = useUiDesignerI18n()
+const { t, language } = useUiDesignerI18n()
 let rawDesigner!: ReturnType<typeof useUiDesigner>
 const surface = ref<'settings' | 'sceneSettings' | 'about' | 'shortcuts' | 'tour' | 'newScene' | 'openScene' | 'saveAs' | 'globalData' | null>(null)
 const tourStep = ref(0)
@@ -143,6 +143,31 @@ const openProjectScene = async (sourcePath: string) => {
   if (!(await rawDesigner.open({ path: sourcePath }))) return
   surface.value = null
   showWelcome.value = false
+}
+const sceneSourcePathKey = (value: string | undefined) => String(value ?? '').replace(/\\/g, '/').toLocaleLowerCase()
+const requestDeleteScene = async (scene: { sourcePath: string; sceneName: string }) => {
+  const inspection = await rawDesigner.inspectSceneDeletion(scene.sourcePath)
+  if (!inspection) return
+  const matchingTabs = rawDesigner.scenes.value.filter((item) => sceneSourcePathKey(item.sourcePath) === sceneSourcePathKey(inspection.sourcePath))
+  const hasDirtyTab = matchingTabs.some((item) => rawDesigner.isSceneDirty(item.id))
+  const referencedBy = [...new Set(inspection.references.map((reference) => reference.sceneName))]
+  const paragraphs = [
+    inspection.sceneName,
+    t('deleteSceneBody'),
+    ...(matchingTabs.length ? [hasDirtyTab ? t('deleteSceneOpenDirty') : t('deleteSceneOpen')] : []),
+    ...(referencedBy.length ? [`${t('deleteSceneReferences')} ${referencedBy.join(language.value === 'zh-CN' ? '、' : ', ')}\n${t('deleteSceneReferenceSuffix')}`] : []),
+  ]
+  try {
+    await ElMessageBox.confirm(
+      h('div', { style: { whiteSpace: 'pre-line', lineHeight: '1.6' } }, paragraphs.map((paragraph) => h('p', { style: { margin: '0 0 8px' } }, paragraph))),
+      t('deleteSceneTitle'),
+      { type: 'warning', confirmButtonText: t('deleteSceneConfirm'), cancelButtonText: t('lifecycleCancel'), closeOnClickModal: false, confirmButtonClass: 'el-button--danger' },
+    )
+  } catch { return }
+  const result = await rawDesigner.deleteScene(inspection)
+  if (!result) return
+  if (surface.value === 'sceneSettings') surface.value = null
+  ElMessage({ type: result.cleanupWarnings.length ? 'warning' : 'success', message: t(result.cleanupWarnings.length ? 'deleteSceneCleanupWarning' : 'deleteSceneSuccess') })
 }
 const importSceneFile = async () => {
   if (!(await rawDesigner.importSceneFile())) return
@@ -337,7 +362,7 @@ onBeforeUnmount(() => {
       </aside>
       <div v-if="!showWelcome" class="workspace-splitter" role="separator" :aria-label="t('leftPane')" @pointerdown="beginPaneDrag('left', $event)" />
       <main class="center-pane">
-        <UiDesignerWelcome v-if="showWelcome" :designer="designer" @new-scene="openNewScene" @open="void openScenePicker()" @return-to-scene="showWelcome = false" @scene-ready="showWelcome = false" />
+        <UiDesignerWelcome v-if="showWelcome" :designer="designer" @new-scene="openNewScene" @open="void openScenePicker()" @return-to-scene="showWelcome = false" @scene-ready="showWelcome = false" @delete-scene="void requestDeleteScene($event)" />
         <template v-else>
           <UiDesignerCanvas ref="canvasRef" v-show="designer.editingMode === 'design'" :designer="designer" @edit-node="editPrimaryNode" />
           <UiDesignerCodePanel v-show="designer.editingMode === 'code'" :designer="designer" />
@@ -349,7 +374,7 @@ onBeforeUnmount(() => {
     </div>
     <UiDesignerNewSceneSurface v-if="surface === 'newScene'" :model-value="true" :draft="newSceneDraft" :template="newSceneTemplate" :template-options="sceneTemplateOptions" :template-label="sceneTemplateLabel" @update:model-value="closeSurface" @update:template="selectNewSceneTemplate" @name-edited="newSceneNameAutomatic = false" @create="createNewScene" @cancel="surface = null" />
     <UiDesignerSettingsSurface v-if="surface === 'settings'" :model-value="true" :designer="designer" :left-pane-width="leftPaneWidth" :right-pane-width="rightPaneWidth" :clamp-pane="(side, value) => clampPane(side, value)" @update:model-value="closeSurface" />
-    <UiDesignerSceneSettingsSurface v-if="surface === 'sceneSettings'" :model-value="true" :designer="designer" @update:model-value="closeSurface" />
+    <UiDesignerSceneSettingsSurface v-if="surface === 'sceneSettings'" :model-value="true" :designer="designer" @update:model-value="closeSurface" @delete-scene="void requestDeleteScene($event)" />
     <UiDesignerOpenSceneSurface v-if="surface === 'openScene'" :model-value="true" :designer="designer" @update:model-value="closeSurface" @open="void openProjectScene($event)" />
     <UiDesignerSaveAsSurface v-if="surface === 'saveAs'" :model-value="true" :initial-name="saveAsInitialName" :busy="saveAsBusy" @update:model-value="closeSurface" @save="void saveAsScene($event)" />
     <UiDesignerGlobalDataSurface v-if="surface === 'globalData'" :model-value="true" :designer="designer" @update:model-value="closeSurface" />

@@ -442,7 +442,7 @@ defineExpose({ editPrimaryNode })
 
 const presentationPropertyValue = (targetId: string, key: string, value: unknown) => {
   const node = currentDocument.value.nodes.find((candidate) => candidate.id === targetId)
-  return key === 'content' && (node?.type === 'text' || node?.type === 'button') ? normalizeUiSingleLineText(value) : value
+  return key === 'content' && node?.type === 'button' ? normalizeUiSingleLineText(value) : value
 }
 const updateProperty = (key: string, value: unknown, nodeId?: string) => {
   const targetId = nodeId ?? selectedNode.value?.id

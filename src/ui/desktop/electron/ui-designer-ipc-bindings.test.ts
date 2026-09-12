@@ -28,6 +28,9 @@ test('scene IPC saves directly in the current project and keeps overwrite semant
   const ipcMain = { handle(name: string, handler: (...args: any[]) => any) { handlers.set(name, handler) } }
   const recent: string[] = []
   const removedRecent: string[] = []
+  const removedRecoverySources: string[] = []
+  const trashed: string[] = []
+  let cleanupFailure = false
   let runtimeInstalls = 0
   let selectedImportPath: string | null = null
   const store = {
@@ -35,11 +38,12 @@ test('scene IPC saves directly in the current project and keeps overwrite semant
     saveWorkingDocument: () => { throw new Error('Working-document storage is not part of project scene saves.') },
     listRecentFiles: () => recent.map((sourcePath) => ({ sourcePath, projectPath: project, lastOpenedAt: 'now', exists: fs.existsSync(sourcePath) })),
     recordRecentFile: (sourcePath: string) => { recent.push(path.resolve(sourcePath)); return { sourcePath, lastOpenedAt: 'now', exists: true } },
-    removeRecentFile: (sourcePath: string) => { removedRecent.push(path.resolve(sourcePath)) },
+    removeRecentFile: (sourcePath: string) => { if (cleanupFailure) throw new Error('recent cleanup busy'); removedRecent.push(path.resolve(sourcePath)) },
     writeRecovery: () => ({ id: 'recovery', sourcePath: '', snapshotPath: 'snapshot', savedAt: 'now', digest: 'digest', mtimeMs: 1 }),
     listRecovery: () => [],
     readRecovery: () => ({ record: { id: 'recovery', sourcePath: '', snapshotPath: 'snapshot', savedAt: 'now', digest: 'digest', mtimeMs: 1 }, document: {} }),
     clearRecovery: () => undefined,
+    removeRecoveryForSource: (sourcePath: string) => { if (cleanupFailure) throw new Error('recovery cleanup busy'); removedRecoverySources.push(path.resolve(sourcePath)); return [] },
     readPreferences: () => ({}),
     writePreferences: () => undefined,
   }
@@ -51,6 +55,7 @@ test('scene IPC saves directly in the current project and keeps overwrite semant
   }, {
     workflowRoot: path.join(project, 'install'),
     resolveProject: (requested) => requested ? path.resolve(requested) : project,
+    trashItem: async (sourcePath) => { trashed.push(path.resolve(sourcePath)); fs.rmSync(sourcePath) },
     file: {
       readUiDesignerFile: (filePath) => ({ document: JSON.parse(fs.readFileSync(filePath, 'utf8')), metadata: metadata(filePath) }),
       saveUiDesignerFile: (filePath, document) => {
@@ -67,6 +72,18 @@ test('scene IPC saves directly in the current project and keeps overwrite semant
         return metadata(target)
       },
       writeProjectUiDesignerThumbnail: (_project, sceneName) => path.join(project, '.luna_rpg', 'ui-designer', 'thumbnails', `${sceneName}.png`),
+      inspectProjectUiDesignerSceneDeletion: (_project, sourcePath) => {
+        const read = { document: JSON.parse(fs.readFileSync(sourcePath, 'utf8')), metadata: metadata(sourcePath) }
+        return { sourcePath: read.metadata.path, sceneName: read.document.meta.sceneName, metadata: read.metadata, references: [] }
+      },
+      trashProjectUiDesignerScene: async (_project, sourcePath, expected, trashItem) => {
+        const read = { document: JSON.parse(fs.readFileSync(sourcePath, 'utf8')), metadata: metadata(sourcePath) }
+        assert.equal(expected.digest, read.metadata.digest)
+        assert.equal(expected.mtimeMs, read.metadata.mtimeMs)
+        await trashItem(sourcePath)
+        return { sourcePath: read.metadata.path, sceneName: read.document.meta.sceneName, metadata: read.metadata, references: [] }
+      },
+      removeProjectUiDesignerThumbnail: () => false,
       revealSource: () => undefined,
       UiDesignerUserDataStore: class { constructor() { return store as any } } as any,
     },
@@ -134,6 +151,34 @@ test('scene IPC saves directly in the current project and keeps overwrite semant
   assert.equal(fs.existsSync(scenePath('Scene_Renamed')), true)
   assert.deepEqual(removedRecent, [path.resolve(scenePath('Scene_Sample'))])
 
+  writeScene('Scene_Delete', 'delete me')
+  const inspectedDelete = await handlers.get('ui-designer:scene-delete:inspect')!(null, { project, path: scenePath('Scene_Delete') })
+  assert.equal(inspectedDelete.status, 'success')
+  assert.equal(inspectedDelete.value.sceneName, 'Scene_Delete')
+  const deleted = await handlers.get('ui-designer:scene-delete:execute')!(null, {
+    project,
+    path: scenePath('Scene_Delete'),
+    expected: inspectedDelete.value.metadata,
+  })
+  assert.equal(deleted.status, 'success')
+  assert.equal(fs.existsSync(scenePath('Scene_Delete')), false)
+  assert.deepEqual(trashed, [path.resolve(scenePath('Scene_Delete'))])
+  assert.equal(removedRecent.includes(path.resolve(scenePath('Scene_Delete'))), true)
+  assert.deepEqual(removedRecoverySources, [path.resolve(scenePath('Scene_Delete'))])
+
+  writeScene('Scene_Delete_Partial', 'delete with cleanup warning')
+  const inspectedPartialDelete = await handlers.get('ui-designer:scene-delete:inspect')!(null, { project, path: scenePath('Scene_Delete_Partial') })
+  cleanupFailure = true
+  const partialDelete = await handlers.get('ui-designer:scene-delete:execute')!(null, {
+    project,
+    path: scenePath('Scene_Delete_Partial'),
+    expected: inspectedPartialDelete.value.metadata,
+  })
+  cleanupFailure = false
+  assert.equal(partialDelete.status, 'success')
+  assert.deepEqual(partialDelete.value.cleanupWarnings.map((warning: { kind: string }) => warning.kind), ['recent-file', 'recovery'])
+  assert.equal(fs.existsSync(scenePath('Scene_Delete_Partial')), false)
+
   const globalSaved = await handlers.get('ui-designer:global-data:save')!(null, { project }, { menuList: [] })
   assert.equal(globalSaved.status, 'success')
   assert.equal(fs.existsSync(path.join(project, 'data', 'GlobalUI.json')), true)
@@ -148,6 +193,7 @@ test('scene IPC saves directly in the current project and keeps overwrite semant
   assert.equal(removed.includes('ui-designer:file:save-as'), true)
   assert.equal(removed.includes('ui-designer:file:import'), true)
   assert.equal(removed.includes('ui-designer:global-data:save'), true)
+  assert.equal(removed.includes('ui-designer:scene-delete:execute'), true)
   assert.equal(removed.includes('ui-designer:scene:stage'), false)
   fs.rmSync(project, { recursive: true, force: true })
 })

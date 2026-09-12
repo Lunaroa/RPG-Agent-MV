@@ -6,7 +6,10 @@ import type {
   UiDesignerDocument,
   UiDesignerGlobalDataReadResult,
   UiDesignerGlobalDataValue,
+  UiDesignerSceneDeleteInspection,
   UiDesignerSceneFileRecord,
+  UiDesignerSceneReference,
+  UiEventName,
   UiFileResult,
 } from '../../../../contract/ui-designer.ts';
 import { normalizeUiDesignerPaneSize } from '../../../../contract/ui-designer-geometry.ts';
@@ -260,6 +263,103 @@ export function listUiDesignerSceneFiles(projectRoot: string): UiDesignerSceneFi
   return records.sort((left, right) => left.path.localeCompare(right.path));
 }
 
+function sameResolvedPath(left: string, right: string): boolean {
+  const normalizedLeft = path.resolve(left);
+  const normalizedRight = path.resolve(right);
+  return process.platform === 'win32'
+    ? normalizedLeft.toLocaleLowerCase() === normalizedRight.toLocaleLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
+function readCanonicalProjectUiDesignerScene(projectRoot: string, requestedPath: string): UiDesignerReadResult {
+  const root = path.resolve(projectRoot);
+  const sourcePath = path.resolve(String(requestedPath || ''));
+  if (!fs.existsSync(root)) throw new UiDesignerPersistenceError('inspect-scene-deletion', 'The selected RPG Maker project does not exist.');
+  migrateLegacyProjectUiDesignerScenes(root);
+  const sceneDirectory = path.resolve(projectUiDesignerSceneDirectory(root));
+  if (!isPathWithin(sceneDirectory, sourcePath) || !sameResolvedPath(path.dirname(sourcePath), sceneDirectory)) {
+    throw new UiDesignerPersistenceError('inspect-scene-deletion', 'Only a canonical scene file in the current project can be deleted.');
+  }
+  if (!fs.existsSync(sourcePath)) throw new UiDesignerPersistenceError('inspect-scene-deletion', 'The selected UI scene no longer exists.');
+  const stat = fs.lstatSync(sourcePath);
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new UiDesignerPersistenceError('inspect-scene-deletion', 'The selected UI scene is not a safe regular file.');
+  }
+  const realRoot = fs.realpathSync.native(root);
+  const realSource = fs.realpathSync.native(sourcePath);
+  if (!isPathWithin(realRoot, realSource)) {
+    throw new UiDesignerPersistenceError('inspect-scene-deletion', 'The selected UI scene resolves outside the current project.');
+  }
+  const read = readUiDesignerFile(sourcePath);
+  const canonicalPath = projectUiDesignerScenePath(root, read.document.meta.sceneName);
+  if (!sameResolvedPath(sourcePath, canonicalPath)) {
+    throw new UiDesignerPersistenceError('inspect-scene-deletion', 'The selected UI scene filename does not match its scene name.');
+  }
+  return read;
+}
+
+export function inspectProjectUiDesignerSceneDeletion(projectRoot: string, requestedPath: string): UiDesignerSceneDeleteInspection {
+  const target = readCanonicalProjectUiDesignerScene(projectRoot, requestedPath);
+  const references: UiDesignerSceneReference[] = [];
+  for (const scene of listUiDesignerSceneFiles(projectRoot)) {
+    if (sameResolvedPath(scene.sourcePath, target.metadata.path)) continue;
+    const document = readUiDesignerFile(scene.sourcePath).document;
+    for (const node of document.nodes) {
+      for (const [event, handler] of Object.entries(node.events)) {
+        for (const action of handler?.actions ?? []) {
+          if (action.type !== 'gotoScene' || action.sceneName !== target.document.meta.sceneName) continue;
+          references.push({
+            sourcePath: scene.sourcePath,
+            sceneName: scene.sceneName,
+            nodeId: node.id,
+            nodeName: node.name,
+            event: event as UiEventName,
+          });
+        }
+      }
+    }
+  }
+  return {
+    sourcePath: target.metadata.path,
+    sceneName: target.document.meta.sceneName,
+    metadata: target.metadata,
+    references,
+  };
+}
+
+export async function trashProjectUiDesignerScene(
+  projectRoot: string,
+  requestedPath: string,
+  expected: Partial<Pick<UiDesignerFileMetadata, 'digest' | 'mtimeMs'>> | undefined,
+  trashItem: (sourcePath: string) => Promise<void>,
+): Promise<UiDesignerSceneDeleteInspection> {
+  const inspection = inspectProjectUiDesignerSceneDeletion(projectRoot, requestedPath);
+  if (expected && !matchesExpected(inspection.metadata, expected)) {
+    throw new UiDesignerFileConflictError(inspection.sourcePath, expected, inspection.metadata);
+  }
+  await trashItem(inspection.sourcePath);
+  return inspection;
+}
+
+export function removeProjectUiDesignerThumbnail(projectRoot: string, sceneName: string): boolean {
+  if (!UI_SCENE_NAME_PATTERN.test(sceneName)) throw new Error(`UI designer scene name is invalid: ${sceneName}`);
+  const root = path.resolve(projectRoot);
+  const thumbnailDirectory = path.resolve(projectUiDesignerThumbnailDirectory(root));
+  const thumbnailPath = path.join(thumbnailDirectory, `${sceneName}.png`);
+  if (!fs.existsSync(thumbnailPath)) return false;
+  const realRoot = fs.realpathSync.native(root);
+  const realThumbnailDirectory = fs.realpathSync.native(thumbnailDirectory);
+  if (!isPathWithin(realRoot, realThumbnailDirectory)) {
+    throw new UiDesignerPersistenceError('delete-scene-thumbnail', 'The UI scene thumbnail directory resolves outside the current project.');
+  }
+  const stat = fs.lstatSync(thumbnailPath);
+  if (!stat.isFile() && !stat.isSymbolicLink()) {
+    throw new UiDesignerPersistenceError('delete-scene-thumbnail', 'The UI scene thumbnail is not a safe file entry.');
+  }
+  fs.rmSync(thumbnailPath, { force: true });
+  return true;
+}
+
 function normalizePanePreferences(value: Record<string, unknown>): Record<string, unknown> {
   const next = { ...value };
   if ('leftPaneWidth' in next) next.leftPaneWidth = normalizeUiDesignerPaneSize('left', next.leftPaneWidth);
@@ -487,6 +587,14 @@ export class UiDesignerUserDataStore {
       if (fs.existsSync(snapshotPath)) fs.rmSync(snapshotPath, { force: true });
     }
     this.writeRecoveryRecords(records.filter((record) => record.id !== id));
+  }
+
+  removeRecoveryForSource(filePath: string): string[] {
+    const records = this.listRecovery();
+    const removed = records.filter((record) => record.sourcePath && sameResolvedPath(record.sourcePath, filePath));
+    if (!removed.length) return [];
+    this.writeRecoveryRecords(records.filter((record) => !removed.some((target) => target.id === record.id)));
+    return removed.map((record) => record.id);
   }
 
   readRecovery(id: string): { record: UiDesignerRecoveryRecord; document: UiDesignerDocument } {

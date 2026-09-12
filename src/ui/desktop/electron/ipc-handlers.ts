@@ -564,6 +564,7 @@ async function loadBackendModules(roots: AppRoots) {
     workflowRoot: roots.installRoot,
     dialogParent: (sender) => BrowserWindow.fromWebContents(sender as Electron.WebContents) || undefined,
     resolveProject: (project?: string) => desktop.project.resolveProjectPath(roots.installRoot, project),
+    trashItem: (sourcePath: string) => shell.trashItem(sourcePath),
     file: {
       ...desktop.uiDesigner.file,
       revealSource: (filePath: string) => shell.showItemInFolder(filePath),

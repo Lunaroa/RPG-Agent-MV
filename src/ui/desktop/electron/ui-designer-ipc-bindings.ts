@@ -18,6 +18,8 @@ import type {
   UiDesignerResourceRequest,
   UiDesignerSceneDataReadRequest,
   UiDesignerSceneDataReadResult,
+  UiDesignerSceneDeleteInspection,
+  UiDesignerSceneDeleteRequest,
   UiDesignerRendererHostSession,
   UiDesignerRendererResourceSyncRequest,
   UiDesignerRendererResourceSyncResult,
@@ -32,6 +34,7 @@ export interface UiDesignerIpcDependencies {
   workflowRoot: string
   dialogParent?(sender: unknown): BrowserWindow | undefined
   resolveProject(project?: string): string
+  trashItem(sourcePath: string): Promise<void>
   file: {
     readUiDesignerFile(filePath: string): { document: UiDesignerDocument; metadata: UiDesignerFileMetadata }
     saveUiDesignerFile(filePath: string, document: UiDesignerDocument, options?: UiDesignerFileRequest): UiDesignerFileMetadata
@@ -40,6 +43,9 @@ export interface UiDesignerIpcDependencies {
     readProjectUiDesignerGlobalData(project: string): UiDesignerGlobalDataReadResult
     saveProjectUiDesignerGlobalData(project: string, data: UiDesignerGlobalDataValue, options?: UiDesignerGlobalDataRequest): UiDesignerFileMetadata
     writeProjectUiDesignerThumbnail(project: string, sceneName: string, dataUrl: string): string
+    inspectProjectUiDesignerSceneDeletion(project: string, sourcePath: string): UiDesignerSceneDeleteInspection
+    trashProjectUiDesignerScene(project: string, sourcePath: string, expected: UiDesignerSceneDeleteRequest['expected'], trashItem: (sourcePath: string) => Promise<void>): Promise<UiDesignerSceneDeleteInspection>
+    removeProjectUiDesignerThumbnail(project: string, sceneName: string): boolean
     revealSource(filePath: string): void
     UiDesignerUserDataStore: new (root: string) => UiDesignerUserDataStoreLike
   }
@@ -76,6 +82,7 @@ interface UiDesignerUserDataStoreLike {
   listRecovery(): UiDesignerRecoveryRecord[]
   readRecovery(id: string): { record: UiDesignerRecoveryRecord; document: UiDesignerDocument }
   clearRecovery(id: string): void
+  removeRecoveryForSource(path: string): string[]
   readPreferences(): Record<string, unknown>
   writePreferences(value: Record<string, unknown>): void
 }
@@ -289,6 +296,54 @@ export function registerUiDesignerIpcHandlers(
     } catch (error) { return uiDesignerOperationError('scenes:list', error) }
   })
 
+  ipcMain.handle('ui-designer:scene-delete:inspect', (_event, request: Pick<UiDesignerSceneDeleteRequest, 'path' | 'project'>) => {
+    try {
+      if (typeof request?.project !== 'string' || !request.project.trim()) {
+        throw Object.assign(new Error('A selected RPG Maker project is required.'), { code: 'UI_DESIGNER_PROJECT_REQUIRED' })
+      }
+      if (typeof request?.path !== 'string' || !request.path.trim()) {
+        throw Object.assign(new Error('A project scene source path is required.'), { code: 'UI_DESIGNER_PROJECT_SCENE_REQUIRED' })
+      }
+      const project = dependencies.resolveProject(request.project)
+      const value = dependencies.file.inspectProjectUiDesignerSceneDeletion(project, request.path)
+      return { status: 'success', operation: 'scene-delete:inspect', value, message: 'Scene deletion is ready for confirmation.' }
+    } catch (error) { return uiDesignerOperationError('scene-delete:inspect', error) }
+  })
+
+  ipcMain.handle('ui-designer:scene-delete:execute', async (_event, request: UiDesignerSceneDeleteRequest) => {
+    try {
+      if (typeof request?.project !== 'string' || !request.project.trim()) {
+        throw Object.assign(new Error('A selected RPG Maker project is required.'), { code: 'UI_DESIGNER_PROJECT_REQUIRED' })
+      }
+      if (typeof request?.path !== 'string' || !request.path.trim() || !request.expected) {
+        throw Object.assign(new Error('A confirmed project scene deletion request is required.'), { code: 'UI_DESIGNER_DELETE_CONFIRMATION_REQUIRED' })
+      }
+      const project = dependencies.resolveProject(request.project)
+      const inspection = await dependencies.file.trashProjectUiDesignerScene(project, request.path, request.expected, dependencies.trashItem)
+      const cleanupWarnings: Array<{ kind: 'project-thumbnail' | 'recent-file' | 'recovery'; message: string }> = []
+      try { dependencies.file.removeProjectUiDesignerThumbnail(project, inspection.sceneName) }
+      catch (error) { cleanupWarnings.push({ kind: 'project-thumbnail', message: error instanceof Error ? error.message : String(error) }) }
+      let store: UiDesignerUserDataStoreLike | undefined
+      try { store = dependencies.userDataStore() }
+      catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        cleanupWarnings.push({ kind: 'recent-file', message }, { kind: 'recovery', message })
+      }
+      if (store) {
+        try { store.removeRecentFile(inspection.sourcePath) }
+        catch (error) { cleanupWarnings.push({ kind: 'recent-file', message: error instanceof Error ? error.message : String(error) }) }
+        try { store.removeRecoveryForSource(inspection.sourcePath) }
+        catch (error) { cleanupWarnings.push({ kind: 'recovery', message: error instanceof Error ? error.message : String(error) }) }
+      }
+      return {
+        status: 'success',
+        operation: 'scene-delete:execute',
+        value: { sourcePath: inspection.sourcePath, sceneName: inspection.sceneName, cleanupWarnings },
+        message: cleanupWarnings.length ? 'Scene moved to the Recycle Bin, but some derived data could not be cleaned.' : 'Scene moved to the Recycle Bin.',
+      }
+    } catch (error) { return uiDesignerOperationError('scene-delete:execute', error) }
+  })
+
   ipcMain.handle('ui-designer:resources:list', async (_event, request: UiDesignerResourceRequest = {}) => {
     try { return { status: 'success', value: await dependencies.resources.inspectUiDesignerResourcesAsync(dependencies.resolveProject(request.project), request), message: 'Ready.' } }
     catch (error) { return uiDesignerOperationError('resources:list', error) }
@@ -432,7 +487,7 @@ function safeStoreCall(
 export function cleanupUiDesignerIpcHandlers(ipcMain: Pick<IpcMain, 'removeHandler'>): void {
   for (const channel of [
     'ui-designer:file:open', 'ui-designer:file:import', 'ui-designer:file:save', 'ui-designer:file:save-as', 'ui-designer:file:reveal-source',
-    'ui-designer:project:profile', 'ui-designer:scenes:list',
+    'ui-designer:project:profile', 'ui-designer:scenes:list', 'ui-designer:scene-delete:inspect', 'ui-designer:scene-delete:execute',
     'ui-designer:resources:list', 'ui-designer:resources:references', 'ui-designer:resources:read-scene-data', 'ui-designer:file:select-frame-folder', 'ui-designer:runtime:check',
     'ui-designer:global-data:read', 'ui-designer:global-data:save', 'ui-designer:recovery:list', 'ui-designer:recovery:write', 'ui-designer:recovery:read',
     'ui-designer:renderer:start', 'ui-designer:renderer:confirm', 'ui-designer:renderer:stop', 'ui-designer:renderer:sync-resources',

@@ -9,6 +9,9 @@ import type {
   UiDesignerFileConflict,
   UiDesignerRecentFileRecord,
   UiDesignerSceneFileRecord,
+  UiDesignerSceneDeleteInspection,
+  UiDesignerSceneDeleteResult,
+  UiEventName,
   UiDesignerRecoveryRecord,
   UiDesignerProjectProfileResult,
   UiDesignerResourceRequest,
@@ -142,6 +145,8 @@ const cloneCatalog = (catalog: UiProjectResourceCatalog): UiProjectResourceCatal
   ...catalog,
   resources: catalog.resources.map((resource) => ({ ...resource })),
 })
+
+const uiDesignerSourcePathKey = (value: string | undefined) => String(value ?? '').replace(/\\/g, '/').toLocaleLowerCase()
 
 let sceneSequence = 0
 const DEFAULT_HISTORY_LIMIT = 100
@@ -1574,6 +1579,92 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     fileConflict.value = null
   }
 
+  const inspectSceneDeletion = async (sourcePath: string): Promise<UiDesignerSceneDeleteInspection | null> => {
+    if (!canSave.value || !projectPath.value?.trim() || !sourcePath.trim()) return null
+    fileStatus.value = 'busy'
+    fileMessage.value = ''
+    try {
+      const result = await adapters.file.inspectSceneDeletion(sourcePath)
+      fileStatus.value = result.status
+      fileMessage.value = result.message
+      if (result.status !== 'success' || !result.value) return null
+      const references = [...result.value.references]
+      const targetPathKey = uiDesignerSourcePathKey(result.value.sourcePath)
+      for (const scene of scenes.value) {
+        if (uiDesignerSourcePathKey(scene.sourcePath) === targetPathKey) continue
+        for (const node of scene.document.nodes) {
+          for (const [event, handler] of Object.entries(node.events)) {
+            for (const action of handler?.actions ?? []) {
+              if (action.type !== 'gotoScene' || action.sceneName !== result.value.sceneName) continue
+              references.push({ sourcePath: scene.sourcePath ?? '', sceneName: scene.document.meta.sceneName, nodeId: node.id, nodeName: node.name, event: event as UiEventName })
+            }
+          }
+        }
+      }
+      const uniqueReferences = [...new Map(references.map((reference) => [
+        `${uiDesignerSourcePathKey(reference.sourcePath)}\u0000${reference.sceneName}\u0000${reference.nodeId}\u0000${reference.event}`,
+        reference,
+      ] as const)).values()]
+      return { ...result.value, references: uniqueReferences }
+    } catch (error) {
+      fileStatus.value = 'error'
+      fileMessage.value = error instanceof Error ? error.message : String(error)
+      return null
+    } finally {
+      if (fileStatus.value === 'busy') fileStatus.value = 'error'
+    }
+  }
+
+  const deleteScene = async (inspection: UiDesignerSceneDeleteInspection): Promise<UiDesignerSceneDeleteResult | null> => {
+    if (!canSave.value || !projectPath.value?.trim()) return null
+    if (isEditorPreviewing.value || previewExecutionMode.value === 'editor-preview') stopEditorPreview()
+    if ((isPreviewing.value || gamePreviewRunId || gamePreviewStartPromise) && !(await stopPreview())) return null
+    fileStatus.value = 'busy'
+    fileMessage.value = ''
+    try {
+      const result = await adapters.file.deleteScene({
+        path: inspection.sourcePath,
+        expected: { digest: inspection.metadata.digest, mtimeMs: inspection.metadata.mtimeMs },
+      })
+      fileStatus.value = result.status
+      fileMessage.value = result.message
+      if (result.status !== 'success' || !result.value) return null
+
+      const sourcePath = result.value.sourcePath
+      const sourcePathKey = uiDesignerSourcePathKey(sourcePath)
+      const previousScenes = scenes.value
+      const removedScenes = previousScenes.filter((scene) => uiDesignerSourcePathKey(scene.sourcePath) === sourcePathKey)
+      const activeIndex = previousScenes.findIndex((scene) => scene.id === activeSceneId.value)
+      for (const scene of removedScenes) {
+        draftCoordinator.cancel(scene.id)
+        delete draftCode.value[scene.id]
+        const timer = recoveryTimers.get(scene.id)
+        if (timer) clearTimeout(timer)
+        recoveryTimers.delete(scene.id)
+      }
+      if (removedScenes.length) {
+        const removedIds = new Set(removedScenes.map((scene) => scene.id))
+        scenes.value = previousScenes.filter((scene) => !removedIds.has(scene.id))
+        if (removedIds.has(activeSceneId.value)) {
+          activeSceneId.value = scenes.value[Math.max(0, Math.min(scenes.value.length - 1, activeIndex - 1))]?.id ?? ''
+          selectedIds.value = [activeScene.value?.document.zOrder[0] ?? 'node_root']
+        }
+      }
+      const cleanupFailures = new Set(result.value.cleanupWarnings.map((warning) => warning.kind))
+      sceneFiles.value = sceneFiles.value.filter((scene) => uiDesignerSourcePathKey(scene.sourcePath) !== sourcePathKey)
+      if (!cleanupFailures.has('recent-file')) recentFiles.value = recentFiles.value.filter((record) => uiDesignerSourcePathKey(record.sourcePath) !== sourcePathKey)
+      if (!cleanupFailures.has('recovery')) recoveryRecords.value = recoveryRecords.value.filter((record) => uiDesignerSourcePathKey(record.sourcePath) !== sourcePathKey)
+      void refreshSceneFiles()
+      return result.value
+    } catch (error) {
+      fileStatus.value = 'error'
+      fileMessage.value = error instanceof Error ? error.message : String(error)
+      return null
+    } finally {
+      if (fileStatus.value === 'busy') fileStatus.value = 'error'
+    }
+  }
+
   const importSceneFile = async () => {
     if (!canSave.value || !hasProject.value) {
       fileStatus.value = 'unavailable'
@@ -2202,6 +2293,8 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     open,
     importSceneFile,
     loadWelcomeRecords,
+    inspectSceneDeletion,
+    deleteScene,
     removeRecentFile,
     removeRecovery,
     restoreRecovery,

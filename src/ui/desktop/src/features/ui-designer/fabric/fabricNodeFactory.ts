@@ -347,8 +347,9 @@ const textShadow = (node: UiTextNode | UiButtonNode) => node.props.shadowBlur ||
 const applyTextStyle = (object: Textbox, node: UiTextNode | UiButtonNode, fontFamily?: string, native?: UiFabricNativeTextProfile) => {
   const strokeWidth = node.props.strokeWidth > 0 ? node.props.strokeWidth : (native?.outline?.width ?? 0)
   const strokeColor = node.props.strokeWidth > 0 ? node.props.strokeColor : native?.outline?.color
+  const content = node.type === 'button' ? normalizeUiSingleLineText(node.props.content) : String(node.props.content ?? '')
   object.set({
-    text: normalizeUiSingleLineText(node.props.content),
+    text: content,
     width: Math.max(20, node.props.width),
     height: Math.max(20, node.props.height),
     fontSize: node.props.fontSize,
@@ -369,7 +370,7 @@ const applyTextStyle = (object: Textbox, node: UiTextNode | UiButtonNode, fontFa
     editable: !node.locked,
     lockScalingY: node.locked,
     ...(object instanceof UiLayoutTextbox
-      ? { layoutHeight: Math.max(20, node.props.height), verticalTextAlign: node.props.verticalAlign }
+      ? { layoutHeight: Math.max(20, node.props.height), verticalTextAlign: node.props.verticalAlign, singleLine: node.type === 'button' }
       : {}),
   })
   object.setCoords()
@@ -384,6 +385,7 @@ const createTextNode = (node: UiTextNode | UiButtonNode, fontFamily?: string, na
     scaleX: node.props.scaleX,
     scaleY: node.props.scaleY,
     splitByGrapheme: true,
+    singleLine: node.type === 'button',
     editable: !node.locked,
     backgroundColor: node.props.backgroundColor,
   })
@@ -413,6 +415,7 @@ const createButtonNode = async (node: UiButtonNode, catalog: UiProjectResourceCa
     scaleX: node.props.scaleX,
     scaleY: node.props.scaleY,
     splitByGrapheme: true,
+    singleLine: true,
     editable: !node.locked,
     backgroundColor: '#00000000',
     stateImageElement,
@@ -616,7 +619,7 @@ export function applyFabricNodeGeometry(object: UiFabricNodeObject, node: UiNode
     // though its hidden textarea no longer has focus. Inline typing already
     // changed object.text, while Inspector typing changes the document first.
     // Sync the latter immediately without disturbing the former's caret.
-    const presentedContent = normalizeUiSingleLineText(node.props.content)
+    const presentedContent = node.type === 'button' ? normalizeUiSingleLineText(node.props.content) : String(node.props.content ?? '')
     const textSync = resolveUiFabricTextPresentationSync(object.isEditing, object.text, presentedContent)
     if (textSync.shouldSync) {
       applyTextStyle(object, node, object.data.fontFamily, object.data.nativeTextProfile)

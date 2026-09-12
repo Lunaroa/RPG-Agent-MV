@@ -10,7 +10,7 @@ test('layout textbox preserves explicit height while text changes', () => {
   expect(resolveUiLayoutTextboxTop(150, 28, 'bottom')).toBe(47)
 })
 
-test('single-line text flattens line breaks and compresses only horizontally', () => {
+test('button text flattens line breaks and overflowing text compresses only horizontally', () => {
   expect(normalizeUiSingleLineText('line one\r\nline two\nline three')).toBe('line one line two line three')
   expect(resolveUiSingleLineScale(100, 250)).toBe(0.4)
   expect(resolveUiSingleLineScale(250, 100)).toBe(1)

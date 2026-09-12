@@ -5,6 +5,7 @@ import { normalizeUiSingleLineText, resolveUiSingleLineLeft, resolveUiSingleLine
 export type UiLayoutTextboxOptions = Partial<TextboxProps> & {
   layoutHeight: number
   verticalTextAlign: UiTextVerticalAlign
+  singleLine?: boolean
   editable?: boolean
 }
 
@@ -27,9 +28,11 @@ export class UiLayoutTextbox extends Textbox<UiLayoutTextboxOptions> {
   declare textContentHeight: number
   declare naturalTextWidth: number
   declare horizontalTextScale: number
+  declare singleLine: boolean
 
   override _wrapText(lines: string[], _desiredWidth: number): string[][] {
-    return [this.graphemeSplit(normalizeUiSingleLineText(lines.join(' ')))]
+    if (this.singleLine) return [this.graphemeSplit(normalizeUiSingleLineText(lines.join(' ')))]
+    return lines.map((line) => this.graphemeSplit(line))
   }
 
   override initDimensions() {
@@ -38,7 +41,7 @@ export class UiLayoutTextbox extends Textbox<UiLayoutTextboxOptions> {
     if (!this.initialized) return
     this.width = layoutWidth
     this.dynamicMinWidth = 0
-    this.naturalTextWidth = this.getLineWidth(0)
+    this.naturalTextWidth = this._textLines.reduce((maximum, _line, index) => Math.max(maximum, this.getLineWidth(index)), 0)
     this.horizontalTextScale = resolveUiSingleLineScale(this.width, this.naturalTextWidth)
     this.textContentHeight = this.height
     this.height = resolveUiLayoutTextboxHeight(this.layoutHeight, this.textContentHeight)
@@ -50,16 +53,20 @@ export class UiLayoutTextbox extends Textbox<UiLayoutTextboxOptions> {
   }
 
   override _renderTextCommon(ctx: CanvasRenderingContext2D, method: 'fillText' | 'strokeText') {
-    const line = this._textLines[0] ?? []
-    if (!line.length) return
     const naturalWidth = Number.isFinite(this.naturalTextWidth) ? this.naturalTextWidth : this.getLineWidth(0)
     const horizontalScale = resolveUiSingleLineScale(this.width, naturalWidth)
     const align = this.textAlign === 'center' || this.textAlign === 'right' ? this.textAlign : 'left'
-    const left = resolveUiSingleLineLeft(this.width, naturalWidth, horizontalScale, align)
-    const top = this._getTopOffset() + this.getHeightOfLine(0) / this.lineHeight
+    const top = this._getTopOffset()
+    let lineHeights = 0
     ctx.save()
     ctx.scale(horizontalScale, 1)
-    this._renderTextLine(method, ctx, line, left / horizontalScale, top, 0)
+    for (let index = 0; index < this._textLines.length; index += 1) {
+      const line = this._textLines[index] ?? []
+      const lineWidth = this.getLineWidth(index)
+      const left = resolveUiSingleLineLeft(this.width, lineWidth, horizontalScale, align)
+      this._renderTextLine(method, ctx, line, left / horizontalScale, top + lineHeights + this.getHeightOfLine(index) / this.lineHeight, index)
+      lineHeights += this.getHeightOfLine(index)
+    }
     ctx.restore()
   }
 

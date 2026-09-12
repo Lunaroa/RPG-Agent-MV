@@ -496,7 +496,7 @@ onMounted(() => {
     const object = event.target
     const node = objectNode(object)
     if (object instanceof Textbox && node && (node.type === 'text' || node.type === 'button')) {
-      const content = normalizeUiSingleLineText(object.text)
+      const content = node.type === 'button' ? normalizeUiSingleLineText(object.text) : String(object.text ?? '')
       if (content !== object.text) {
         const selection = Math.min(content.length, object.selectionStart)
         object.set({ text: content })

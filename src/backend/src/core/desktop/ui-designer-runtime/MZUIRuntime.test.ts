@@ -442,14 +442,17 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     assert.equal(runs.some((run: any) => run.bold === true), true);
     assert.equal(runs.some((run: any) => run.color === '#ff0000'), true);
     assert.equal(runs.some((run: any) => run.kind === 'icon' && run.iconId === 2), true);
+    const manualLineRuns = context.MZUIRuntime.parseTextRuns('First line\r\nSecond line', {});
+    assert.equal(manualLineRuns.filter((run: any) => run.kind === 'newline').length, 1);
     const scene = allNodeScene();
     const text = scene.nodes.find((node: any) => node.type === 'text');
     text.props.richText = true;
-    text.props.content = '<b>Safe</b> <script>ignored-as-text</script>';
+    text.props.content = '<b>Safe</b>\nSecond line';
     const runtime = context.MZUIRuntime.create();
     runtime.mount(scene, { root: new context.PIXI.Container() });
     assert.equal(runtime.nodeViews.text.__mzuiRichText, 'safe-runs');
     assert.ok(runtime.nodeViews.text.children.length > 0);
+    assert.equal(runtime.nodeViews.text.children.some((child: any) => child.y > runtime.nodeViews.text.children[0].y), true);
     runtime.cleanup();
   });
 
@@ -2453,7 +2456,7 @@ function assertEngineWindowTextSignature(engine: 'MV' | 'MZ'): void {
   assert.equal(runtime.nodeViews.text.style.fontFamily, expectedFace);
   assert.equal(runtime.nodeViews.text.style.stroke, 'rgba(0, 0, 0, 0.5)');
   assert.equal(runtime.nodeViews.text.style.strokeThickness, expectedOutlineWidth);
-  assert.equal(runtime.nodeViews.text.text, 'line one line two');
+  assert.equal(runtime.nodeViews.text.text, 'line one\nline two');
   // wrapWidth enables PIXI word wrap at that width (with mid-word breaks for CJK).
   assert.equal(runtime.nodeViews.text.style.wordWrap, true);
   assert.equal(runtime.nodeViews.text.style.wordWrapWidth, 40);

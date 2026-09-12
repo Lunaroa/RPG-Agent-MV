@@ -356,7 +356,7 @@ describe('ui designer export and validation', () => {
     assert.throws(() => exportRuntimeDocument(document), UiExportValidationError)
   })
 
-  test('checks property and condition code as expressions alongside the scene script', () => {
+  test('checks only active property code and allows an empty active expression to fall back to its value', () => {
     const document = createUiDocument()
     const text = createDefaultNode('text', { id: 'text_expression', name: 'ExpressionText', parentId: 'node_root' })
     text.propCodes.content = '1 + 2'
@@ -365,7 +365,27 @@ describe('ui designer export and validation', () => {
     document.nodes[0].children.push(text.id)
     assert.equal(validateDocument(document).valid, true)
     text.propCodes.content = 'if ('
+    assert.equal(validateDocument(document).valid, true, 'an inactive draft must not block saving')
+    text.propModes.content = 'code'
     assert.equal(validateDocument(document).valid, false)
+    text.propCodes.content = ''
+    const emptyCodeReport = validateDocument(document)
+    assert.equal(emptyCodeReport.valid, true)
+    assert.ok(emptyCodeReport.warnings.some((issue) => issue.code === 'empty-code' && issue.path === 'propCodes.content'))
+    text.propCodes.content = '1 + 2'
+    assert.equal(validateDocument(document).valid, true)
+  })
+
+  test('rejects code mode for list layout properties that cannot dynamically reflow', () => {
+    const document = createUiDocument()
+    const list = createDefaultNode('list', { id: 'list_expression', name: 'ExpressionList', parentId: 'node_root' })
+    list.propModes.columnWidths = 'code'
+    list.propCodes.columnWidths = '[120, 80]'
+    document.nodes.push(list)
+    document.nodes[0].children.push(list.id)
+    const report = validateDocument(document)
+    assert.equal(report.valid, false)
+    assert.ok(report.errors.some((issue) => issue.code === 'invalid-code' && issue.path === 'propModes.columnWidths'))
   })
 
   test('allows finite negative variable values and tween targets but keeps ids and timing non-negative', () => {

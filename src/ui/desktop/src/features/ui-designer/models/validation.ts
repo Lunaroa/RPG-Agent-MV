@@ -5,6 +5,11 @@ import { validateTreeInvariants } from './tree'
 
 export const isValidUiDesignerSceneName = (name: string): boolean => /^Scene_[A-Za-z0-9_$]+$/.test(name)
 
+const LIST_STATIC_LAYOUT_PROP_KEYS = new Set([
+  'width', 'height', 'columns', 'rows', 'autoFlow', 'columnGap', 'rowGap', 'justifyItems', 'alignItems',
+  'maxItems', 'columnWidths', 'rowHeights', 'maxWidth', 'maxHeight',
+])
+
 function codeSyntaxIssue(code: string, label: string, kind: 'expression' | 'body' = 'body'): string | null {
   if (!code.trim()) return null
   try {
@@ -89,11 +94,16 @@ function validateNode(node: UiNode, document: UiDesignerDocument): UiValidationI
     issues.push({ severity: 'warning', code: 'unnamed-node', message: `Node ${node.name} still uses a generated name`, nodeId: node.id, nodeName: node.name })
   }
   for (const [property, mode] of Object.entries(node.propModes)) {
-    if (mode === 'code' && !(node.propCodes[property] ?? '').trim()) {
-      issues.push({ severity: 'warning', code: 'empty-code', message: `Code mode property ${property} has no expression`, nodeId: node.id, nodeName: node.name, path: `propCodes.${property}` })
+    if (mode !== 'code') continue
+    if (node.type === 'list' && LIST_STATIC_LAYOUT_PROP_KEYS.has(property)) {
+      issues.push({ severity: 'error', code: 'invalid-code', message: `List layout property ${property} only supports value mode`, nodeId: node.id, nodeName: node.name, path: `propModes.${property}` })
+      continue
     }
-  }
-  for (const [property, code] of Object.entries(node.propCodes)) {
+    const code = node.propCodes[property] ?? ''
+    if (!code.trim()) {
+      issues.push({ severity: 'warning', code: 'empty-code', message: `Code mode property ${property} has no expression`, nodeId: node.id, nodeName: node.name, path: `propCodes.${property}` })
+      continue
+    }
     const message = codeSyntaxIssue(code, `${property} expression on ${node.name}`, 'expression')
     if (message) issues.push({ severity: 'error', code: 'invalid-code', message, nodeId: node.id, nodeName: node.name, path: `propCodes.${property}` })
   }

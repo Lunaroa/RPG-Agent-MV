@@ -1087,7 +1087,7 @@
 
   function materializeOneRuntimeList(runtime, scene, listNode) {
     var source = listNode.props && listNode.props.dataSource;
-    if (listNode.propModes && listNode.propModes.dataSource === 'code' && listNode.propCodes && typeof listNode.propCodes.dataSource === 'string') source = listNode.propCodes.dataSource;
+    if (listNode.propModes && listNode.propModes.dataSource === 'code' && listNode.propCodes && typeof listNode.propCodes.dataSource === 'string' && listNode.propCodes.dataSource.trim()) source = listNode.propCodes.dataSource;
     var compiled = compileExpression(typeof source === 'string' ? source : '[]', CODE_ARGUMENTS);
     var items = runtime.invoke(compiled, runtime.makeInvocationArgs(listNode, null, listNode.props || {}), 'list:dataSource', 'list:' + listNode.id + ':dataSource', { node: listNode.id, type: 'list' });
     if (!Array.isArray(items)) {

@@ -77,7 +77,7 @@ const BASE_PROP_KEYS = [
 const BASE_NUMERIC_PROP_KEYS = BASE_PROP_KEYS.filter((key) => key !== 'visible');
 const TYPE_PROP_KEYS: Record<string, readonly string[]> = {
   container: ['backgroundPath', 'backgroundFillMode', 'backgroundRepeatMode', 'clip'],
-  list: ['dataSource', 'columns', 'rows', 'autoFlow', 'columnGap', 'rowGap', 'justifyItems', 'alignItems', 'maxItems'],
+  list: ['dataSource', 'columns', 'rows', 'autoFlow', 'columnGap', 'rowGap', 'justifyItems', 'alignItems', 'maxItems', 'columnWidths', 'rowHeights', 'maxWidth', 'maxHeight'],
   sprite: ['path', 'fillMode', 'repeatMode', 'tint', 'blendMode', 'scrollX', 'scrollY'],
   nineSlice: ['path', 'borderTop', 'borderRight', 'borderBottom', 'borderLeft', 'showGuides'],
   frameAnimation: ['defaultFrameDuration', 'loop', 'speed', 'initialFrame', 'frames', 'fillMode'],
@@ -115,6 +115,10 @@ const TYPE_PROP_KEYS: Record<string, readonly string[]> = {
 const SUB_PROP_KEYS: Record<string, readonly string[]> = {
   button: ['imageStates.normal', 'imageStates.hover', 'imageStates.pressed', 'imageStates.disabled'],
 };
+const LIST_STATIC_LAYOUT_PROP_KEYS = new Set([
+  'width', 'height', 'columns', 'rows', 'autoFlow', 'columnGap', 'rowGap', 'justifyItems', 'alignItems',
+  'maxItems', 'columnWidths', 'rowHeights', 'maxWidth', 'maxHeight',
+]);
 
 export class UiDesignerValidationError extends Error {
   readonly code = 'UI_DESIGNER_VALIDATION';
@@ -226,7 +230,7 @@ export function validateUiDesignerDocument(value: unknown): UiValidationReport {
       if (isUiDesignerNodeType(node.type)) {
         validateNodeTypeProps(node.type, node.props, addError, addWarning, nodePath, id || undefined);
       }
-      validatePropertyModes(node.propModes, node.propCodes, node.type, addError, nodePath, id || undefined);
+      validatePropertyModes(node.propModes, node.propCodes, node.type, addError, addWarning, nodePath, id || undefined);
       validateCondition(node.condition, addError, `${nodePath}.condition`, id || undefined);
       validateAnimation(node.enterAnim, addError, `${nodePath}.enterAnim`, id || undefined);
       validateAnimation(node.exitAnim, addError, `${nodePath}.exitAnim`, id || undefined);
@@ -630,7 +634,7 @@ function requireEnum(value: Record<string, unknown>, key: string, allowed: reado
   if (typeof value[key] !== 'string' || !allowed.includes(value[key])) addError('invalid-value', `${key} has an unsupported value.`, `${path}.props.${key}`, nodeId);
 }
 
-function validatePropertyModes(value: unknown, codes: unknown, type: unknown, addError: AddIssue, path: string, nodeId?: string): void {
+function validatePropertyModes(value: unknown, codes: unknown, type: unknown, addError: AddIssue, addWarning: AddIssue, path: string, nodeId?: string): void {
   if (!isRecord(value) || !isRecord(codes)) {
     addError('invalid-document-shape', 'propModes and propCodes must be objects.', path, nodeId);
     return;
@@ -641,16 +645,26 @@ function validatePropertyModes(value: unknown, codes: unknown, type: unknown, ad
     ...(isUiDesignerNodeType(type) ? SUB_PROP_KEYS[type] ?? [] : []),
   ]);
   for (const [key, mode] of Object.entries(value)) {
-    if (!allowed.has(key)) addError('invalid-reference', `Property mode ${key} is not supported by this node type.`, `${path}.propModes.${key}`, nodeId);
+    if (!allowed.has(key)) {
+      addError('invalid-reference', `Property mode ${key} is not supported by this node type.`, `${path}.propModes.${key}`, nodeId);
+      continue;
+    }
     if (mode !== 'value' && mode !== 'code') addError('invalid-value', `Unknown property mode for ${key}.`, `${path}.propModes.${key}`, nodeId);
-    if (mode === 'code' && typeof codes[key] !== 'string') addError('invalid-code', `Code property ${key} must have a string source.`, `${path}.propCodes.${key}`, nodeId);
+    if (mode !== 'code') continue;
+    if (type === 'list' && LIST_STATIC_LAYOUT_PROP_KEYS.has(key)) {
+      addError('invalid-code', `List layout property ${key} only supports value mode.`, `${path}.propModes.${key}`, nodeId);
+      continue;
+    }
+    const source = codes[key];
+    if (source === undefined || (typeof source === 'string' && !source.trim())) {
+      addWarning('empty-code', `Code mode property ${key} has no expression and will use its value.`, `${path}.propCodes.${key}`, nodeId);
+    } else if (typeof source === 'string' && !compileExpressionCode(source)) {
+      addError('invalid-code', `Property expression ${key} has invalid JavaScript syntax.`, `${path}.propCodes.${key}`, nodeId);
+    }
   }
   for (const [key, source] of Object.entries(codes)) {
     if (!allowed.has(key)) addError('invalid-reference', `Property code ${key} is not supported by this node type.`, `${path}.propCodes.${key}`, nodeId);
-    if (!Object.prototype.hasOwnProperty.call(value, key)) addError('invalid-reference', `Property code ${key} has no matching prop mode.`, `${path}.propCodes.${key}`, nodeId);
-    else if (value[key] !== 'code') addError('invalid-value', `Property code ${key} requires mode code.`, `${path}.propModes.${key}`, nodeId);
     if (typeof source !== 'string') addError('invalid-code', `Property code ${key} must be a string.`, `${path}.propCodes.${key}`, nodeId);
-    else if (!compileExpressionCode(source)) addError('invalid-code', `Property expression ${key} has invalid JavaScript syntax.`, `${path}.propCodes.${key}`, nodeId);
   }
 }
 

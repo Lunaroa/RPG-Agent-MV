@@ -14,6 +14,7 @@ const props = withDefaults(defineProps<{
   fieldKey?: string
   unit?: string
   help?: string
+  placeholder?: string
   value: unknown
   mode?: UiPropertyMode
   code?: string
@@ -35,7 +36,8 @@ const props = withDefaults(defineProps<{
   sceneId?: string
   nodeId?: string
   issues?: UiValidationIssue[]
-}>(), { mode: 'value', kind: 'text', code: '', min: undefined, max: undefined, step: 1 })
+  allowCode?: boolean
+}>(), { mode: 'value', kind: 'text', code: '', min: undefined, max: undefined, step: 1, allowCode: true })
 const emit = defineEmits<{
   value: [value: unknown, sceneId?: string, nodeId?: string]
   preview: [value: unknown, sceneId?: string, nodeId?: string]
@@ -180,12 +182,12 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
 <template>
   <div class="property-field" :class="{ 'has-error': props.issues?.length }" :aria-invalid="Boolean(props.issues?.length)">
     <div class="property-head">
-      <span class="property-label"><label>{{ props.label }}</label><el-tooltip v-if="props.help" :content="props.help" placement="top">
+      <span class="property-label"><label :title="props.label">{{ props.label }}</label><el-tooltip v-if="props.help" :content="props.help" placement="top">
         <el-icon class="property-help"><QuestionFilled /></el-icon></el-tooltip>
       </span>
-      <el-button-group size="small">
+      <el-button-group v-if="props.allowCode || props.mode === 'code'" size="small">
         <el-button size="small" :type="props.mode === 'value' ? 'primary' : 'default'" @click="emit('mode', 'value')">{{ t('value') }}</el-button>
-        <el-button size="small" :type="props.mode === 'code' ? 'primary' : 'default'" @click="emit('mode', 'code')">{{ t('expression') }}</el-button>
+        <el-button v-if="props.allowCode" size="small" :type="props.mode === 'code' ? 'primary' : 'default'" @click="emit('mode', 'code')">{{ t('expression') }}</el-button>
       </el-button-group>
     </div>
     <div v-if="props.mode === 'value' && props.kind === 'number' && props.min !== undefined && props.max !== undefined" class="number-control">
@@ -254,7 +256,7 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
       v-else-if="props.mode === 'value' && props.kind === 'numberList'"
       :model-value="numberListText"
       size="small"
-      placeholder="100, 200, ..."
+      :placeholder="props.placeholder || '100, 200, ...'"
       :data-ui-id="props.fieldKey ? `ui-designer-property-${props.fieldKey}-input` : undefined"
       :data-testid="props.fieldKey ? `ui-designer-property-${props.fieldKey}-input` : undefined"
       @update:model-value="updateNumberList"

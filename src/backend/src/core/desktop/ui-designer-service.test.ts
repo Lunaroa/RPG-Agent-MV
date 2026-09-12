@@ -281,6 +281,48 @@ describe('ui designer document service', () => {
     assert.ok(invalidReport.errors.some((issue) => issue.nodeId === button.id && issue.path?.includes('imageStates.nope')));
   });
 
+  test('saves empty active property code, preserves inactive drafts, and rejects unsupported list layout code', () => {
+    const document = sampleDocument();
+    const text = createDefaultNode('text');
+    text.id = 'node_text_code';
+    text.name = 'CodeText';
+    text.parentId = 'node_root';
+    text.propModes = { content: 'code' };
+    text.propCodes = { content: '' };
+    document.nodes[0].children = [text.id];
+    document.nodes.push(text);
+
+    const emptyCodeReport = validateUiDesignerDocument(document);
+    assert.equal(emptyCodeReport.valid, true);
+    assert.ok(emptyCodeReport.warnings.some((issue) => issue.code === 'empty-code' && issue.nodeId === text.id));
+    const emptyCodePath = path.join(tempRoot, 'empty-code.mzui');
+    assert.doesNotThrow(() => saveUiDesignerFile(emptyCodePath, document));
+    assert.equal(readUiDesignerFile(emptyCodePath).document.nodes[1].propCodes.content, '');
+
+    text.propModes.content = 'value';
+    text.propCodes.content = 'if (';
+    assert.equal(validateUiDesignerDocument(document).valid, true, 'an inactive draft must not block saving');
+    const inactiveDraftPath = path.join(tempRoot, 'inactive-code-draft.mzui');
+    assert.doesNotThrow(() => saveUiDesignerFile(inactiveDraftPath, document));
+    assert.equal(readUiDesignerFile(inactiveDraftPath).document.nodes[1].propCodes.content, 'if (');
+
+    text.propModes.content = 'code';
+    assert.ok(validateUiDesignerDocument(document).errors.some((issue) => issue.code === 'invalid-code' && issue.nodeId === text.id));
+
+    const listDocument = sampleDocument();
+    const list = createDefaultNode('list');
+    list.id = 'node_list_code';
+    list.name = 'CodeList';
+    list.parentId = 'node_root';
+    list.propModes = { columnWidths: 'code' };
+    list.propCodes = { columnWidths: '[120, 80]' };
+    listDocument.nodes[0].children = [list.id];
+    listDocument.nodes.push(list);
+    const listLayoutCodeReport = validateUiDesignerDocument(listDocument);
+    assert.ok(listLayoutCodeReport.errors.some((issue) => issue.code === 'invalid-code' && issue.path?.endsWith('propModes.columnWidths')));
+    assert.equal(listLayoutCodeReport.errors.some((issue) => issue.code === 'invalid-reference' && issue.path?.endsWith('columnWidths')), false);
+  });
+
   test('rejects unsafe direct and nested project resource paths', () => {
     const uncPath = `${path.win32.sep}${path.win32.sep}${['host.invalid', 'share', 'hover.png'].join(path.win32.sep)}`;
     const direct = sampleDocument();

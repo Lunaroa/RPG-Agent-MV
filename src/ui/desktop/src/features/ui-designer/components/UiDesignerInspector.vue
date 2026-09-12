@@ -17,12 +17,13 @@ import ProjectAssetsWorkspace from '../../../components/ProjectAssetsWorkspace.v
 import { DIALOG_RESIZE_EDGES, resizeDialogFromEdge, type DialogRect, type DialogResizeEdge } from '../../../utils/dialog-edge-resize'
 import { appTitlebarHeight } from '../../../utils/appTitlebar'
 
-type InspectorPurpose = 'identity' | 'geometry' | 'contentResources' | 'appearance' | 'behavior' | 'advanced'
+type InspectorPurpose = 'layout' | 'identity' | 'geometry' | 'contentResources' | 'appearance' | 'behavior' | 'advanced'
 
 interface FieldDescriptor {
   key: string
   kind: 'number' | 'text' | 'boolean' | 'color' | 'enum' | 'resource' | 'numberList'
   help?: string
+  placeholder?: string
   unit?: string
   multiline?: boolean
   resourceCategory?: UiDesignerManagedAssetKind
@@ -290,7 +291,10 @@ const ADVANCED_FIELDS = new Set([
   'pressedScale', 'focusWidth', 'playbackRate',
   'maxParticles', 'emissionInterval', 'emissionArea', 'shape', 'velocityX', 'velocityY', 'velocityRandomX', 'velocityRandomY',
   'gravityX', 'gravityY', 'rotationSpeed', 'lifetime', 'lifetimeRandom', 'startScale', 'endScale', 'startOpacity', 'endOpacity', 'glow',
-  'columns', 'rows', 'autoFlow', 'columnGap', 'rowGap', 'justifyItems', 'alignItems', 'maxItems', 'columnWidths', 'rowHeights', 'maxWidth', 'maxHeight',
+])
+const LIST_LAYOUT_FIELDS = new Set([
+  'width', 'height', 'columns', 'rows', 'autoFlow', 'columnGap', 'rowGap', 'justifyItems', 'alignItems',
+  'maxItems', 'columnWidths', 'rowHeights', 'maxWidth', 'maxHeight',
 ])
 const FIELD_HELP_KEYS: Record<string, UiDesignerMessageKey> = {
   focusWidth: 'helpFocusWidth',
@@ -300,6 +304,7 @@ const FIELD_HELP_KEYS: Record<string, UiDesignerMessageKey> = {
 const purposeForField = (field: FieldDescriptor): InspectorPurpose => {
   if (field.purpose) return field.purpose
   if (field.kind === 'resource') return 'contentResources'
+  if (selectedNode.value?.type === 'list' && LIST_LAYOUT_FIELDS.has(field.key)) return 'layout'
   if (GEOMETRY_FIELDS.has(field.key)) return 'geometry'
   if (CONTENT_RESOURCE_FIELDS.has(field.key)) return 'contentResources'
   if (BEHAVIOR_FIELDS.has(field.key)) return 'behavior'
@@ -319,7 +324,7 @@ const fields = computed<FieldDescriptor[]>(() => {
   if (!node) return []
   const special: Record<UiNode['type'], FieldDescriptor[]> = {
     container: [{ key: 'backgroundPath', kind: 'resource', resourceCategory: 'image' }, { key: 'backgroundFillMode', kind: 'enum', options: enumOptions(['stretch', 'cover', 'contain', 'tile']) }, { key: 'backgroundRepeatMode', kind: 'enum', options: enumOptions(['none', 'horizontal', 'vertical', 'both']) }, { key: 'clip', kind: 'boolean' }],
-    list: [{ key: 'dataSource', kind: 'text', purpose: 'contentResources' }, { key: 'columns', kind: 'number', min: 1, max: 100, step: 1 }, { key: 'rows', kind: 'number', min: 0, max: 100, step: 1 }, { key: 'autoFlow', kind: 'enum', options: enumOptions(['row', 'column']) }, { key: 'columnGap', kind: 'number', min: 0 }, { key: 'rowGap', kind: 'number', min: 0 }, { key: 'columnWidths', kind: 'numberList' }, { key: 'rowHeights', kind: 'numberList' }, { key: 'maxWidth', kind: 'number', min: 0 }, { key: 'maxHeight', kind: 'number', min: 0 }, { key: 'justifyItems', kind: 'enum', options: enumOptions(['start', 'center', 'end', 'stretch']) }, { key: 'alignItems', kind: 'enum', options: enumOptions(['start', 'center', 'end', 'stretch']) }, { key: 'maxItems', kind: 'number', min: 0, max: 1000, step: 1 }],
+    list: [{ key: 'dataSource', kind: 'text', purpose: 'contentResources' }, { key: 'columns', kind: 'number', min: 1, max: 100, step: 1 }, { key: 'rows', kind: 'number', min: 0, max: 100, step: 1 }, { key: 'autoFlow', kind: 'enum', options: enumOptions(['row', 'column']) }, { key: 'columnGap', kind: 'number', min: 0 }, { key: 'rowGap', kind: 'number', min: 0 }, { key: 'columnWidths', kind: 'numberList', placeholder: t('placeholderColumnWidths') }, { key: 'rowHeights', kind: 'numberList', placeholder: t('placeholderRowHeights') }, { key: 'maxWidth', kind: 'number', min: 0 }, { key: 'maxHeight', kind: 'number', min: 0 }, { key: 'justifyItems', kind: 'enum', options: enumOptions(['start', 'center', 'end', 'stretch']) }, { key: 'alignItems', kind: 'enum', options: enumOptions(['start', 'center', 'end', 'stretch']) }, { key: 'maxItems', kind: 'number', min: 0, max: 1000, step: 1 }],
     sprite: [{ key: 'path', kind: 'resource', resourceCategory: 'image' }, { key: 'fillMode', kind: 'enum', options: enumOptions(['stretch', 'cover', 'contain', 'tile']) }, { key: 'repeatMode', kind: 'enum', options: enumOptions(['none', 'horizontal', 'vertical', 'both']) }, { key: 'tint', kind: 'color' }, { key: 'blendMode', kind: 'enum', options: enumOptions(['normal', 'add', 'multiply', 'screen', 'overlay']) }, { key: 'scrollX', kind: 'number' }, { key: 'scrollY', kind: 'number' }],
     nineSlice: [{ key: 'path', kind: 'resource', resourceCategory: 'image' }, { key: 'borderTop', kind: 'number', min: 0 }, { key: 'borderRight', kind: 'number', min: 0 }, { key: 'borderBottom', kind: 'number', min: 0 }, { key: 'borderLeft', kind: 'number', min: 0 }, { key: 'showGuides', kind: 'boolean' }],
     frameAnimation: [{ key: 'defaultFrameDuration', kind: 'number', min: 0 }, { key: 'loop', kind: 'boolean' }, { key: 'speed', kind: 'number', min: 0.1 }, { key: 'initialFrame', kind: 'number', min: 0 }, { key: 'fillMode', kind: 'enum', options: enumOptions(['stretch', 'cover', 'contain', 'tile']) }],
@@ -332,12 +337,22 @@ const fields = computed<FieldDescriptor[]>(() => {
   }
   const known = new Set([...baseFields, ...special[node.type]].map((field) => field.key))
   const inferred = Object.entries(node.props as unknown as Record<string, unknown>).filter(([key, value]) => !known.has(key) && (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string')).map(([key, value]): FieldDescriptor => ({ key, kind: typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : key.toLowerCase().includes('color') ? 'color' : 'text', purpose: 'advanced' }))
-  return [...baseFields, ...special[node.type], ...inferred].map((field) => ({ ...field, purpose: purposeForField(field), help: field.help ?? (FIELD_HELP_KEYS[field.key] ? t(FIELD_HELP_KEYS[field.key]) : t('propertyHelpGeneric')) }))
+  return [...baseFields, ...special[node.type], ...inferred].map((field) => {
+    const listHelpKey = node.type === 'list'
+      ? ({ width: 'helpItemWidth', height: 'helpItemHeight', columnWidths: 'helpColumnWidths', rowHeights: 'helpRowHeights' } as const)[field.key as 'width' | 'height' | 'columnWidths' | 'rowHeights']
+      : undefined
+    const help = field.help
+      ?? (listHelpKey ? t(listHelpKey) : undefined)
+      ?? (node.type === 'list' && LIST_LAYOUT_FIELDS.has(field.key) ? t('helpListLayoutValue') : undefined)
+      ?? (FIELD_HELP_KEYS[field.key] ? t(FIELD_HELP_KEYS[field.key]) : t('propertyHelpGeneric'))
+    return { ...field, purpose: purposeForField(field), help }
+  })
 })
 
-const PURPOSE_ORDER: InspectorPurpose[] = ['advanced', 'identity', 'contentResources', 'geometry', 'appearance', 'behavior']
+const PURPOSE_ORDER: InspectorPurpose[] = ['layout', 'advanced', 'identity', 'contentResources', 'geometry', 'appearance', 'behavior']
 const expandedPurposes = ref<InspectorPurpose[]>([...PURPOSE_ORDER])
 const purposeLabelKey: Record<InspectorPurpose, UiDesignerMessageKey> = {
+  layout: 'inspectorGroupListLayout',
   identity: 'inspectorGroupIdentity',
   geometry: 'inspectorGroupGeometry',
   contentResources: 'inspectorGroupContentResources',
@@ -349,7 +364,7 @@ const fieldGroups = computed(() => PURPOSE_ORDER.map((purpose) => ({
   purpose,
   label: t(purposeLabelKey[purpose]),
   fields: fields.value.filter((field) => field.purpose === purpose),
-})))
+})).filter((group) => group.purpose !== 'layout' || group.fields.length > 0))
 
 const propValue = (key: string): unknown => {
   const node = selectedNode.value
@@ -371,6 +386,7 @@ const propValue = (key: string): unknown => {
 }
 const propMode = (key: string) => selectedNode.value?.propModes[key] ?? 'value'
 const propCode = (key: string) => selectedNode.value?.propCodes[key] ?? ''
+const fieldAllowsCode = (field: FieldDescriptor) => selectedNode.value?.type !== 'list' || !LIST_LAYOUT_FIELDS.has(field.key)
 const buttonStateModes = computed(() => {
   const modes = selectedNode.value?.propModes ?? {}
   return {
@@ -526,10 +542,12 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
             :field-key="field.key"
             :label="fieldLabel(field)"
             :help="field.help"
+            :placeholder="field.placeholder"
             :multiline="field.multiline"
             :value="propValue(field.key)"
             :mode="propMode(field.key)"
             :code="propCode(field.key)"
+            :allow-code="fieldAllowsCode(field)"
             :kind="field.kind"
             :unit="field.unit"
             :min="field.min"

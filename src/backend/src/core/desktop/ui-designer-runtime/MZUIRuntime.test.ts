@@ -255,6 +255,42 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     runtime.cleanup();
   });
 
+  test('falls back to the list data value when its active code expression is empty', () => {
+    const context = makeContext();
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-list-empty-code.js' });
+    const runtime = context.MZUIRuntime.create();
+    const source = allNodeScene();
+    const list = JSON.parse(JSON.stringify(source.nodes.find((node: any) => node.type === 'container')));
+    list.id = 'inventory';
+    list.name = 'Inventory';
+    list.type = 'list';
+    list.children = ['inventory_label'];
+    list.props = {
+      x: 0, y: 0, width: 100, height: 40, scaleX: 1, scaleY: 1, rotate: 0,
+      opacity: 255, visible: true, anchorX: 0, anchorY: 0, zIndex: 0,
+      dataSource: '[{ text: "Fallback" }]', columns: 1, rows: 0, autoFlow: 'row', columnGap: 0, rowGap: 0,
+      justifyItems: 'start', alignItems: 'start', maxItems: 10,
+    };
+    list.propModes = { dataSource: 'code' };
+    list.propCodes = { dataSource: '' };
+    const label = JSON.parse(JSON.stringify(source.nodes.find((node: any) => node.type === 'text')));
+    label.id = 'inventory_label';
+    label.name = 'InventoryLabel';
+    label.parentId = list.id;
+    label.propModes = { content: 'code' };
+    label.propCodes = { content: '$item.text' };
+    source.nodes = [list, label];
+    source.zOrder = [list.id];
+
+    runtime.mount(source, { root: new context.PIXI.Container(), executionMode: 'editor-preview' });
+    runtime.update();
+
+    const clone = runtime.scene.nodes.find((node: any) => node.id === 'inventory__item_0__inventory_label');
+    assert.equal(clone.props.content, 'Fallback');
+    assert.equal(runtime.errors.length, 0);
+    runtime.cleanup();
+  });
+
   test('truncates list items past maxWidth instead of squeezing cells', () => {
     const context = makeContext();
     vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime-list-truncate.js' });

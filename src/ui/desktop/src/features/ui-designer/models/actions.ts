@@ -20,6 +20,7 @@ export type UiNodeActionCommand =
 export interface UiNodeActionPolicy {
   targetId: string
   selectionIds: string[]
+  canSelect: boolean
   canTransform: boolean
   canReparent: boolean
   canUngroup: boolean
@@ -63,6 +64,11 @@ function hasLockedAncestor(document: UiDesignerDocument, node: UiNode): boolean 
   return false
 }
 
+export function isNodeSelectable(document: UiDesignerDocument, nodeId: string): boolean {
+  const node = nodeFor(document, nodeId)
+  return Boolean(node && !node.locked && !hasLockedAncestor(document, node))
+}
+
 /** One permission source for tree, canvas, shortcuts, and controller execution guards. */
 export function resolveNodeActionPolicy(document: UiDesignerDocument, currentSelection: readonly string[], targetId: string, hasClipboard: boolean): UiNodeActionPolicy {
   const target = nodeFor(document, targetId)
@@ -89,6 +95,7 @@ export function resolveNodeActionPolicy(document: UiDesignerDocument, currentSel
   return {
     targetId,
     selectionIds,
+    canSelect: Boolean(target && isNodeSelectable(document, target.id)),
     canTransform,
     canReparent,
     canUngroup,

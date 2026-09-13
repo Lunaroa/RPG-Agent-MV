@@ -200,6 +200,7 @@ const saveConflictAs = () => {
 const inspectorRef = ref<UiDesignerInspectorExpose>()
 const canvasRef = ref<UiDesignerCanvasExpose>()
 const editPrimaryNode = (nodeId: string) => {
+  if (!rawDesigner.getNodeActionPolicy(nodeId).canSelect) return
   rawDesigner.selectNodes([nodeId])
   void nextTick(() => inspectorRef.value?.editPrimaryNode(nodeId))
 }

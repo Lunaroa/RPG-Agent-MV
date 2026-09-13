@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, isRef, nextTick, ref, watch, type Ref } from 'vue'
+import { computed, isRef, nextTick, onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import type { UiDesignerNodeType, UiNode } from '@contract/ui-designer'
 import { UI_DESIGNER_NODE_TYPES } from '@contract/ui-designer'
 import type { UiDesignerController } from '../composables/useUiDesigner'
@@ -8,6 +8,7 @@ import { isDescendant } from '../models/tree'
 import { resolveNodeActionPolicy, type UiNodeActionCommand, type UiNodeActionPolicy } from '../models/actions'
 import { Eye, EyeOff, Lock, Unlock, ChevronsDown, ChevronsUp, Trash2 } from '@lucide/vue'
 import { UI_DESIGNER_NODE_ACTION_GROUPS, UI_DESIGNER_NODE_ACTION_ICONS, UI_DESIGNER_NODE_TYPE_ICONS } from './uiDesignerNodePresentation'
+import { resolveTreeDragAutoScrollDelta } from '../models/tree-drag-autoscroll'
 
 interface NodeTreeEntry {
   id: string
@@ -28,11 +29,60 @@ interface TreeExpose {
   filter: (value: string) => void
   expandAll?: () => void
   collapseAll?: () => void
-  setCurrentKey?: (key: string) => void
+  setCurrentKey?: (key: string | null) => void
   getNode?: (key: string) => { expanded?: boolean; expand?: () => void; collapse?: () => void }
   $el?: HTMLElement
 }
 const treeRef = ref<TreeExpose>()
+let treeDragActive = false
+let treeDragPointer: { x: number; y: number } | undefined
+let treeDragScrollFrame: number | undefined
+
+const cancelTreeDragScrollFrame = () => {
+  if (treeDragScrollFrame === undefined) return
+  cancelAnimationFrame(treeDragScrollFrame)
+  treeDragScrollFrame = undefined
+}
+const runTreeDragAutoScroll = () => {
+  treeDragScrollFrame = undefined
+  const element = treeRef.value?.$el
+  const pointer = treeDragPointer
+  if (!treeDragActive || !element || !pointer) return
+  const bounds = element.getBoundingClientRect()
+  if (pointer.x < bounds.left || pointer.x > bounds.right) return
+  const delta = resolveTreeDragAutoScrollDelta(pointer.y, bounds.top, bounds.bottom)
+  if (!delta) return
+  const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
+  const nextScrollTop = Math.max(0, Math.min(maxScrollTop, element.scrollTop + delta))
+  if (nextScrollTop === element.scrollTop) return
+  element.scrollTop = nextScrollTop
+  treeDragScrollFrame = requestAnimationFrame(runTreeDragAutoScroll)
+}
+const queueTreeDragAutoScroll = () => {
+  if (treeDragScrollFrame === undefined) treeDragScrollFrame = requestAnimationFrame(runTreeDragAutoScroll)
+}
+const trackTreeDragPointer = (event: DragEvent) => {
+  if (!treeDragActive) return
+  treeDragPointer = { x: event.clientX, y: event.clientY }
+  queueTreeDragAutoScroll()
+}
+const stopTreeDragAutoScroll = () => {
+  treeDragActive = false
+  treeDragPointer = undefined
+  cancelTreeDragScrollFrame()
+  window.removeEventListener('dragover', trackTreeDragPointer, true)
+  window.removeEventListener('dragend', stopTreeDragAutoScroll, true)
+  window.removeEventListener('drop', stopTreeDragAutoScroll, true)
+}
+const startTreeDragAutoScroll = (_node: unknown, event: DragEvent) => {
+  stopTreeDragAutoScroll()
+  treeDragActive = true
+  window.addEventListener('dragover', trackTreeDragPointer, true)
+  window.addEventListener('dragend', stopTreeDragAutoScroll, true)
+  window.addEventListener('drop', stopTreeDragAutoScroll, true)
+  trackTreeDragPointer(event)
+}
+onBeforeUnmount(stopTreeDragAutoScroll)
 const unwrap = <T,>(value: T | Ref<T>): T => isRef(value) ? value.value : value
 const document = computed(() => unwrap(designer.document))
 const selectedIds = computed(() => unwrap(designer.selectedIds))
@@ -129,9 +179,16 @@ const revealPrimarySelection = async () => {
   row?.scrollIntoView({ block: 'nearest' })
 }
 
-watch(selectedIds, () => { void revealPrimarySelection() }, { immediate: true })
+watch(selectedIds, (ids) => {
+  if (anchorId.value && !(designer.getNodeActionPolicy(anchorId.value) as UiNodeActionPolicy).canSelect) anchorId.value = ids[0]
+  void revealPrimarySelection()
+}, { immediate: true })
 
 const select = (entry: NodeTreeEntry, event: MouseEvent) => {
+  if (!(designer.getNodeActionPolicy(entry.id) as UiNodeActionPolicy).canSelect) {
+    void nextTick(() => treeRef.value?.setCurrentKey?.(selectedIds.value[0] ?? null))
+    return
+  }
   if (event.shiftKey && anchorId.value) {
     const start = flattenedEntries.value.findIndex((item) => item.id === anchorId.value)
     const end = flattenedEntries.value.findIndex((item) => item.id === entry.id)
@@ -148,6 +205,9 @@ const select = (entry: NodeTreeEntry, event: MouseEvent) => {
 // argument is the actual pointer event needed for Ctrl/Shift range selection.
 const handleNodeClick = (entry: NodeTreeEntry, _node: unknown, _component: unknown, event?: MouseEvent) => {
   select(entry, event ?? ({ shiftKey: false, ctrlKey: false, metaKey: false } as MouseEvent))
+}
+const activateNode = (entry: NodeTreeEntry) => {
+  if ((designer.getNodeActionPolicy(entry.id) as UiNodeActionPolicy).canSelect) emit('activateNode', entry.id)
 }
 
 const addNode = (type: UiDesignerNodeType) => {
@@ -226,6 +286,10 @@ const allowDrop = (draggingNode: { data?: NodeTreeEntry }, dropNode: { data?: No
   if (position !== 'inner' && drop.parentId !== null && !resolveNodeActionPolicy(document.value, [drop.parentId], drop.parentId, false).allowed.addChild) return false
   return true
 }
+const allowDrag = (draggingNode: { data?: NodeTreeEntry }) => {
+  const nodeId = draggingNode?.data?.id
+  return Boolean(nodeId && resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canReparent)
+}
 
 const handleDrop = (draggingNode: { data: NodeTreeEntry }, dropNode: { data: NodeTreeEntry }, dropType: string) => {
   if (!draggingNode?.data?.id) return
@@ -239,10 +303,18 @@ const handleKeydown = (event: KeyboardEvent) => {
   else if (event.key === 'Enter' && selectedIds.value.length) { event.preventDefault(); designer.selectNodes([selectedIds.value[0]]) }
   else if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && flattenedEntries.value.length) {
     event.preventDefault()
+    const step = event.key === 'ArrowUp' ? -1 : 1
     const current = flattenedEntries.value.findIndex((entry) => entry.id === selectedIds.value[0])
-    const next = Math.max(0, Math.min(flattenedEntries.value.length - 1, current + (event.key === 'ArrowUp' ? -1 : 1)))
-    const id = flattenedEntries.value[next]?.id
-    if (id) { designer.selectNodes([id]); anchorId.value = id }
+    let next = current < 0 ? (step > 0 ? 0 : flattenedEntries.value.length - 1) : current + step
+    while (next >= 0 && next < flattenedEntries.value.length) {
+      const id = flattenedEntries.value[next]?.id
+      if (id && (designer.getNodeActionPolicy(id) as UiNodeActionPolicy).canSelect) {
+        designer.selectNodes([id])
+        anchorId.value = id
+        break
+      }
+      next += step
+    }
   }
   else if (event.key.toLowerCase() === 'c' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); designer.copy() }
   else if (event.key.toLowerCase() === 'x' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); if (selectedIds.value[0]) designer.executeNodeAction('cut', selectedIds.value[0]) }
@@ -266,6 +338,7 @@ const handleKeydown = (event: KeyboardEvent) => {
       :data="treeData"
       node-key="id"
       draggable
+      :allow-drag="allowDrag"
       highlight-current
       :expand-on-click-node="false"
       :current-node-key="selectedIds[0]"
@@ -275,11 +348,13 @@ const handleKeydown = (event: KeyboardEvent) => {
       @node-expand="rememberExpanded"
       @node-collapse="rememberCollapsed"
       @node-click="handleNodeClick"
+      @node-drag-start="startTreeDragAutoScroll"
+      @node-drag-end="stopTreeDragAutoScroll"
       @node-drop="handleDrop"
     >
       <template #default="{ data }: { data: NodeTreeEntry }">
         <el-dropdown trigger="contextmenu" @command="(command: string) => contextCommand(command, data.id)">
-        <span class="node-tree-entry" :class="{ selected: selectedIds.includes(data.id), locked: document.nodes.find((node) => node.id === data.id)?.locked }" :data-node-id="data.id" :data-ui-id="`ui-designer-tree-row-${data.id}`" @mouseenter="designer.setHoveredNode(data.id)" @mouseleave="designer.setHoveredNode(undefined)" @contextmenu="designer.selectNodeActionTarget(data.id)" @dblclick.stop="emit('activateNode', data.id)">
+        <span class="node-tree-entry" :class="{ selected: selectedIds.includes(data.id), locked: !nodePolicy(data.id).canSelect }" :data-node-id="data.id" :data-ui-id="`ui-designer-tree-row-${data.id}`" @mouseenter="designer.setHoveredNode(data.id)" @mouseleave="designer.setHoveredNode(undefined)" @contextmenu="designer.selectNodeActionTarget(data.id)" @dblclick.stop="activateNode(data)">
           <component :is="UI_DESIGNER_NODE_TYPE_ICONS[data.type]" class="node-type-icon" aria-hidden="true" />
           <el-input v-if="editingId === data.id" v-model="editingName" size="small" :placeholder="t('nodeNamePlaceholder')" @keyup.enter="finishRename" @blur="finishRename" />
           <span v-else class="node-name">{{ data.label }}</span>

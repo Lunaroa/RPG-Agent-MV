@@ -69,7 +69,7 @@ import {
   type UiSnapFeedback,
   type UiSnapHit,
 } from '../models/geometry'
-import { resolveNodeActionPolicy, type UiNodeActionCommand } from '../models/actions'
+import { isNodeSelectable, resolveNodeActionPolicy, type UiNodeActionCommand } from '../models/actions'
 import { UiDesignerHistory } from '../models/history'
 import { analyzePerformance } from '../models/performance'
 import { nextSiblingCascadePosition } from '../models/placement'
@@ -242,6 +242,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const projectGeneration = ref(0)
   const draftCoordinator: UiDesignerDraftCoordinator = createUiDesignerDraftCoordinator()
   let propertyEdit: { sceneId: string; nodeId: string; property: string; description: string; reloadResources: boolean } | undefined
+  let lockedActionSelection: { sceneId: string; ids: string[] } | undefined
   let sceneThumbnailProvider: ((sceneId: string) => string | undefined) | undefined
 
   const registerSceneThumbnailProvider = (provider: (sceneId: string) => string | undefined) => {
@@ -261,6 +262,12 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const document = computed(() => activeScene.value?.document ?? createUiDocument())
   const selectedNodes = computed(() => document.value.nodes.filter((node) => selectedIds.value.includes(node.id)))
   const selectedNode = computed(() => selectedNodes.value[0])
+  const selectableNodeIds = (source: UiDesignerDocument, ids: readonly string[]) => [...new Set(ids)].filter((id) => isNodeSelectable(source, id))
+  const defaultSelection = (source: UiDesignerDocument) => {
+    const orderedIds = [...source.zOrder, ...source.nodes.map((node) => node.id)]
+    const nodeId = orderedIds.find((id, index) => orderedIds.indexOf(id) === index && isNodeSelectable(source, id))
+    return nodeId ? [nodeId] : []
+  }
   const validation = computed<UiValidationReport>(() => validateDocument(document.value))
   const performance = computed(() => analyzePerformance(document.value))
   const hasSceneDraft = (sceneId: string) => {
@@ -558,14 +565,15 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     return true
   }
 
-  const replaceActiveDocument = (next: UiDesignerDocument, description: string, markSaved = false, owned = false) => {
+  const replaceActiveDocument = (next: UiDesignerDocument, description: string, markSaved = false, owned = false, fallbackSelection = true) => {
     commitPendingPropertyEdit()
     const scene = activeScene.value
     if (!scene) return
+    const hadSelection = selectedIds.value.length > 0
     scene.document = owned ? scene.history.commitOwned(next, description) : scene.history.commit(next, description)
     if (markSaved) scene.history.markSaved()
-    selectedIds.value = selectedIds.value.filter((id) => Boolean(findNode(scene.document, id)))
-    if (!selectedIds.value.length) selectedIds.value = [scene.document.zOrder[0] ?? 'node_root']
+    selectedIds.value = selectableNodeIds(scene.document, selectedIds.value)
+    if (!selectedIds.value.length && hadSelection && fallbackSelection) selectedIds.value = defaultSelection(scene.document)
     actionError.value = ''
     if (markSaved) { const timer = recoveryTimers.get(scene.id); if (timer) { clearTimeout(timer); recoveryTimers.delete(scene.id) } }
     else scheduleRecovery(scene)
@@ -794,6 +802,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
       // explicit home page instead of a freshly minted placeholder tab.
       scenes.value.splice(0, 1)
       activeSceneId.value = ''
+      lockedActionSelection = undefined
       selectedIds.value = ['node_root']
       return true
     }
@@ -801,7 +810,8 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     scenes.value.splice(index, 1)
     if (activeSceneId.value === sceneId) activeSceneId.value = scenes.value[Math.max(0, index - 1)].id
     else if (previousActiveId && scenes.value.some((item) => item.id === previousActiveId)) activeSceneId.value = previousActiveId
-    selectedIds.value = [activeScene.value?.document.zOrder[0] ?? 'node_root']
+    lockedActionSelection = undefined
+    selectedIds.value = activeScene.value ? defaultSelection(activeScene.value.document) : []
     return true
   }
 
@@ -826,21 +836,30 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     // active scene identity changes; delayed editor callbacks must not write
     // a pending A draft into tab B.
     flushDrafts(activeSceneId.value)
+    lockedActionSelection = undefined
     activeSceneId.value = sceneId
-    selectedIds.value = [next.document.zOrder[0] ?? 'node_root']
+    selectedIds.value = defaultSelection(next.document)
     return true
   }
   const selectScene = activateScene
 
   const selectNodes = (ids: readonly string[], additive = false) => {
-    const valid = ids.filter((id) => Boolean(findNode(document.value, id)))
-    const nextIds = additive ? [...new Set([...selectedIds.value, ...valid])] : [...new Set(valid)]
+    const valid = selectableNodeIds(document.value, ids)
+    const current = selectableNodeIds(document.value, selectedIds.value)
+    const nextIds = additive ? [...new Set([...current, ...valid])] : valid
+    lockedActionSelection = undefined
     if (nextIds.length === selectedIds.value.length && nextIds.every((id, index) => id === selectedIds.value[index])) return
     flushDrafts(activeSceneId.value)
     selectedIds.value = nextIds
   }
   const setHoveredNode = (nodeId: string | undefined) => { hoveredNodeId.value = nodeId }
-  const getNodeActionPolicy = (targetId: string) => resolveNodeActionPolicy(document.value, selectedIds.value, targetId, Boolean(clipboard.value?.nodes.length && clipboard.value.nodes.every((node) => !node.locked)))
+  const getNodeActionPolicy = (targetId: string) => {
+    const retained = lockedActionSelection?.sceneId === activeSceneId.value && lockedActionSelection.ids.includes(targetId)
+      ? lockedActionSelection.ids
+      : []
+    const currentSelection = selectedIds.value.length ? selectedIds.value : retained
+    return resolveNodeActionPolicy(document.value, currentSelection, targetId, Boolean(clipboard.value?.nodes.length && clipboard.value.nodes.every((node) => !node.locked)))
+  }
 
   const addNode = (type: UiDesignerNodeType, parentId?: string | null, position?: UiPoint) => {
     try {
@@ -898,6 +917,9 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   }
 
   const updateNodeProperty = (nodeId: string, property: string, value: unknown) => {
+    const sourceNode = findNode(document.value, nodeId)
+    if (!sourceNode || !(property in (sourceNode.props as unknown as Record<string, unknown>))) return
+    if (property !== 'visible' && !isNodeSelectable(document.value, nodeId)) return
     if (property === 'x' || property === 'y' || property === 'width' || property === 'height') {
       if (nodeId !== 'node_root' && !resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return
       const next = cloneUiDocument(document.value)
@@ -908,8 +930,6 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
       replaceActiveDocument(next, `Update ${property}`, false, true)
       return
     }
-    const sourceNode = findNode(document.value, nodeId)
-    if (!sourceNode || !(property in (sourceNode.props as unknown as Record<string, unknown>))) return
     if (sourceNode.type === 'nineSlice' && ['borderTop', 'borderRight', 'borderBottom', 'borderLeft'].includes(property)) {
       const props = sourceNode.props as unknown as Record<string, unknown>
       value = normalizeNineSliceBorderValue(value, Number(props[property]))
@@ -934,6 +954,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     if (propertyEdit && (propertyEdit.sceneId !== scene.id || propertyEdit.nodeId !== nodeId || propertyEdit.property !== property)) commitPendingPropertyEdit()
     const sourceNode = findNode(scene.document, nodeId)
     if (!sourceNode || !(property in (sourceNode.props as unknown as Record<string, unknown>))) return false
+    if (!isNodeSelectable(scene.document, nodeId)) return false
     if ((property === 'x' || property === 'y' || property === 'width' || property === 'height') && nodeId !== 'node_root' && !resolveNodeActionPolicy(scene.document, [nodeId], nodeId, false).canTransform) return false
     try {
       value = normalizeUiDesignerResourceProperty(property, value)
@@ -971,7 +992,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
 
   const setSpriteResource = (nodeId: string, path: string, dimensions?: { width: number; height: number }) => {
     const sourceNode = findNode(document.value, nodeId)
-    if (!sourceNode || sourceNode.type !== 'sprite') return false
+    if (!sourceNode || sourceNode.type !== 'sprite' || !isNodeSelectable(document.value, nodeId)) return false
     const sourceRect = nodeRect(sourceNode)
     const sourceCenter = { x: sourceRect.x + sourceRect.width / 2, y: sourceRect.y + sourceRect.height / 2 }
     let normalizedPath = ''
@@ -1029,60 +1050,72 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const setNodeLocked = (nodeId: string, locked: boolean) => {
     const next = cloneUiDocument(document.value)
     const node = findNode(next, nodeId)
-    if (!node) return
+    if (!node) return false
     node.locked = locked
-    replaceActiveDocument(next, locked ? 'Lock node' : 'Unlock node')
+    replaceActiveDocument(next, locked ? 'Lock node' : 'Unlock node', false, false, false)
+    return true
   }
 
   const setPropertyMode = (nodeId: string, property: string, mode: UiPropertyMode) => {
+    if (!isNodeSelectable(document.value, nodeId)) return false
     const next = cloneUiDocument(document.value)
     const node = findNode(next, nodeId)
-    if (!node) return
+    if (!node) return false
     node.propModes[property] = mode
     replaceActiveDocument(next, `Set ${property} mode`)
+    return true
   }
 
   const setPropertyCode = (nodeId: string, property: string, code: string, sceneId = activeSceneId.value) => {
     const scene = scenes.value.find((item) => item.id === sceneId)
-    if (!scene) return
+    if (!scene || !isNodeSelectable(scene.document, nodeId)) return false
     const next = cloneUiDocument(scene.document)
     const node = findNode(next, nodeId)
-    if (!node) return
+    if (!node) return false
     node.propCodes[property] = code
     scene.document = scene.history.commit(next, `Edit ${property} expression`)
     scheduleRecovery(scene)
+    return true
   }
 
   const setNodeCondition = (nodeId: string, condition: UiVisibilityCondition) => {
+    if (!isNodeSelectable(document.value, nodeId)) return false
     const next = cloneUiDocument(document.value)
     const node = findNode(next, nodeId)
-    if (!node) return
+    if (!node) return false
     node.condition = condition
     replaceActiveDocument(next, 'Update visibility condition')
+    return true
   }
 
   const setNodeConditionFrequency = (nodeId: string, frequency: UiConditionFrequency) => {
+    if (!isNodeSelectable(document.value, nodeId)) return false
     const next = cloneUiDocument(document.value)
     const node = findNode(next, nodeId)
-    if (!node) return
+    if (!node) return false
     node.conditionFrequency = frequency
     replaceActiveDocument(next, 'Update condition frequency')
+    return true
   }
 
   const setNodeAnimation = (nodeId: string, phase: 'enterAnim' | 'exitAnim' | 'focusAnim', animation: UiAnimationConfig) => {
+    if (!isNodeSelectable(document.value, nodeId)) return false
     const next = cloneUiDocument(document.value)
     const node = findNode(next, nodeId)
-    if (!node) return
+    if (!node) return false
     node[phase] = animation
     replaceActiveDocument(next, `Update ${phase}`)
+    return true
   }
 
   const setNodeEvents = (nodeId: string, events: UiEventMap) => {
+    if (!isNodeSelectable(document.value, nodeId)) return false
     const next = cloneUiDocument(document.value)
     const node = findNode(next, nodeId)
-    if (!node) return
+    if (!node) return false
     node.events = events
     replaceActiveDocument(next, 'Update events')
+    return true
   }
 
   const reparent = (nodeId: string, targetId: string | null, position: UiTreeDropPosition) => {
@@ -1199,14 +1232,15 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
 
   const selectNodeActionTarget = (targetId: string) => {
     const policy = getNodeActionPolicy(targetId)
-    selectedIds.value = [...policy.selectionIds]
+    if (policy.canSelect) selectNodes(policy.selectionIds)
+    else lockedActionSelection = { sceneId: activeSceneId.value, ids: [...policy.selectionIds] }
     return policy
   }
 
   const executeNodeAction = (command: UiNodeActionCommand, targetId: string) => {
     const policy = selectNodeActionTarget(targetId)
     if (!policy.allowed[command]) return false
-    if (command === 'copy') copy()
+    if (command === 'copy') clipboard.value = copySelection(document.value, policy.selectionIds)
     else if (command === 'cut') { copy(); removeSelected() }
     else if (command === 'paste') paste(targetId)
     else if (command === 'addChild') addNode('text', targetId)
@@ -1238,7 +1272,9 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
         const node = findNode(next, id)
         if (node) node.locked = locked
       }
-      replaceActiveDocument(next, locked ? 'Lock nodes' : 'Unlock nodes')
+      lockedActionSelection = locked ? { sceneId: activeSceneId.value, ids: [...policy.selectionIds] } : undefined
+      replaceActiveDocument(next, locked ? 'Lock nodes' : 'Unlock nodes', false, false, false)
+      if (!locked) selectNodes(policy.selectionIds)
     }
     else if (command === 'delete') removeSelected()
     else return false
@@ -1251,7 +1287,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     const scene = scenes.value.find((item) => item.id === sceneId)
     if (!scene || !scene.history.canUndo) return
     scene.document = scene.history.undo()
-    selectedIds.value = selectedIds.value.filter((id) => Boolean(findNode(scene.document, id)))
+    selectedIds.value = selectableNodeIds(scene.document, selectedIds.value)
   }
 
   const redo = () => {
@@ -1260,7 +1296,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     const scene = scenes.value.find((item) => item.id === sceneId)
     if (!scene || !scene.history.canRedo) return
     scene.document = scene.history.redo()
-    selectedIds.value = selectedIds.value.filter((id) => Boolean(findNode(scene.document, id)))
+    selectedIds.value = selectableNodeIds(scene.document, selectedIds.value)
   }
 
   const markSaved = () => activeScene.value?.history.markSaved()
@@ -1271,8 +1307,8 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     for (const scene of scenes.value) scene.document = scene.history.discard()
     let cleared = true
     for (const scene of scenes.value) if (!(await clearSceneRecovery(scene))) cleared = false
-    selectedIds.value = selectedIds.value.filter((id) => Boolean(findNode(document.value, id)))
-    if (!selectedIds.value.length) selectedIds.value = [document.value.zOrder[0] ?? 'node_root']
+    selectedIds.value = selectableNodeIds(document.value, selectedIds.value)
+    if (!selectedIds.value.length) selectedIds.value = defaultSelection(document.value)
     if (cleared) fileMessage.value = 'Current designer changes were discarded.'
     return cleared
   }
@@ -1646,8 +1682,9 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
         const removedIds = new Set(removedScenes.map((scene) => scene.id))
         scenes.value = previousScenes.filter((scene) => !removedIds.has(scene.id))
         if (removedIds.has(activeSceneId.value)) {
+          lockedActionSelection = undefined
           activeSceneId.value = scenes.value[Math.max(0, Math.min(scenes.value.length - 1, activeIndex - 1))]?.id ?? ''
-          selectedIds.value = [activeScene.value?.document.zOrder[0] ?? 'node_root']
+          selectedIds.value = activeScene.value ? defaultSelection(activeScene.value.document) : []
         }
       }
       const cleanupFailures = new Set(result.value.cleanupWarnings.map((warning) => warning.kind))

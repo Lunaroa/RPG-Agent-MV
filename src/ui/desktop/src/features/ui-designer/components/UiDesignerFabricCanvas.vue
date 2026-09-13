@@ -5,7 +5,7 @@ import type { UiDesignerDocument, UiNode, UiPoint, UiProjectResourceCatalog, UiR
 import type { UiDesignerController } from '../composables/useUiDesigner'
 import { accumulateRotationDegrees, nodeRect, normalizeRotationDegrees, pointerResizeDelta, type UiResizeHandle } from '../models/geometry'
 import { collectNodeSubtreeIds, selectionRootNodeIds } from '../models/tree'
-import { resolveNodeActionPolicy } from '../models/actions'
+import { isNodeSelectable, resolveNodeActionPolicy } from '../models/actions'
 import {
   animateFabricNode,
   applyFabricNodeGeometry,
@@ -379,7 +379,7 @@ const commitTransform = () => {
 
 const startEditing = (object: UiFabricNodeObject) => {
   const node = objectNode(object)
-  if (!(object instanceof Textbox) || !node || node.locked || (node.type !== 'text' && node.type !== 'button')) return false
+  if (!(object instanceof Textbox) || !node || !isNodeSelectable(props.document, node.id) || (node.type !== 'text' && node.type !== 'button')) return false
   canvas?.setActiveObject(object)
   object.enterEditing()
   object.selectAll()
@@ -390,14 +390,14 @@ const startEditing = (object: UiFabricNodeObject) => {
 
 const activateObject = (object?: FabricObject) => {
   const node = objectNode(object)
-  if (!node || node.locked) return
+  if (!node || !isNodeSelectable(props.document, node.id)) return
   if (object && startEditing(object as UiFabricNodeObject)) return
   emit('activate', node)
 }
 
 const activateNode = (nodeId: string) => {
   const object = objects.get(nodeId)
-  if (!object) return false
+  if (!object || !isNodeSelectable(props.document, nodeId)) return false
   canvas?.setActiveObject(object)
   canvas?.requestRenderAll()
   const node = nodeById(nodeId)

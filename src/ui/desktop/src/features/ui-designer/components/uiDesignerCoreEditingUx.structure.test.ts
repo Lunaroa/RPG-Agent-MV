@@ -96,7 +96,7 @@ test('canvas double click edits text and buttons in place and routes other node 
   assert.match(fabricCanvas, /props\.designer\.commitNodePropertyPreview\(nodeId, 'content'\)/)
   assert.match(canvas, /if \(node\.type === 'container' \|\| node\.type === 'list'\) enterContainer\(node\)[\s\S]*else emit\('editNode', node\.id\)/)
   assert.match(shell, /@edit-node="editPrimaryNode"/)
-  assert.match(panel, /@dblclick\.stop="emit\('activateNode', data\.id\)"/)
+  assert.match(panel, /@dblclick\.stop="activateNode\(data\)"/)
   assert.match(shell, /@activate-node="activateNode"/)
   assert.match(inspector, /node\.type === 'text' \|\| node\.type === 'button'/)
   assert.match(inspector, /ui-designer-property-content-input/)

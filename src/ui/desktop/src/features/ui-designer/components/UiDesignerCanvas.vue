@@ -476,7 +476,7 @@ const deleteGuide = () => { const guide = selectedGuide.value; closeGuideMenu();
 const clearGuides = () => { closeGuideMenu(); designer.clearGuides() }
 
 const enterContainer = (node: UiNode) => {
-  if (node.type !== 'container' && node.type !== 'list' || node.locked) return
+  if (node.type !== 'container' && node.type !== 'list' || !(designer.getNodeActionPolicy(node.id) as UiNodeActionPolicy).canSelect) return
   editStack.value = [...editStack.value.filter((id) => id !== node.id), node.id]
   designer.selectNodes(node.children.length ? [node.children[0]] : [node.id])
 }
@@ -486,6 +486,7 @@ const exitContainer = () => {
   designer.selectNodes([editingRootId.value])
 }
 const activateNode = (node: UiNode) => {
+  if (!(designer.getNodeActionPolicy(node.id) as UiNodeActionPolicy).canSelect) return
   designer.selectNodes([node.id])
   if (node.type === 'container' || node.type === 'list') enterContainer(node)
   else emit('editNode', node.id)
@@ -503,7 +504,7 @@ const parentContainerPath = (node: UiNode) => {
 }
 const activateNodeById = async (nodeId: string) => {
   const node = document.value.nodes.find((candidate) => candidate.id === nodeId)
-  if (!node || node.id === 'node_root') return
+  if (!node || node.id === 'node_root' || !(designer.getNodeActionPolicy(node.id) as UiNodeActionPolicy).canSelect) return
   editStack.value = parentContainerPath(node)
   designer.selectNodes([node.id])
   await nextTick()

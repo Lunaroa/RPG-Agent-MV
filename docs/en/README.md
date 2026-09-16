@@ -6,7 +6,7 @@ RPG Agent MV is a local AI production tool for RPG Maker MV and RPG Maker MZ 1.1
 
 This guide covers first use, project management, Agent workflows, extension points, and common troubleshooting paths.
 
-The app is not a replacement for the RPG Maker editor. MV and MZ projects share project management, map, event, database, asset, plugin, staging, and versioning flows. Every recognizable MZ core version is supported; MZ 1.10.0 is the fully validated baseline, and other versions surface a compatibility warning without blocking features. Authors must still confirm third-party plugin semantics and final in-game results.
+The app is not a replacement for the RPG Maker editor. MV and MZ projects share project management, map, event, database, asset, plugin, direct-save, and Git versioning flows, with game release versions, Web/Windows/Android packaging, and online updates. Every recognizable MZ core version is supported; MZ 1.10.0 is the fully validated baseline, and other versions surface a compatibility warning without blocking features. Authors must still confirm third-party plugin semantics and final in-game results.
 
 ## Contents
 
@@ -26,7 +26,9 @@ The app is not a replacement for the RPG Maker editor. MV and MZ projects share 
 |---|---|
 | [Project Setup](projects/project.md) | Connecting, switching, and preparing an RMMV project |
 | [Maps, Events, And Assets](projects/map-events.md) | Map context, event drafts, placement, and asset inspection |
-| [Staging, Apply, And Revert](projects/staging.md) | Staging changes, applying safely, discarding, and review |
+| [Direct Save, Review, And Recovery](projects/staging.md) | Atomic direct saves, conflict handling, review, and recovery |
+| [Game Version And Save Compatibility](projects/game-version.md) | Public version API, save origin, policies, and migration callbacks |
+| [Packaging And Online Updates](projects/packaging-and-updates.md) | Web, Windows, Android builds, publication, and player updates |
 
 ### 3. Agent Workflow
 
@@ -59,6 +61,8 @@ The app is not a replacement for the RPG Maker editor. MV and MZ projects share 
 - New user entry: [Introduction](getting-started/introduction.md)
 - First task: [First Task](getting-started/quickstart.md)
 - Project setup: [Project Setup](projects/project.md)
+- Game releases: [Game Version And Save Compatibility](projects/game-version.md)
+- Packaging: [Packaging And Online Updates](projects/packaging-and-updates.md)
 - Request confirmation: [Requests And Confirmation](agent-workflow/request.md)
 - Extension and rules: [MCP Tools](agent-system/mcp-tools.md)
 - Project detection failures: [Project Detection Failed](faq/project-detection.md)
@@ -66,6 +70,6 @@ The app is not a replacement for the RPG Maker editor. MV and MZ projects share 
 
 ## Version
 
-- Documentation version: v0.4.0-en
-- Last updated: 2026-07-16
-- Applies to: RPG Agent MV v0.4.0
+- Documentation version: v0.8.0-en
+- Last updated: 2026-09-16
+- Applies to: RPG Agent MV v0.8.0

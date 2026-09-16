@@ -6,7 +6,7 @@
 
 本手册分为三部分：第 1 章介绍安装、界面与首次任务；第 2 至第 3 章说明项目管理与 Agent 工作流；第 4 至第 5 章说明扩展机制、配置和问题排查。
 
-当前版本不是 RPG Maker 编辑器的复刻。文中的“编辑器”“数据库”“资产库”均指 RPG Agent MV 已接入的受控能力；MV 与 MZ 工程共用项目管理、地图、事件、数据库、素材、插件、暂存和版本保存流程。所有可识别的 MZ 核心版本均受支持，MZ 1.10.0 是完整验证基线，其他版本会显示兼容警告但不阻断功能；第三方插件的业务语义及最终游戏效果仍需作者确认。
+当前版本不是 RPG Maker 编辑器的复刻。文中的“编辑器”“数据库”“资产库”均指 RPG Agent MV 已接入的受控能力；MV 与 MZ 工程共用项目管理、地图、事件、数据库、素材、插件、直接保存和 Git 版本保存流程，并可配置游戏发行版本、Web/Windows/Android 打包与在线更新。所有可识别的 MZ 核心版本均受支持，MZ 1.10.0 是完整验证基线，其他版本会显示兼容警告但不阻断功能；第三方插件的业务语义及最终游戏效果仍需作者确认。
 
 ## 目录结构
 
@@ -23,7 +23,9 @@ RPG Agent MV 用户手册
 ├── 2. 项目管理
 │   ├── 2.1 接入与切换项目
 │   ├── 2.2 地图、事件与资产
-│   └── 2.3 暂存、应用与回退
+│   ├── 2.3 直接保存、审阅与恢复
+│   ├── 2.4 游戏版本与存档兼容
+│   └── 2.5 配置打包与在线更新
 │
 ├── 3. Agent 工作流
 │   ├── 3.1 需求描述与确认
@@ -61,7 +63,9 @@ RPG Agent MV 用户手册
 |------|------|
 | [2.1-project.md](./2-projects/2.1-project.md) | 项目接入、切换和 Git 基线 |
 | [2.2-map-events.md](./2-projects/2.2-map-events.md) | 地图、事件模式和待放置事件 |
-| [2.3-staging.md](./2-projects/2.3-staging.md) | 暂存、应用、丢弃和改动对比 |
+| [2.3-staging.md](./2-projects/2.3-staging.md) | 直接保存、冲突处理、审阅和恢复 |
+| [2.4-game-version.md](./2-projects/2.4-game-version.md) | 发行版本、代码接口、存档来源和迁移回调 |
+| [2.5-packaging-and-updates.md](./2-projects/2.5-packaging-and-updates.md) | Web、Windows、Android 打包、发布与玩家更新 |
 
 ### 3. Agent 工作流
 
@@ -94,13 +98,15 @@ RPG Agent MV 用户手册
 - 新用户入口：[1.1 产品介绍](./1-getting-started/1.1-introduction.md)
 - 首次任务：[1.4 快速上手](./1-getting-started/1.4-quickstart.md)
 - 项目接入：[2.1 接入与切换项目](./2-projects/2.1-project.md)
+- 游戏发行：[2.4 游戏版本与存档兼容](./2-projects/2.4-game-version.md)
+- 打包发布：[2.5 配置打包与在线更新](./2-projects/2.5-packaging-and-updates.md)
 - 需求确认：[3.1 需求描述与确认](./3-agent-workflow/3.1-request.md)
 - 扩展与规则：[第 4 章 Agent 体系](./4-agent-system/4.1-mcp-tools.md)
 - 问题排查：[5.1 FAQ](./5-faq/5.1-questions.md)
 
 ## 版本信息
 
-- 文档版本：v0.4.0
-- 最后更新：2026-07-16
-- 适用于：RPG Agent MV v0.4.0
+- 文档版本：v0.8.0
+- 最后更新：2026-09-16
+- 适用于：RPG Agent MV v0.8.0
 

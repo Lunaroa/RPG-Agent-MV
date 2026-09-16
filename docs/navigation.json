@@ -10,7 +10,9 @@
     { "title": "项目编辑", "pages": [
       { "title": "项目", "path": "2-projects/2.1-project.md" },
       { "title": "地图与事件", "path": "2-projects/2.2-map-events.md" },
-      { "title": "暂存与应用", "path": "2-projects/2.3-staging.md" }
+      { "title": "直接保存与恢复", "path": "2-projects/2.3-staging.md" },
+      { "title": "游戏版本", "path": "2-projects/2.4-game-version.md" },
+      { "title": "打包与更新", "path": "2-projects/2.5-packaging-and-updates.md" }
     ]},
     { "title": "Agent 工作流", "pages": [
       { "title": "提出需求", "path": "3-agent-workflow/3.1-request.md" },
@@ -41,7 +43,9 @@
     { "title": "Projects", "pages": [
       { "title": "Project", "path": "en/projects/project.md" },
       { "title": "Maps and Events", "path": "en/projects/map-events.md" },
-      { "title": "Staging", "path": "en/projects/staging.md" }
+      { "title": "Direct Save And Recovery", "path": "en/projects/staging.md" },
+      { "title": "Game Version", "path": "en/projects/game-version.md" },
+      { "title": "Packaging And Updates", "path": "en/projects/packaging-and-updates.md" }
     ]},
     { "title": "Agent Workflow", "pages": [
       { "title": "Requests", "path": "en/agent-workflow/request.md" },

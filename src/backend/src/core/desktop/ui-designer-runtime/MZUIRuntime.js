@@ -1214,7 +1214,7 @@
   function renderTextRuns(view, props, context) {
     if (!view || !view.__mzuiTextRuns || typeof view.addChild === 'undefined') return;
     var resolved = parseTextRuns(props.content, context);
-    var key = JSON.stringify({ content: props.content, variables: context && context.variables, font: props.fontFile, size: props.fontSize, color: props.textColor, width: props.width, height: props.height, align: props.align, verticalAlign: props.verticalAlign });
+    var key = JSON.stringify({ content: props.content, variables: context && context.variables, font: props.fontFile, size: props.fontSize, color: props.textColor, width: props.width, height: props.height, wrapWidth: props.wrapWidth, align: props.align, verticalAlign: props.verticalAlign });
     if (view.__mzuiTextRunsKey === key) return;
     view.__mzuiTextRunsKey = key;
     if (Array.isArray(view.children) && typeof view.removeChild === 'function') {
@@ -1231,17 +1231,25 @@
     var lineIndex = 0;
     var lineHeight = Math.max(1, Math.ceil(fontSize * 1.2));
     var lineWidths = [0];
+    var wrapWidth = Math.max(0, finite(props.wrapWidth, 0));
+    if (wrapWidth > 0 && (!global.PIXI || !global.PIXI.TextMetrics || typeof global.PIXI.TextMetrics.measureText !== 'function')) {
+      throw new Error('Rich text wrapping requires the engine PIXI.TextMetrics renderer.');
+    }
+    function nextLine() {
+      lineWidths[lineIndex] = cursorX;
+      lineIndex += 1;
+      lineWidths[lineIndex] = 0;
+      cursorX = 0;
+      cursorY += lineHeight;
+    }
     resolved.forEach(function (run) {
       if (run.kind === 'newline') {
-        lineWidths[lineIndex] = cursorX;
-        lineIndex += 1;
-        lineWidths[lineIndex] = 0;
-        cursorX = 0;
-        cursorY += lineHeight;
+        nextLine();
         return;
       }
       if (run.kind === 'icon') {
         if (global.Sprite && typeof global.Sprite === 'function') {
+          if (wrapWidth > 0 && cursorX > 0 && cursorX + fontSize > wrapWidth) nextLine();
           var icon = new global.Sprite(loadBitmap('img/system/IconSet'));
           icon.__mzuiIconId = run.iconId;
           if (typeof icon.setFrame === 'function') {
@@ -1268,6 +1276,39 @@
         stroke: stroke.color,
         strokeThickness: stroke.width,
       });
+      if (wrapWidth > 0) {
+        // Styled runs share a line with adjacent runs and icons. Measure whole
+        // fragments with the engine so wrapping never estimates glyph widths.
+        var style = text.style;
+        var fragment = '';
+        var fragmentWidth = 0;
+        function appendFragment() {
+          if (!fragment) return;
+          text.text = fragment;
+          text.x = cursorX; text.y = cursorY; text.__mzuiTextLine = lineIndex;
+          view.addChild(text);
+          cursorX += fragmentWidth;
+          lineWidths[lineIndex] = cursorX;
+          text = null;
+          fragment = '';
+          fragmentWidth = 0;
+        }
+        Array.from(run.text).forEach(function (character) {
+          var candidate = fragment + character;
+          var measuredWidth = global.PIXI.TextMetrics.measureText(candidate, style, false).width;
+          if (cursorX + measuredWidth > wrapWidth && (cursorX > 0 || fragment)) {
+            appendFragment();
+            nextLine();
+            candidate = character;
+            measuredWidth = global.PIXI.TextMetrics.measureText(candidate, style, false).width;
+          }
+          if (!text) text = new global.PIXI.Text('', style);
+          fragment = candidate;
+          fragmentWidth = measuredWidth;
+        });
+        appendFragment();
+        return;
+      }
       text.x = cursorX; text.y = cursorY; text.__mzuiTextLine = lineIndex;
       view.addChild(text);
       if (typeof text.updateText === 'function') { try { text.updateText(true); } catch (_) {} }

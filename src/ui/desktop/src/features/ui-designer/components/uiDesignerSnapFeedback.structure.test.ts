@@ -14,7 +14,7 @@ const compile = (name: string, source = read(name)) => {
   return source
 }
 
-test('drag snapping draws transient alignment lines while resize stays continuous', () => {
+test('moving and resizing both use transient alignment feedback', () => {
   const canvas = compile('UiDesignerCanvas.vue')
   const controller = read('../composables/useUiDesigner.ts')
   const factory = read('../fabric/fabricNodeFactory.ts')
@@ -43,4 +43,21 @@ test('drag snapping draws transient alignment lines while resize stays continuou
   assert.match(controller, /const snapFeedback = ref<UiSnapFeedback \| null>\(null\)/)
   assert.match(controller, /snapFeedbackFor\(/)
   assert.match(controller, /snapMoveRect\(requestedBounds/)
+  assert.match(controller, /snapRect\(requested, originRect, handle, modifiers, snapOptionsFor\(nodeId\), node\)/)
+  assert.match(controller, /const commitDraftRect = [\s\S]{0,100}clearSnapFeedback\(\)/)
+})
+
+test('node tree paints every selected row through the native tree class contract', () => {
+  const panel = compile('UiDesignerNodePanel.vue')
+  assert.match(panel, /:props="\{ class:.*selectedIds\.includes\(data\.id\).*'is-selected'/)
+  assert.match(panel, /\.el-tree-node\.is-selected > \.el-tree-node__content\)\s*\{[^}]*background-color:/)
+  assert.match(panel, /:current-node-key="selectedIds\[0\]"/)
+})
+
+test('text wrapping is an explicit text field while button and document defaults remain unchanged', () => {
+  const inspector = compile('UiDesignerInspector.vue')
+  assert.match(inspector, /text: \[\.\.\.commonText, \{ key: 'wrapWidth', kind: 'number', min: 0 \}\]/)
+  const factory = read('../fabric/fabricNodeFactory.ts')
+  assert.match(factory, /wrapWidth: node\.type === 'text' \? node\.props\.wrapWidth : 0/)
+  assert.match(read('../models/document.ts'), /wrapWidth: 0/)
 })

@@ -1377,7 +1377,7 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     runtime.cleanup();
   });
 
-  test('normalizes four-edge editor padding while keeping Pixi text on one compressed line', () => {
+  test('normalizes four-edge editor padding while preserving manual text lines', () => {
     const context = makeContext();
     class TextStyleProbe extends context.PIXI.Text {
       style: Record<string, unknown> = {};
@@ -1392,11 +1392,77 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     scene.nodes[0].props.padding = { top: 2, right: 8, bottom: 4, left: 6 };
     runtime.mount(scene, { root: new context.PIXI.Container() });
     const view = runtime.nodeViews.text;
-    assert.equal(view.text, 'Line one Line two');
+    assert.equal(view.text, 'Line one\nLine two');
     assert.equal(view.style.padding, 8);
     assert.equal(view.style.wordWrap, false);
     assert.equal(view.scale.x < 1, true);
     assert.equal(view.scale.y, 1);
+    runtime.cleanup();
+  });
+
+  test('plain text enables and disables configured wrapping without removing manual lines', () => {
+    const context = makeContext();
+    class TextStyleProbe extends context.PIXI.Text { style: Record<string, unknown> = {}; }
+    context.PIXI.Text = TextStyleProbe;
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    scene.nodes = scene.nodes.filter((node: any) => node.type === 'text');
+    scene.zOrder = ['text'];
+    scene.nodes[0].props.content = '示例第一行\n示例第二行';
+    scene.nodes[0].props.wrapWidth = 64;
+    runtime.mount(scene, { root: new context.PIXI.Container() });
+    const view = runtime.nodeViews.text;
+    assert.equal(view.style.wordWrap, true);
+    assert.equal(view.style.wordWrapWidth, 64);
+    assert.equal(view.style.breakWords, true);
+    assert.equal(view.text, scene.nodes[0].props.content);
+    runtime.patchNodes([{ nodeId: 'text', props: { wrapWidth: 0 } }]);
+    assert.equal(view.style.wordWrap, false);
+    assert.equal(view.style.breakWords, false);
+    assert.equal(view.text, scene.nodes[0].props.content);
+    runtime.cleanup();
+  });
+
+  test('rich text wraps measured fragments across styles and icons and reflows when width changes', () => {
+    const context = makeContext();
+    class MeasuredText extends context.PIXI.Text {
+      style: Record<string, unknown>;
+      constructor(text: string, style: Record<string, unknown> = {}) { super(text); this.style = style; }
+    }
+    context.PIXI.Text = MeasuredText;
+    const measured: string[] = [];
+    context.PIXI.TextMetrics = { measureText(text: string) {
+      measured.push(text);
+      return { width: Array.from(text).length * 10 };
+    } };
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    scene.nodes = scene.nodes.filter((node: any) => node.type === 'text');
+    scene.zOrder = ['text'];
+    Object.assign(scene.nodes[0].props, {
+      content: '<b>示例文字</b><color=#ff0000>AB</color>\\i[1]\n最后',
+      richText: true, wrapWidth: 40, width: 80, height: 180, fontSize: 20,
+    });
+    runtime.mount(scene, { root: new context.PIXI.Container() });
+    const view = runtime.nodeViews.text;
+    const content = view.children.filter((child: any) => child.__mzuiTextLine !== undefined);
+    assert.deepEqual(content.map((child: any) => [child.text ?? 'icon', child.x, child.y]), [
+      ['示例文字', 0, 0], ['AB', 0, 24], ['icon', 20, 24], ['最后', 0, 48],
+    ]);
+    assert.equal(content[0].style.fontWeight, 'bold');
+    assert.equal(content[1].style.fill, '#ff0000');
+    assert.equal(content[2].__mzuiIconId, 1);
+    assert.ok(measured.includes('示例文字'));
+    runtime.patchNodes([{ nodeId: 'text', props: { wrapWidth: 20 } }]);
+    const reflowed = view.children.filter((child: any) => child.__mzuiTextLine !== undefined);
+    assert.equal(new Set(reflowed.map((child: any) => child.__mzuiTextLine)).size, 5);
+    assert.equal(reflowed[0].text, '示例');
+    assert.equal(reflowed[1].text, '文字');
+    runtime.patchNodes([{ nodeId: 'text', props: { content: '<b>😀😀😀</b>', wrapWidth: 20 } }]);
+    const unicode = view.children.filter((child: any) => child.__mzuiTextLine !== undefined);
+    assert.deepEqual(unicode.map((child: any) => child.text), ['😀😀', '😀']);
     runtime.cleanup();
   });
 

@@ -6,6 +6,7 @@ export type UiLayoutTextboxOptions = Partial<TextboxProps> & {
   layoutHeight: number
   verticalTextAlign: UiTextVerticalAlign
   singleLine?: boolean
+  wrapWidth?: number
   editable?: boolean
 }
 
@@ -29,9 +30,11 @@ export class UiLayoutTextbox extends Textbox<UiLayoutTextboxOptions> {
   declare naturalTextWidth: number
   declare horizontalTextScale: number
   declare singleLine: boolean
+  declare wrapWidth: number
 
   override _wrapText(lines: string[], _desiredWidth: number): string[][] {
     if (this.singleLine) return [this.graphemeSplit(normalizeUiSingleLineText(lines.join(' ')))]
+    if (Number.isFinite(this.wrapWidth) && this.wrapWidth > 0) return super._wrapText(lines, this.wrapWidth)
     return lines.map((line) => this.graphemeSplit(line))
   }
 

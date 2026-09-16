@@ -9,7 +9,7 @@ vi.mock('../adapters', () => ({
 
 import { useUiDesigner } from './useUiDesigner'
 
-test('resize stays continuous regardless of grid and snap settings while modifiers keep their own meaning', () => {
+test('resize stays continuous with snapping disabled while modifiers keep their own meaning', () => {
   const designer = useUiDesigner()
   const nodeId = designer.addNode('sprite', 'node_root', { x: 96, y: 80 })!
   const node = designer.document.value.nodes.find((candidate) => candidate.id === nodeId)!
@@ -17,16 +17,6 @@ test('resize stays continuous regardless of grid and snap settings while modifie
   const delta = { x: 13, y: 7 }
 
   designer.setGridEnabled(true)
-  designer.setSnapEnabled(true)
-  const withSnapSettings = designer.previewNodeResizeWithSnap(
-    nodeId,
-    origin,
-    'se',
-    delta,
-    { preserveAspect: false, fromCenter: false },
-  )!
-
-  designer.setGridEnabled(false)
   designer.setSnapEnabled(false)
   const withoutSnapSettings = designer.previewNodeResizeWithSnap(
     nodeId,
@@ -36,9 +26,8 @@ test('resize stays continuous regardless of grid and snap settings while modifie
     { preserveAspect: false, fromCenter: false },
   )!
 
-  assert.deepEqual(withSnapSettings, withoutSnapSettings)
-  assert.equal(withSnapSettings.width, origin.width + delta.x)
-  assert.equal(withSnapSettings.height, origin.height + delta.y)
+  assert.equal(withoutSnapSettings.width, origin.width + delta.x)
+  assert.equal(withoutSnapSettings.height, origin.height + delta.y)
 
   const shifted = designer.previewNodeResizeWithSnap(
     nodeId,

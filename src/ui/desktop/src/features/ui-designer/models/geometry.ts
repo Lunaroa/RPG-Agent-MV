@@ -733,9 +733,6 @@ export function snapMoveRect(
   }
 }
 
-const activeXEdge = (rect: UiRect, handle: UiResizeHandle): number | undefined => handle.includes('w') ? rect.x : handle.includes('e') ? rect.x + rect.width : undefined
-const activeYEdge = (rect: UiRect, handle: UiResizeHandle): number | undefined => handle.includes('n') ? rect.y : handle.includes('s') ? rect.y + rect.height : undefined
-
 function resizeFromDimensions(origin: UiRect, handle: UiResizeHandle, width: number, height: number, fromCenter: boolean): UiRect {
   const safeWidth = Math.max(1, width)
   const safeHeight = Math.max(1, height)
@@ -784,48 +781,86 @@ export function resizeRect(origin: UiRect, handle: UiResizeHandle, delta: UiPoin
   return resizeFromDimensions(safeOrigin, handle, Math.max(1, width), Math.max(1, height), modifiers.fromCenter)
 }
 
-function deltaForSnappedEdges(origin: UiRect, handle: UiResizeHandle, x?: number, y?: number): UiPoint {
-  const originX = activeXEdge(origin, handle)
-  const originY = activeYEdge(origin, handle)
+/** Scene-space position of the grabbed handle, including rotation and anchor. */
+export function resizeHandlePoint(rect: UiRect, handle: UiResizeHandle, node?: UiNode): UiPoint {
+  const fractionX = handle.includes('w') ? 0 : handle.includes('e') ? 1 : 0.5
+  const fractionY = handle.includes('n') ? 0 : handle.includes('s') ? 1 : 0.5
+  const anchorX = node?.props.anchorX ?? 0
+  const anchorY = node?.props.anchorY ?? 0
+  const theta = node ? nodeRotationRadians(node) : 0
+  const x = (fractionX - anchorX) * rect.width
+  const y = (fractionY - anchorY) * rect.height
   return {
-    x: x === undefined || originX === undefined ? 0 : x - originX,
-    y: y === undefined || originY === undefined ? 0 : y - originY,
+    x: rect.x + anchorX * rect.width + x * Math.cos(theta) - y * Math.sin(theta),
+    y: rect.y + anchorY * rect.height + x * Math.sin(theta) + y * Math.cos(theta),
   }
 }
 
-/** Snap only the actively dragged resize edges, then reapply the same aspect/center semantics. */
-export function snapRect(requested: UiRect, origin: UiRect, handle: UiResizeHandle, modifiers: UiResizeModifiers, options: SnapOptions): UiSnapRectResult {
-  if (options.enabled === false) {
-    return { ...normalizeGeometryRect(requested, origin), snapped: false, guides: [] }
+/** Solve alignment in the resize's available degrees of freedom, not by moving the node. */
+export function snapRect(requested: UiRect, origin: UiRect, handle: UiResizeHandle, modifiers: UiResizeModifiers, options: SnapOptions, node?: UiNode): UiSnapMoveRectResult {
+  const unchanged = () => ({ ...normalizeGeometryRect(requested, origin), snapped: false, guides: [], hits: [] })
+  if (options.enabled === false) return unchanged()
+  const hasX = handle.includes('w') || handle.includes('e')
+  const hasY = handle.includes('n') || handle.includes('s')
+  const fractionX = handle.includes('w') ? 0 : handle.includes('e') ? 1 : 0.5
+  const fractionY = handle.includes('n') ? 0 : handle.includes('s') ? 1 : 0.5
+  const fixedX = modifiers.fromCenter || (!node && !hasX) ? 0.5 : handle.includes('w') ? 1 : 0
+  const fixedY = modifiers.fromCenter || (!node && !hasY) ? 0.5 : handle.includes('n') ? 1 : 0
+  const theta = node ? nodeRotationRadians(node) : 0
+  const cosine = Math.cos(theta)
+  const sine = Math.sin(theta)
+  const widthVector = { x: cosine * (fractionX - fixedX), y: sine * (fractionX - fixedX) }
+  const heightVector = { x: -sine * (fractionY - fixedY), y: cosine * (fractionY - fixedY) }
+  const point = resizeHandlePoint(requested, handle, node)
+  const freeCorner = hasX && hasY && !modifiers.preserveAspect
+  const widthBasis = modifiers.preserveAspect ? Math.max(1, origin.width) : hasX ? 1 : 0
+  const heightBasis = modifiers.preserveAspect ? Math.max(1, origin.height) : hasY ? 1 : 0
+  const direction = {
+    x: widthVector.x * widthBasis + heightVector.x * heightBasis,
+    y: widthVector.y * widthBasis + heightVector.y * heightBasis,
   }
-  const requestedX = activeXEdge(requested, handle)
-  const requestedY = activeYEdge(requested, handle)
-  const xSnap = requestedX === undefined ? undefined : snapAxis(requestedX, 'x', options)
-  const ySnap = requestedY === undefined ? undefined : snapAxis(requestedY, 'y', options)
-  let result = requested
-  let used: AxisSnap[] = []
-  if (!modifiers.preserveAspect) {
-    result = resizeRect(origin, handle, deltaForSnappedEdges(origin, handle, xSnap?.value ?? requestedX, ySnap?.value ?? requestedY), modifiers)
-    used = [xSnap, ySnap].filter((snap): snap is AxisSnap => Boolean(snap))
-  } else if (xSnap || ySnap) {
-    const candidates: Array<{ rect: UiRect; snap: AxisSnap; score: number }> = []
-    if (xSnap) {
-      const rect = resizeRect(origin, handle, deltaForSnappedEdges(origin, handle, xSnap.value, undefined), modifiers)
-      const score = Math.hypot((activeXEdge(rect, handle) ?? 0) - (requestedX ?? 0), (activeYEdge(rect, handle) ?? 0) - (requestedY ?? 0))
-      candidates.push({ rect, snap: xSnap, score })
-    }
-    if (ySnap) {
-      const rect = resizeRect(origin, handle, deltaForSnappedEdges(origin, handle, undefined, ySnap.value), modifiers)
-      const score = Math.hypot((activeXEdge(rect, handle) ?? 0) - (requestedX ?? 0), (activeYEdge(rect, handle) ?? 0) - (requestedY ?? 0))
-      candidates.push({ rect, snap: ySnap, score })
-    }
-    candidates.sort((left, right) => left.score - right.score)
-    if (candidates[0]) { result = candidates[0].rect; used = [candidates[0].snap] }
+  const snaps = (['x', 'y'] as const)
+    .filter((axis) => freeCorner || Math.abs(direction[axis]) > 1e-10)
+    .map((axis) => snapAxis(point[axis], axis, options))
+    .filter((snap): snap is AxisSnap => Boolean(snap))
+  const candidates: Array<{ rect: UiRect; used: AxisSnap[]; distance: number }> = []
+  const addCandidate = (width: number, height: number, used: AxisSnap[]) => {
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1) return
+    const rect = node
+      ? localResizeNodeRect(node, origin, handle, width, height, modifiers.fromCenter)
+      : resizeFromDimensions(origin, handle, width, height, modifiers.fromCenter)
+    const nextPoint = resizeHandlePoint(rect, handle, node)
+    const distance = Math.hypot(nextPoint.x - point.x, nextPoint.y - point.y)
+    // A nearly parallel side must not jump a long way just to reach a nearby axis line.
+    if (!freeCorner && distance > Math.max(0, options.sensitivity)) return
+    candidates.push({ rect, used, distance })
   }
-  const normalized = normalizeGeometryRect(result, origin)
+  if (freeCorner) {
+    const choices = snaps.length === 2 ? [snaps, ...snaps.map((snap) => [snap])] : snaps.map((snap) => [snap])
+    for (const used of choices) {
+      const dx = (used.find((snap) => snap.axis === 'x')?.value ?? point.x) - point.x
+      const dy = (used.find((snap) => snap.axis === 'y')?.value ?? point.y) - point.y
+      addCandidate(
+        requested.width + (dx * cosine + dy * sine) / (fractionX - fixedX),
+        requested.height + (-dx * sine + dy * cosine) / (fractionY - fixedY),
+        used,
+      )
+    }
+  } else {
+    for (const snap of snaps) {
+      const delta = (snap.value - point[snap.axis]) / direction[snap.axis]
+      addCandidate(requested.width + widthBasis * delta, requested.height + heightBasis * delta, [snap])
+    }
+  }
+  candidates.sort((left, right) => right.used.length - left.used.length || left.distance - right.distance)
+  const best = candidates[0]
+  if (!best) return unchanged()
+  const normalized = normalizeGeometryRect(best.rect, origin)
+  const finalPoint = resizeHandlePoint(normalized, handle, node)
+  const used = best.used.filter((snap) => Math.round(finalPoint[snap.axis]) === snap.value)
   const guides = used.map((snap) => snap.guide).filter((guide): guide is UiGuide => Boolean(guide))
-  const distances = used.map((snap) => snap.delta)
-  return { ...normalized, snapped: used.length > 0, guides, distance: distances.length ? Math.min(...distances) : undefined }
+  const hits = used.map(snapHitFor).filter((hit): hit is UiSnapHit => Boolean(hit))
+  return { ...normalized, snapped: used.length > 0, guides, hits, distance: best.distance }
 }
 
 /** Quantize a rotated handle to the closest platform resize cursor. */

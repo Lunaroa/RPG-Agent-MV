@@ -336,6 +336,7 @@ const handleKeydown = (event: KeyboardEvent) => {
       ref="treeRef"
       class="node-tree"
       :data="treeData"
+      :props="{ class: (data: NodeTreeEntry) => selectedIds.includes(data.id) ? 'is-selected' : '' }"
       node-key="id"
       draggable
       :allow-drag="allowDrag"
@@ -410,6 +411,7 @@ const handleKeydown = (event: KeyboardEvent) => {
 .node-tree { flex: 1; width: 100%; min-width: 0; min-height: 150px; overflow-x: hidden; overflow-y: auto; background: transparent; --el-tree-node-hover-bg-color: color-mix(in srgb, var(--app-accent) 14%, transparent); --el-tree-text-color: var(--app-ink); }
 .node-tree :deep(.el-tree-node), .node-tree :deep(.el-tree-node__children), .node-tree :deep(.el-tree-node__content) { width: 100%; min-width: 0; max-width: 100%; }
 .node-tree :deep(.el-tree-node__content) { box-sizing: border-box; overflow: hidden; }
+.node-tree :deep(.el-tree-node.is-selected > .el-tree-node__content) { background-color: var(--el-color-primary-light-9); }
 .node-tree :deep(.el-dropdown) { display: block; flex: 1 1 auto; width: auto; min-width: 0; overflow: hidden; }
 .node-tree-entry { display: flex; box-sizing: border-box; align-items: center; gap: 7px; width: 100%; min-width: 0; max-width: 100%; min-height: 28px; overflow: hidden; font-size: 12px; }.node-tree-entry.locked { color: var(--app-ink-soft); }
 .node-row-actions {

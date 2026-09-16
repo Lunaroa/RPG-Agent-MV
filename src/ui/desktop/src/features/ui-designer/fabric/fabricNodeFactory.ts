@@ -370,7 +370,7 @@ const applyTextStyle = (object: Textbox, node: UiTextNode | UiButtonNode, fontFa
     editable: !node.locked,
     lockScalingY: node.locked,
     ...(object instanceof UiLayoutTextbox
-      ? { layoutHeight: Math.max(20, node.props.height), verticalTextAlign: node.props.verticalAlign, singleLine: node.type === 'button' }
+      ? { layoutHeight: Math.max(20, node.props.height), verticalTextAlign: node.props.verticalAlign, singleLine: node.type === 'button', wrapWidth: node.type === 'text' ? node.props.wrapWidth : 0 }
       : {}),
   })
   object.setCoords()
@@ -386,6 +386,7 @@ const createTextNode = (node: UiTextNode | UiButtonNode, fontFamily?: string, na
     scaleY: node.props.scaleY,
     splitByGrapheme: true,
     singleLine: node.type === 'button',
+    wrapWidth: node.type === 'text' ? node.props.wrapWidth : 0,
     editable: !node.locked,
     backgroundColor: node.props.backgroundColor,
   })

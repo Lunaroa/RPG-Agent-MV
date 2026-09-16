@@ -59,6 +59,8 @@ import {
   rotateSubtreeTransforms,
   smartSnapTargetsForNode,
   snapFeedbackFor,
+  snapRect,
+  resizeHandlePoint,
   snapMoveRect,
   snapPoint,
   updateNodePosition,
@@ -2122,8 +2124,14 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     const node = findNode(document.value, nodeId)
     if (!node) return undefined
     const sized = resizeRect(originRect, handle, delta, modifiers)
-    const result = clampNodeRectToParent(document.value, nodeId, localResizeNodeRect(node, originRect, handle, sized.width, sized.height, modifiers.fromCenter), modifiers.preserveAspect)
+    const requested = localResizeNodeRect(node, originRect, handle, sized.width, sized.height, modifiers.fromCenter)
+    const snapped = snapRect(requested, originRect, handle, modifiers, snapOptionsFor(nodeId), node)
+    const result = clampNodeRectToParent(document.value, nodeId, snapped, modifiers.preserveAspect)
     draftRects.value = { ...draftRects.value, [nodeId]: result }
+    const point = resizeHandlePoint(result, handle, node)
+    const hits = snapped.hits.filter((hit) => Math.round(point[hit.axis]) === hit.value)
+    const feedback = snapFeedbackFor(document.value, { ...point, width: 0, height: 0 }, hits)
+    snapFeedback.value = feedback.lines.length || feedback.guideIds.length ? feedback : null
     return result
   }
 
@@ -2136,6 +2144,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     return stopped
   })
   const commitDraftRect = (nodeId: string) => {
+    clearSnapFeedback()
     const rect = draftRects.value[nodeId]
     if (!rect) return
     draftRects.value = Object.fromEntries(Object.entries(draftRects.value).filter(([id]) => id !== nodeId))

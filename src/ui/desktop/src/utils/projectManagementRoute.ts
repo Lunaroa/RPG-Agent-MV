@@ -8,6 +8,8 @@ export type AppRailItemId =
   | 'workbench'
   | 'database'
   | 'project-assets'
+  | 'game-version'
+  | 'game-packaging'
   | 'map-overview'
   | 'plugins'
   | 'plugin-marketplace'
@@ -46,6 +48,8 @@ export function resolveAppRailItem(
   // Plugin manager lives on the console route but owns its own rail entry.
   if (routePath === '/console') return query.page === 'plugins' ? 'plugins' : 'console'
   if (routePath === '/project-assets') return 'project-assets'
+  if (routePath === '/game-version') return 'game-version'
+  if (routePath === '/game-packaging') return 'game-packaging'
   if (routePath === '/map-overview') return 'map-overview'
   if (routePath === '/plugin-marketplace') return 'plugin-marketplace'
   if (routePath === '/ui-designer') return 'ui-designer'

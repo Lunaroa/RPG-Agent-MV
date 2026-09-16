@@ -9,6 +9,8 @@ const MapOverviewView = () => import('../views/MapOverviewView.vue')
 const ConsoleView = () => import('../views/ConsoleView.vue')
 const PluginMarketplaceView = () => import('../views/PluginMarketplaceView.vue')
 const UiDesignerView = () => import('../views/UiDesignerView.vue')
+const GameVersionView = () => import('../views/GameVersionView.vue')
+const GamePackagingView = () => import('../views/GamePackagingView.vue')
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -59,6 +61,32 @@ const router = createRouter({
         await productPlugins.load()
         if (!productPlugins.isEnabled('ui-designer')) {
           return productPluginDisabledRedirect('ui-designer', to.fullPath)
+        }
+        return true
+      },
+    },
+    {
+      path: '/game-version',
+      name: 'game-version',
+      component: GameVersionView,
+      beforeEnter: async (to) => {
+        const productPlugins = useProductPluginsStore()
+        await productPlugins.load()
+        if (!productPlugins.isEnabled('game-version')) {
+          return productPluginDisabledRedirect('game-version', to.fullPath)
+        }
+        return true
+      },
+    },
+    {
+      path: '/game-packaging',
+      name: 'game-packaging',
+      component: GamePackagingView,
+      beforeEnter: async (to) => {
+        const productPlugins = useProductPluginsStore()
+        await productPlugins.load()
+        if (!productPlugins.isEnabled('game-packaging')) {
+          return productPluginDisabledRedirect('game-packaging', to.fullPath)
         }
         return true
       },

@@ -185,6 +185,35 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('projectConfig:setSearch', settings, project),
   },
 
+  gameRelease: {
+    status: (project?: string) => ipcRenderer.invoke('gameRelease:status', project),
+    save: (request: unknown, project?: string) => ipcRenderer.invoke('gameRelease:save', request, project),
+  },
+
+  gameBuild: {
+    getSettings: (project?: string) => ipcRenderer.invoke('gameBuild:getSettings', project),
+    listAndroidIconCandidates: (project?: string) => ipcRenderer.invoke('gameBuild:listAndroidIconCandidates', project),
+    saveSettings: (settings: unknown, project?: string) => ipcRenderer.invoke('gameBuild:saveSettings', settings, project),
+    preflight: (input: unknown, project?: string) => ipcRenderer.invoke('gameBuild:preflight', input, project),
+    build: (request: unknown, project?: string) => ipcRenderer.invoke('gameBuild:build', request, project),
+    listEncryptionKeys: (project?: string) => ipcRenderer.invoke('gameBuild:listEncryptionKeys', project),
+    generateEncryptionKey: (id: string, project?: string) => ipcRenderer.invoke('gameBuild:generateEncryptionKey', id, project),
+    importEncryptionKey: (id: string, encodedKey: string, project?: string) =>
+      ipcRenderer.invoke('gameBuild:importEncryptionKey', id, encodedKey, project),
+    publish: (request: unknown, project?: string) => ipcRenderer.invoke('gameBuild:publish', request, project),
+    getAndroidToolchain: (project?: string) => ipcRenderer.invoke('gameBuild:getAndroidToolchain', project),
+    installAndroidToolchain: (request: unknown) => ipcRenderer.invoke('gameBuild:installAndroidToolchain', request),
+    getCredentialStatus: (kind?: string, credentialId?: string) =>
+      ipcRenderer.invoke('gameBuild:getCredentialStatus', kind, credentialId),
+    forgetCredential: (kind: string, credentialId: string) =>
+      ipcRenderer.invoke('gameBuild:forgetCredential', kind, credentialId),
+    createManifestSigningIdentity: () => ipcRenderer.invoke('gameBuild:createManifestSigningIdentity'),
+    createAndroidKeystore: (request: unknown, project?: string) =>
+      ipcRenderer.invoke('gameBuild:createAndroidKeystore', request, project),
+    selectOutputDirectory: (initialPath?: string) => ipcRenderer.invoke('gameBuild:selectOutputDirectory', initialPath),
+    reveal: (target: string) => ipcRenderer.invoke('gameBuild:reveal', target),
+  },
+
   globalSearch: {
     query: (query: string, options?: unknown, project?: string) =>
       ipcRenderer.invoke('search:global', query, options, project),

@@ -20,6 +20,10 @@ const marketplaceSource = readFileSync(
   fileURLToPath(new URL('../views/PluginMarketplaceView.vue', import.meta.url)),
   'utf8',
 )
+const appRailSource = readFileSync(
+  fileURLToPath(new URL('../components/layout/AppRail.vue', import.meta.url)),
+  'utf8',
+)
 
 describe('database route state', () => {
   it('normalizes supported sections and rejects arbitrary values', () => {
@@ -37,6 +41,8 @@ describe('database route state', () => {
     expect(resolveAppRailItem('/console', { page: 'settings' })).toBe('console')
     expect(resolveAppRailItem('/console', { page: 'story', section: 'database' })).toBe('console')
     expect(resolveAppRailItem('/project-assets', {})).toBe('project-assets')
+    expect(resolveAppRailItem('/game-version', {})).toBe('game-version')
+    expect(resolveAppRailItem('/game-packaging', {})).toBe('game-packaging')
     expect(resolveAppRailItem('/map-overview', {})).toBe('map-overview')
     expect(resolveAppRailItem('/plugin-marketplace', {})).toBe('plugin-marketplace')
     expect(resolveAppRailItem('/ui-designer', {})).toBe('ui-designer')
@@ -65,6 +71,12 @@ describe('database route state', () => {
     expect(routerSource).toMatch(/path:\s*['"]\/map-overview['"][\s\S]*?productPluginDisabledRedirect\('map-overview'/)
     expect(routerSource).toMatch(/path:\s*['"]\/ui-designer['"][\s\S]*?component:\s*UiDesignerView/)
     expect(routerSource).toMatch(/productPluginDisabledRedirect\('ui-designer'/)
+    expect(routerSource).toMatch(/path:\s*['"]\/game-version['"][\s\S]*?productPluginDisabledRedirect\('game-version'/)
+    expect(routerSource).toMatch(/path:\s*['"]\/game-packaging['"][\s\S]*?productPluginDisabledRedirect\('game-packaging'/)
+    expect(appRailSource).toMatch(/productPlugins\.isEnabled\('game-version'\)/)
+    expect(appRailSource).toMatch(/productPlugins\.isEnabled\('game-packaging'\)/)
+    expect(appRailSource.match(/id:\s*['"]game-version['"]/g)).toHaveLength(1)
+    expect(appRailSource.match(/id:\s*['"]game-packaging['"]/g)).toHaveLength(1)
     expect(appSource).toMatch(/KeepAlive[^>]*exclude=\"\['UiDesignerView'\]\"/)
   })
 

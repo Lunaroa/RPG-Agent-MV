@@ -51,6 +51,26 @@ import type {
   UiRuntimeStatus,
 } from '@contract/ui-designer';
 import type { ProjectAssetChangeManifest } from '@contract/types';
+import type {
+  AndroidToolchainInstallRequest,
+  AndroidToolchainStatus,
+  AndroidKeystoreCreateRequest,
+  AndroidKeystoreCreateResult,
+  GameReleaseCredentialKind,
+  GameReleaseCredentialStatus,
+  GameBuildPreflightResult,
+  GameBuildRequest,
+  GameBuildResult,
+  GameEncryptionKeySummary,
+  GameManifestSigningIdentitySummary,
+  GameReleaseConfig,
+  GameReleasePublishRequest,
+  GameReleasePublishResult,
+  GameReleaseProjectSettings,
+  GameReleaseSaveRequest,
+  GameReleaseSaveResult,
+  GameReleaseStatus,
+} from '@contract/game-release';
 
 declare global {
   interface Window {
@@ -206,6 +226,29 @@ declare global {
         setPluginPreview(pluginName: string, enabled: boolean, project?: string): Promise<unknown>;
         setPluginColor(pluginName: string, color: string | null, project?: string): Promise<unknown>;
         setSearch(settings: unknown, project?: string): Promise<unknown>;
+      };
+      gameRelease: {
+        status(project?: string): Promise<unknown>;
+        save(request: unknown, project?: string): Promise<unknown>;
+      };
+      gameBuild: {
+        getSettings(project?: string): Promise<unknown>;
+        listAndroidIconCandidates(project?: string): Promise<unknown>;
+        saveSettings(settings: unknown, project?: string): Promise<unknown>;
+        preflight(input: unknown, project?: string): Promise<unknown>;
+        build(request: unknown, project?: string): Promise<unknown>;
+        listEncryptionKeys(project?: string): Promise<unknown>;
+        generateEncryptionKey(id: string, project?: string): Promise<unknown>;
+        importEncryptionKey(id: string, encodedKey: string, project?: string): Promise<unknown>;
+        publish(request: unknown, project?: string): Promise<unknown>;
+        getAndroidToolchain(project?: string): Promise<unknown>;
+        installAndroidToolchain(request: unknown): Promise<unknown>;
+        getCredentialStatus(kind?: string, credentialId?: string): Promise<unknown>;
+        forgetCredential(kind: string, credentialId: string): Promise<unknown>;
+        createManifestSigningIdentity(): Promise<unknown>;
+        createAndroidKeystore(request: unknown, project?: string): Promise<unknown>;
+        selectOutputDirectory(initialPath?: string): Promise<string | null>;
+        reveal(target: string): Promise<{ ok: true }>;
       };
       globalSearch: {
         query(query: string, options?: unknown, project?: string): Promise<unknown>;
@@ -671,6 +714,69 @@ export const projectConfig = {
   },
   setSearch(settings: Partial<LunaRpgSearchSettings>, project?: string) {
     return desktopApi().projectConfig.setSearch(toPlain(settings), project) as Promise<{ search: LunaRpgSearchSettings | null }>;
+  },
+};
+
+export const gameRelease = {
+  status(project?: string) {
+    return desktopApi().gameRelease.status(project) as Promise<GameReleaseStatus>;
+  },
+  save(request: GameReleaseSaveRequest, project?: string) {
+    return desktopApi().gameRelease.save(toPlain(request), project) as Promise<GameReleaseSaveResult>;
+  },
+};
+
+export const gameBuild = {
+  getSettings(project?: string) {
+    return desktopApi().gameBuild.getSettings(project) as Promise<GameReleaseProjectSettings>;
+  },
+  listAndroidIconCandidates(project?: string) {
+    return desktopApi().gameBuild.listAndroidIconCandidates(project) as Promise<string[]>;
+  },
+  saveSettings(settings: GameReleaseProjectSettings, project?: string) {
+    return desktopApi().gameBuild.saveSettings(toPlain(settings), project) as Promise<GameReleaseProjectSettings>;
+  },
+  preflight(input: { presetId: string; releaseConfig?: GameReleaseConfig }, project?: string) {
+    return desktopApi().gameBuild.preflight(toPlain(input), project) as Promise<GameBuildPreflightResult>;
+  },
+  build(request: GameBuildRequest, project?: string) {
+    return desktopApi().gameBuild.build(toPlain(request), project) as Promise<GameBuildResult>;
+  },
+  listEncryptionKeys(project?: string) {
+    return desktopApi().gameBuild.listEncryptionKeys(project) as Promise<GameEncryptionKeySummary[]>;
+  },
+  generateEncryptionKey(id: string, project?: string) {
+    return desktopApi().gameBuild.generateEncryptionKey(id, project) as Promise<GameEncryptionKeySummary>;
+  },
+  importEncryptionKey(id: string, encodedKey: string, project?: string) {
+    return desktopApi().gameBuild.importEncryptionKey(id, encodedKey, project) as Promise<GameEncryptionKeySummary>;
+  },
+  publish(request: GameReleasePublishRequest, project?: string) {
+    return desktopApi().gameBuild.publish(toPlain(request), project) as Promise<GameReleasePublishResult>;
+  },
+  getAndroidToolchain(project?: string) {
+    return desktopApi().gameBuild.getAndroidToolchain(project) as Promise<AndroidToolchainStatus>;
+  },
+  installAndroidToolchain(request: AndroidToolchainInstallRequest) {
+    return desktopApi().gameBuild.installAndroidToolchain(toPlain(request)) as Promise<AndroidToolchainStatus>;
+  },
+  getCredentialStatus(kind?: GameReleaseCredentialKind, credentialId?: string) {
+    return desktopApi().gameBuild.getCredentialStatus(kind, credentialId) as Promise<GameReleaseCredentialStatus>;
+  },
+  forgetCredential(kind: GameReleaseCredentialKind, credentialId: string) {
+    return desktopApi().gameBuild.forgetCredential(kind, credentialId) as Promise<{ removed: boolean }>;
+  },
+  createManifestSigningIdentity() {
+    return desktopApi().gameBuild.createManifestSigningIdentity() as Promise<GameManifestSigningIdentitySummary>;
+  },
+  createAndroidKeystore(request: AndroidKeystoreCreateRequest, project?: string) {
+    return desktopApi().gameBuild.createAndroidKeystore(toPlain(request), project) as Promise<AndroidKeystoreCreateResult | null>;
+  },
+  selectOutputDirectory(initialPath?: string) {
+    return desktopApi().gameBuild.selectOutputDirectory(initialPath);
+  },
+  reveal(target: string) {
+    return desktopApi().gameBuild.reveal(target);
   },
 };
 
@@ -2020,4 +2126,4 @@ export function openSessionEventStream(
   };
 }
 
-export const api = { bootstrap, projects, workspaceSurfaces, eventRegistry, sessions, playtest, mapPreview, settings, memory, maps, events, projectAssets, projectManagement, commonEvents, plugins, assetLibrary, placementQueue, storyPages, storyOutline, productPlugin, uiDesigner, resolveAssetUrl, openSessionEventStream };
+export const api = { bootstrap, projects, workspaceSurfaces, eventRegistry, sessions, playtest, mapPreview, settings, memory, maps, events, projectAssets, projectManagement, commonEvents, plugins, assetLibrary, placementQueue, storyPages, storyOutline, productPlugin, uiDesigner, gameRelease, gameBuild, resolveAssetUrl, openSessionEventStream };

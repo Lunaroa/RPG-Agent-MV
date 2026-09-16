@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { Brush, Coin, Connection, Folder, Grid, MapLocation, Monitor, Setting, Shop } from '@element-plus/icons-vue'
+import { Box, Brush, Coin, Connection, Folder, Grid, MapLocation, Monitor, Setting, Shop, Tickets } from '@element-plus/icons-vue'
 import { useI18n } from '../../i18n'
 import { useProductPluginsStore } from '../../stores/productPlugins'
 import { resolveAppRailItem } from '../../utils/projectManagementRoute'
@@ -43,6 +43,26 @@ const items = computed(() => {
     },
     { id: 'console', to: '/console', label: t('app.nav.console'), icon: Monitor, uiId: 'nav-console' },
   ]
+  if (productPlugins.isEnabled('game-version')) {
+    const pluginsIndex = base.findIndex((item) => item.id === 'plugins')
+    base.splice(pluginsIndex, 0, {
+      id: 'game-version',
+      to: '/game-version',
+      label: t('app.nav.gameVersion'),
+      icon: Tickets,
+      uiId: 'nav-game-version',
+    })
+  }
+  if (productPlugins.isEnabled('game-packaging')) {
+    const pluginsIndex = base.findIndex((item) => item.id === 'plugins')
+    base.splice(pluginsIndex, 0, {
+      id: 'game-packaging',
+      to: '/game-packaging',
+      label: t('app.nav.gamePackaging'),
+      icon: Box,
+      uiId: 'nav-game-packaging',
+    })
+  }
   if (productPlugins.isEnabled('map-overview')) {
     const pluginsIndex = base.findIndex((item) => item.id === 'plugins')
     base.splice(pluginsIndex, 0, {

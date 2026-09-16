@@ -75,6 +75,32 @@ export const PRODUCT_PLUGIN_DESCRIPTORS = [
     compatibleProductVersion: '^0.8.0',
     defaultEnabled: false,
   },
+  {
+    id: 'game-version',
+    version: '1.0.0',
+    route: '/game-version',
+    icon: 'Tickets',
+    name: { 'en-US': 'Game Version', 'zh-CN': '游戏版本' },
+    description: {
+      'en-US': 'Configure player-facing releases, save compatibility, and game update checks.',
+      'zh-CN': '配置玩家游戏发行版本、存档兼容策略和在线更新检查。',
+    },
+    compatibleProductVersion: '^0.8.0',
+    defaultEnabled: false,
+  },
+  {
+    id: 'game-packaging',
+    version: '1.0.0',
+    route: '/game-packaging',
+    icon: 'Box',
+    name: { 'en-US': 'Package Game', 'zh-CN': '配置打包' },
+    description: {
+      'en-US': 'Build Web, Windows, and Android releases without opening RPG Maker.',
+      'zh-CN': '无需打开 RPG Maker，构建 Web、Windows 和 Android 游戏成品。',
+    },
+    compatibleProductVersion: '^0.8.0',
+    defaultEnabled: false,
+  },
 ] as const satisfies readonly ProductPluginDescriptor[]
 
 /** Persisted enablement state for product plugins in workspace settings. */

@@ -7,8 +7,8 @@ import {
 } from './productPluginRegistry'
 
 describe('product plugin registry', () => {
-  it('ships disabled-by-default designer and unlimited-layer entries', () => {
-    expect(PRODUCT_PLUGIN_REGISTRY).toHaveLength(4)
+  it('ships all built-in product modules disabled by default', () => {
+    expect(PRODUCT_PLUGIN_REGISTRY).toHaveLength(6)
     expect(getProductPluginDefinition('ui-designer')).toMatchObject({
       id: 'ui-designer',
       route: '/ui-designer',
@@ -32,6 +32,18 @@ describe('product plugin registry', () => {
       defaultEnabled: false,
     })
     expect(isRegisteredProductPlugin('map-overview')).toBe(true)
+    expect(getProductPluginDefinition('game-version')).toMatchObject({
+      id: 'game-version',
+      route: '/game-version',
+      defaultEnabled: false,
+    })
+    expect(isRegisteredProductPlugin('game-version')).toBe(true)
+    expect(getProductPluginDefinition('game-packaging')).toMatchObject({
+      id: 'game-packaging',
+      route: '/game-packaging',
+      defaultEnabled: false,
+    })
+    expect(isRegisteredProductPlugin('game-packaging')).toBe(true)
     expect(isRegisteredProductPlugin('missing')).toBe(false)
   })
 })

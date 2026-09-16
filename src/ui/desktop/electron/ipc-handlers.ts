@@ -1,4 +1,4 @@
-import { BrowserWindow, clipboard, dialog, ipcMain, nativeImage, net, protocol, screen, shell } from 'electron';
+import { BrowserWindow, clipboard, dialog, ipcMain, nativeImage, net, protocol, safeStorage, screen, shell } from 'electron';
 import crypto from 'node:crypto';
 import path from 'path';
 import fs from 'fs';
@@ -23,6 +23,8 @@ import {
   registerProjectGitIpcHandlers,
 } from './project-git-ipc-bindings.ts';
 import { cleanupUiDesignerIpcHandlers, registerUiDesignerIpcHandlers } from './ui-designer-ipc-bindings.ts';
+import { cleanupGameReleaseIpcHandlers, registerGameReleaseIpcHandlers } from './game-release-ipc-bindings.ts';
+import { GameReleaseCredentialStore } from './game-release-credential-store.ts';
 import { parseAssetRangeHeader, withAssetCanvasCors } from './asset-protocol-policy.js';
 import { ensureProjectAssetThumbnail } from './project-asset-thumbnail-cache.js';
 import { ensureEffectThumbnail } from './effect-thumbnail-generator.ts';
@@ -384,6 +386,12 @@ async function loadBackendModules(roots: AppRoots) {
     projectBackup: await import(new URL('desktop/project-backup.ts', coreUrl).href),
     gitInstaller: await import(new URL('desktop/git-installer.ts', coreUrl).href),
     projectConfig: await import(new URL('desktop/project-config-service.ts', coreUrl).href),
+    gameRelease: await import(new URL('desktop/game-release-service.ts', coreUrl).href),
+    gameBuild: await import(new URL('desktop/game-build-service.ts', coreUrl).href),
+    gameEncryption: await import(new URL('desktop/game-encryption-key-service.ts', coreUrl).href),
+    gamePublication: await import(new URL('desktop/game-release-publication-service.ts', coreUrl).href),
+    gameManifestSigning: await import(new URL('desktop/game-manifest-signing-service.ts', coreUrl).href),
+    gameAndroidToolchain: await import(new URL('desktop/game-android-toolchain-service.ts', coreUrl).href),
     projectSearch: await import(new URL('desktop/project-search-service.ts', coreUrl).href),
     pluginTranslation: await import(new URL('desktop/plugin-translation-service.ts', coreUrl).href),
     commonEvents: await import(new URL('desktop/common-event-service.ts', coreUrl).href),
@@ -1463,6 +1471,19 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
   ipcMain.handle('app:getVersion', () => toIpcPayload({ version: getAppVersion() }));
   ipcMain.handle('app:checkForUpdates', async () => toIpcPayload(await checkForUpdates({ manual: true })));
   registerClipboardIpcHandlers(ipcMain, clipboard);
+  registerGameReleaseIpcHandlers(ipcMain, dialog, shell, {
+    workflowRoot,
+    resolveProject: (value) => desktop.project.resolveProjectPath(workflowRoot, value),
+    release: desktop.gameRelease,
+    build: desktop.gameBuild,
+    encryption: desktop.gameEncryption,
+    publication: desktop.gamePublication,
+    manifestSigning: desktop.gameManifestSigning,
+    androidToolchain: desktop.gameAndroidToolchain,
+    credentials: new GameReleaseCredentialStore(roots.userDataRoot, safeStorage),
+    serialize: toIpcPayload,
+    parentWindow: (sender) => BrowserWindow.fromWebContents(sender) || undefined,
+  });
 
   ipcMain.handle('workspace:get', () => {
     return toIpcPayload(getWorkspaceSettings());
@@ -2134,6 +2155,7 @@ export function cleanupIpcHandlers(): void {
   cleanupInteractivePlaytestIpcHandlers(ipcMain);
   cleanupMapPreviewIpcHandlers(ipcMain);
   cleanupClipboardIpcHandlers(ipcMain);
+  cleanupGameReleaseIpcHandlers(ipcMain);
   workspaceSettingsSession = new WorkspaceSettingsSession(false);
   ipcMain.removeHandler('window:minimize');
   ipcMain.removeHandler('window:toggleMaximize');

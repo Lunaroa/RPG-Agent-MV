@@ -125,6 +125,10 @@ function uiControlState(extra: Record<string, unknown> = {}) {
           ? 'database'
           : route.path === '/project-assets'
             ? 'project-assets'
+          : route.path === '/game-version'
+            ? 'game-version'
+          : route.path === '/game-packaging'
+            ? 'game-packaging'
           : route.path === '/map-overview'
             ? 'map-overview'
             : route.path === '/plugin-marketplace'
@@ -150,6 +154,8 @@ async function navigateUiControlTarget(target: string) {
     workbench: { path: '/workbench' },
     database: { path: '/database' },
     'project-assets': { path: '/project-assets' },
+    'game-version': { path: '/game-version' },
+    'game-packaging': { path: '/game-packaging' },
     'map-overview': { path: '/map-overview' },
     'console-home': { path: '/console', query: { page: 'home' } },
     'console-assets': { path: '/console', query: { page: 'assets' } },

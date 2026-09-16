@@ -1,0 +1,13 @@
+{
+  "name": "rpg-agent-game-updater",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.html",
+  "window": {
+    "show": false,
+    "toolbar": false,
+    "frame": false,
+    "width": 320,
+    "height": 120
+  }
+}

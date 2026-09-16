@@ -1,0 +1,101 @@
+import com.android.build.api.variant.FilterConfiguration
+import groovy.json.JsonSlurper
+
+plugins {
+    id 'com.android.application'
+}
+
+def cfg = new JsonSlurper().parse(file('rpg-agent-build.json'))
+def signingStore = System.getenv('RPG_AGENT_ANDROID_STORE_FILE')
+def signingStorePassword = System.getenv('RPG_AGENT_ANDROID_STORE_PASSWORD')
+def signingAlias = System.getenv('RPG_AGENT_ANDROID_KEY_ALIAS')
+def signingKeyPassword = System.getenv('RPG_AGENT_ANDROID_KEY_PASSWORD')
+if (![signingStore, signingStorePassword, signingAlias, signingKeyPassword].every { it }) {
+    throw new GradleException('Android signing credentials were not supplied by RPG Agent MV.')
+}
+
+android {
+    namespace 'org.rpgagent.runtime'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId cfg.applicationId as String
+        minSdk cfg.minSdk as int
+        targetSdk cfg.targetSdk as int
+        versionCode cfg.versionCode as int
+        versionName cfg.versionName as String
+        manifestPlaceholders = [
+            rpgAgentOrientation: cfg.orientation as String,
+            rpgAgentAllowCleartext: cfg.allowCleartext as boolean,
+        ]
+    }
+
+    signingConfigs {
+        managed {
+            storeFile file(signingStore)
+            storePassword signingStorePassword
+            keyAlias signingAlias
+            keyPassword signingKeyPassword
+            enableV1Signing true
+            enableV2Signing true
+            enableV3Signing true
+            enableV4Signing false
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.managed
+            debuggable true
+            minifyEnabled false
+        }
+        release {
+            signingConfig signingConfigs.managed
+            debuggable false
+            minifyEnabled false
+            shrinkResources false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    splits {
+        abi {
+            enable true
+            reset()
+            include(*((cfg.abis as List<String>) as String[]))
+            universalApk false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        buildConfig false
+    }
+
+    lint {
+        abortOnError true
+        checkReleaseBuilds true
+    }
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        variant.outputs.each { output ->
+            def abi = output.filters.find { filter ->
+                filter.filterType == FilterConfiguration.FilterType.ABI
+            }?.identifier
+            if (abi == null) throw new GradleException('The Android build produced a non-ABI output.')
+            def offset = cfg.abiVersionOffsets[abi]
+            if (offset == null) throw new GradleException("No version-code mapping exists for ABI ${abi}.")
+            output.versionCode.set((cfg.versionCode as int) * 10 + (offset as int))
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.17.0'
+}

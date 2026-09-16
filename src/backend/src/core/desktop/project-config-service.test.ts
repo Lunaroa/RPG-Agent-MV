@@ -5,6 +5,7 @@ import path from 'node:path';
 import { after, describe, test } from 'node:test';
 
 import { patchProjectConfig, readProjectConfig } from './project-config-service.ts';
+import { createDefaultGameReleaseProjectSettings } from './game-build-preset.ts';
 
 const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'luna-rpg-config-'));
 const configPath = path.join(projectRoot, '.luna_rpg', 'config.json');
@@ -55,6 +56,15 @@ describe('luna_rpg project config', () => {
     fs.writeFileSync(configPath, JSON.stringify({ previewDisabledPlugins: ['Real', 42, ' '] }), 'utf8');
     assert.deepEqual(readProjectConfig(projectRoot).previewDisabledPlugins, ['Real']);
     fs.rmSync(path.dirname(configPath), { recursive: true, force: true });
+  });
+
+  test('persists validated packaging presets without credentials', () => {
+    const release = createDefaultGameReleaseProjectSettings(projectRoot);
+    const result = patchProjectConfig(projectRoot, { release });
+    assert.deepEqual(result.release, release);
+    assert.deepEqual(readProjectConfig(projectRoot).release, release);
+    assert.equal(fs.readFileSync(configPath, 'utf8').includes('password'), false);
+    patchProjectConfig(projectRoot, { release: undefined });
   });
 
   test('surfaces a corrupt config instead of silently replacing it', () => {

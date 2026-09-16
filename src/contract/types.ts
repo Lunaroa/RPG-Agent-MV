@@ -2,6 +2,7 @@ import type { ProductLanguage } from './i18n.ts';
 import type { ProductPluginSettings } from './product-plugin.ts';
 import type { UiRuntimeSceneExport } from './ui-designer.ts';
 import type { ExtendedTilesetSheetDescriptor, ExtendedTilesetSheetType } from './extended-tileset.ts';
+import type { GameReleaseProjectSettings } from './game-release.ts';
 export type { ProductLanguage } from './i18n.ts';
 export type { ExtendedTilesetSheetDescriptor, ExtendedTilesetSheetType } from './extended-tileset.ts';
 
@@ -76,6 +77,8 @@ export interface LunaRpgProjectConfig {
    * here are the user's manual overrides only.
    */
   pluginColors?: Record<string, string>;
+  /** Per-project game packaging presets and local toolchain references. */
+  release?: GameReleaseProjectSettings;
 }
 
 export type WorkspaceSurfaceId = 'editor' | 'projectManagement' | 'mapOverview';

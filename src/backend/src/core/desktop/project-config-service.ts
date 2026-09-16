@@ -1,7 +1,9 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 
 import type { LunaRpgProjectConfig, LunaRpgSearchSettings } from '../../../../contract/types.ts';
+import { validateGameReleaseProjectSettings } from './game-build-preset.ts';
 
 /**
  * `.luna_rpg/` is the product's per-project configuration folder. Everything
@@ -35,6 +37,7 @@ export function readProjectConfig(project: string): LunaRpgProjectConfig {
   if (search) config.search = search;
   const pluginColors = normalizePluginColors(parsed?.pluginColors);
   if (pluginColors) config.pluginColors = pluginColors;
+  if (parsed?.release !== undefined) config.release = validateGameReleaseProjectSettings(parsed.release);
   return config;
 }
 
@@ -92,6 +95,8 @@ export function patchProjectConfig(
   const pluginColors = normalizePluginColors(config.pluginColors);
   if (pluginColors) config.pluginColors = pluginColors;
   else delete config.pluginColors;
+  if (config.release !== undefined) config.release = validateGameReleaseProjectSettings(config.release);
+  else delete config.release;
   const file = projectConfigFilePath(project);
   if (Object.keys(config).length === 0) {
     if (fs.existsSync(file)) fs.rmSync(file);
@@ -99,8 +104,18 @@ export function patchProjectConfig(
     return {};
   }
   fs.mkdirSync(lunaRpgDirPath(project), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+  writeFileAtomically(file, `${JSON.stringify(config, null, 2)}\n`);
   return config;
+}
+
+function writeFileAtomically(file: string, content: string): void {
+  const temporary = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporary, content, { encoding: 'utf8', flag: 'wx' });
+    fs.renameSync(temporary, file);
+  } finally {
+    if (fs.existsSync(temporary)) fs.rmSync(temporary);
+  }
 }
 
 /** Keep projects clean: an empty .luna_rpg folder should not linger. */

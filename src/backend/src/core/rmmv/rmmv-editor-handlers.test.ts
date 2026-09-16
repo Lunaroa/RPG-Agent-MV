@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 import { bootstrapDatabase } from "../db/bootstrap.ts";
 import { closeDatabase } from "../db/pool.ts";
 import { EventContractDao } from "../db/dao/event-contract-dao.ts";
-import { getMapFileForRead, getProjectFileForRead } from "../desktop/staging-service.ts";
+import { resolveMapFileForRead, resolveProjectFileForRead } from "../desktop/project-file-service.ts";
 import { initializeOriginalStoryProject } from "../desktop/story-page-sync-service.ts";
 import { readJson, writeJson } from "./json.ts";
 import { dispatchRmmvTool } from "./rmmv-tool-dispatch.ts";
@@ -37,7 +37,7 @@ describe("RMMV editor handlers", { concurrency: false }, () => {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   });
 
-  test("map editor actions share the desktop staging backend", () => {
+  test("map editor actions save directly through the shared project write backend", () => {
     const created = runRmmvMapEditor({
       action: "create",
       workflowRoot: fixture.root,
@@ -50,9 +50,9 @@ describe("RMMV editor handlers", { concurrency: false }, () => {
     }).data as any;
 
     assert.equal(created.mapId, 2);
-    assert.equal((readJson(projectFileForRead(fixture.root, fixture.project, "www/data/MapInfos.json")) as any[])[2].parentId, 1);
-    assert.equal((readJson(projectFileForRead(fixture.root, fixture.project, "www/data/Map002.json")) as any).width, 3);
-    assert.equal(fs.existsSync(path.join(fixture.dataDir, "Map002.json")), false);
+    assert.equal((readJson(projectFileForRead(fixture.project, "www/data/MapInfos.json")) as any[])[2].parentId, 1);
+    assert.equal((readJson(projectFileForRead(fixture.project, "www/data/Map002.json")) as any).width, 3);
+    assert.equal(fs.existsSync(path.join(fixture.dataDir, "Map002.json")), true);
 
     const painted = runRmmvMapEditor({
       action: "paint",
@@ -62,22 +62,8 @@ describe("RMMV editor handlers", { concurrency: false }, () => {
       edits: [{ x: 0, y: 0, layer: 0, tileId: 7 }],
     }).data as any;
     assert.equal(painted.changedCells, 1);
-    assert.equal((readJson(getMapFileForRead(fixture.root, fixture.project, 1)) as any).data[0], 7);
-    assert.equal((readJson(fixture.mapFile) as any).data[0], 0);
-
-    const status = runRmmvMapEditor({
-      action: "projectStaging",
-      workflowRoot: fixture.root,
-      project: fixture.project,
-    }).data as any;
-    assert.equal(status.staged, true);
-
-    runRmmvMapEditor({
-      action: "discardProject",
-      workflowRoot: fixture.root,
-      project: fixture.project,
-    });
-    assert.equal((readJson(fixture.mapFile) as any).data[0], 0);
+    assert.equal((readJson(resolveMapFileForRead(fixture.project, 1)) as any).data[0], 7);
+    assert.equal((readJson(fixture.mapFile) as any).data[0], 7);
     assert.equal(fs.existsSync(path.join(fixture.dataDir, "Map002.json")), false);
   });
 
@@ -238,8 +224,8 @@ function createFixture(): Fixture {
   return { root, project, dataDir, mapFile };
 }
 
-function projectFileForRead(root: string, project: string, relativePath: string): string {
-  const file = getProjectFileForRead(root, project, relativePath);
+function projectFileForRead(project: string, relativePath: string): string {
+  const file = resolveProjectFileForRead(project, relativePath);
   assert.ok(file, `expected project file for ${relativePath}`);
   return file;
 }

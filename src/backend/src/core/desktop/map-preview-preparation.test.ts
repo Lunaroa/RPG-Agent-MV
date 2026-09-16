@@ -18,7 +18,7 @@ import {
   startMapPreviewPreparation,
 } from './map-preview-preparation.ts';
 import type { MapPreviewLoadProgress } from '../../../../contract/types.ts';
-import { writeStagedProjectJson } from './staging-service.ts';
+import { writeProjectJson } from './project-file-service.ts';
 
 test('caps map preview file copying below the available parallelism', () => {
   assert.equal(mapPreviewCopyConcurrency(1), 1);
@@ -39,7 +39,7 @@ test('prepares the isolated preview off the main event loop with one reusable so
     const sourceTimestamp = new Date('2020-01-02T03:04:05.000Z');
     fs.utimesSync(path.join(project, 'www', 'data', 'System.json'), sourceTimestamp, sourceTimestamp);
     fs.writeFileSync(path.join(project, 'www', 'save', 'file1.rpgsave'), 'private-save', 'utf8');
-    writeStagedProjectJson(workflowRoot, project, 'www/data/Map001.json', { width: 2, height: 1 });
+    writeProjectJson(workflowRoot, project, 'www/data/Map001.json', { width: 2, height: 1 });
 
     const progress: MapPreviewLoadProgress[] = [];
     const task = startMapPreviewPreparation(workflowRoot, project, {
@@ -56,7 +56,7 @@ test('prepares the isolated preview off the main event loop with one reusable so
       JSON.parse(fs.readFileSync(path.join(preparation.temporaryProject, 'www', 'data', 'Map001.json'), 'utf8')),
       { width: 2, height: 1 },
     );
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(project, 'www', 'data', 'Map001.json'), 'utf8')), { width: 1, height: 1 });
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(project, 'www', 'data', 'Map001.json'), 'utf8')), { width: 2, height: 1 });
     assert.ok(Math.abs(
       fs.statSync(path.join(preparation.temporaryProject, 'www', 'data', 'System.json')).mtimeMs - sourceTimestamp.getTime(),
     ) < 2);
@@ -67,7 +67,6 @@ test('prepares the isolated preview off the main event loop with one reusable so
     assert.deepEqual(verifyIsolatedSourceState(workflowRoot, preparation), {
       sourceUnchanged: true,
       savesUnchanged: true,
-      stagingUnchanged: true,
     });
     assert.ok(progress.some((entry) => entry.stage === 'scanning-project' && entry.total === undefined));
     const copying = progress.filter((entry) => entry.stage === 'copying-project');
@@ -77,7 +76,6 @@ test('prepares the isolated preview off the main event loop with one reusable so
     assert.equal(copying.at(-1)?.completedBytes, copying.at(-1)?.totalBytes);
     assert.ok(copying.every((entry, index) => index === 0
       || (entry.completed || 0) >= (copying[index - 1].completed || 0)));
-    assert.ok(progress.some((entry) => entry.stage === 'applying-staged-changes' && entry.completed === 1 && entry.total === 1));
     assert.ok(progress.some((entry) => entry.stage === 'verifying-isolation' && entry.completed === 2 && entry.total === 2));
     fs.rmSync(preparation.temporaryProject, { recursive: true, force: true });
   } finally {

@@ -7,7 +7,7 @@ import { describe, test, beforeEach, afterEach } from 'node:test';
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { writeJson } from '../rmmv/json.ts';
-import { withStagedMapMutation, writeStagedProjectJson } from './staging-service.ts';
+import { withProjectMapMutation, writeProjectJson } from './project-file-service.ts';
 import { validateWorkspaceSurfaceVersion } from './workspace-surface-version-service.ts';
 
 describe('projectManagement surface isolation from map edits', () => {
@@ -36,7 +36,10 @@ describe('projectManagement surface isolation from map edits', () => {
 
   test('a pure map edit does not invalidate the projectManagement surface', () => {
     const before = validateWorkspaceSurfaceVersion(root, project, { surface: 'projectManagement' });
-    withStagedMapMutation(root, project, 1, (draft) => ({ ...draft, width: draft.width + 1 }));
+    withProjectMapMutation(root, project, 1, ({ mapFile }) => {
+      const draft = JSON.parse(fs.readFileSync(mapFile, 'utf8')) as { width: number };
+      fs.writeFileSync(mapFile, JSON.stringify({ ...draft, width: draft.width + 1 }), 'utf8');
+    });
     const after = validateWorkspaceSurfaceVersion(root, project, {
       surface: 'projectManagement',
       loadedVersion: before.version,
@@ -44,9 +47,9 @@ describe('projectManagement surface isolation from map edits', () => {
     assert.equal(after.unchanged, true);
   });
 
-  test('a staged database edit still invalidates the projectManagement surface', () => {
+  test('a saved database edit still invalidates the projectManagement surface', () => {
     const before = validateWorkspaceSurfaceVersion(root, project, { surface: 'projectManagement' });
-    writeStagedProjectJson(root, project, 'www/data/Actors.json', [null, { id: 1, name: 'Theo' }]);
+    writeProjectJson(root, project, 'www/data/Actors.json', [null, { id: 1, name: 'Theo' }]);
     const after = validateWorkspaceSurfaceVersion(root, project, {
       surface: 'projectManagement',
       loadedVersion: before.version,

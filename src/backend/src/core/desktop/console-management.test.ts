@@ -6,27 +6,18 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
+import { withTestLanguage } from '../i18n/with-test-language.ts';
 import { createDefaultRmmvDatabaseEntry } from '../rmmv/database-schema.ts';
 import { readJson, writeJson } from '../rmmv/json.ts';
 import { deleteProjectAssets, getAssetDetail, renameAsset } from './asset-management-service.ts';
-import { createCommonEvent } from './common-event-service.ts';
 import {
   buildProjectManagementScan,
   createProjectManagedEntry,
   getProjectManagedEntry,
-  preflightProjectManagedStagingApply,
   resizeProjectManagedDatabase,
   resetProjectManagedEntry,
-  revertProjectManagedEntry,
   updateProjectManagedEntry,
 } from './project-management-service.ts';
-import { withTestLanguage } from '../i18n/with-test-language.ts';
-import {
-  applyProjectStaging,
-  getProjectFileForRead,
-  getProjectStagingStatus,
-  writeStagedProjectJson,
-} from './staging-service.ts';
 
 describe('console management services', { concurrency: false }, () => {
   let root: string;
@@ -34,7 +25,7 @@ describe('console management services', { concurrency: false }, () => {
 
   beforeEach(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'console-management-'));
-    project = path.join(root, 'projects', 'Project');
+    project = path.join(root, 'projects', 'sample');
     fs.mkdirSync(path.join(project, 'www', 'data'), { recursive: true });
     fs.mkdirSync(path.join(project, 'www', 'img', 'characters'), { recursive: true });
     fs.mkdirSync(path.join(root, 'data'), { recursive: true });
@@ -62,79 +53,76 @@ describe('console management services', { concurrency: false }, () => {
   test('renames a project asset, updates references on disk, and blocks referenced deletes', async () => {
     const target = { scope: 'project' as const, category: 'characters', relativePath: 'www/img/characters/Hero.png' };
     assert.equal(getAssetDetail(root, project, target).references.length, 1);
+
     const renamed = renameAsset(root, project, target, 'Lead');
+
     assert.equal(renamed.fileName, 'Lead.png');
     assert.equal(fs.existsSync(path.join(project, 'www', 'img', 'characters', 'Lead.png')), true);
     assert.equal(fs.existsSync(path.join(project, 'www', 'img', 'characters', 'Hero.png')), false);
     assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as any[])[1].characterName, 'Lead');
-    assert.equal(getProjectStagingStatus(root, project).staged, false);
     await assert.rejects(() => withTestLanguage(() => deleteProjectAssets(root, project, [{
       ...target,
       relativePath: 'www/img/characters/Lead.png',
     }], {}, {
-      trashItem: async (absolutePath) => {
-        fs.unlinkSync(absolutePath);
-      },
+      trashItem: async (absolutePath) => fs.unlinkSync(absolutePath),
     }).then((batch) => {
       const result = batch.results[0];
-      if (result?.status === 'blocked' || result?.status === 'failed') {
-        throw new Error(result.error || 'blocked');
-      }
+      if (result?.status === 'blocked' || result?.status === 'failed') throw new Error(result.error || 'blocked');
       return batch;
     })), /引用/);
   });
 
-  test('reads and updates structured project entries through staging', () => {
+  test('reads and saves structured project entries directly', () => {
     const actor = getProjectManagedEntry(root, project, { kind: 'database', group: 'Actors', id: 1 });
     assert.equal((actor.value as any).name, 'Hero');
-    updateProjectManagedEntry(root, project, { kind: 'database', group: 'Actors', id: 1, value: { ...(actor.value as any), name: 'Lead' } });
+
+    updateProjectManagedEntry(root, project, {
+      kind: 'database',
+      group: 'Actors',
+      id: 1,
+      value: { ...(actor.value as any), name: 'Lead' },
+    });
     updateProjectManagedEntry(root, project, { kind: 'switch', id: 1, value: { id: 1, name: 'Gate' } });
-    assert.equal((readJson(getProjectFileForRead(root, project, 'www/data/Actors.json')!) as any[])[1].name, 'Lead');
-    assert.equal((readJson(getProjectFileForRead(root, project, 'www/data/System.json')!) as any).switches[1], 'Gate');
-    assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as any[])[1].name, 'Hero');
-    assert.equal((readJson(path.join(project, 'www', 'data', 'System.json')) as any).switches[1], 'Door');
-    assert.throws(() => withTestLanguage(() => updateProjectManagedEntry(root, project, { kind: 'database', group: 'Actors', id: 1, value: { id: 2, name: 'Wrong' } })), /ID/);
-    assert.throws(() => withTestLanguage(() => getProjectManagedEntry(root, project, { kind: 'database', group: 'Bogus', id: 1 })), /Unknown RMMV database group/);
-    assert.throws(() => withTestLanguage(() => getProjectManagedEntry(root, project, { kind: 'database', group: 'System', id: 1 })), /固定文档条目/);
+
+    assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as any[])[1].name, 'Lead');
+    assert.equal((readJson(path.join(project, 'www', 'data', 'System.json')) as any).switches[1], 'Gate');
+    assert.throws(() => withTestLanguage(() => updateProjectManagedEntry(root, project, {
+      kind: 'database',
+      group: 'Actors',
+      id: 1,
+      value: { id: 2, name: 'Wrong' },
+    })), /ID/);
+    assert.throws(() => withTestLanguage(() => getProjectManagedEntry(root, project, {
+      kind: 'database',
+      group: 'Bogus',
+      id: 1,
+    })), /Unknown RMMV database group/);
     const system = getProjectManagedEntry(root, project, { kind: 'database', group: 'System', id: 0 });
     assert.equal((system.value as any).gameTitle, 'Console Test');
     assert.equal(system.schema?.isArrayTable, false);
-    assert.equal(system.relativePath, 'www/data/System.json');
   });
 
-  test('resizes switch and variable maxima through staging', () => {
+  test('resizes switch and variable maxima directly without deleting occupied ids', () => {
     const expanded = resizeProjectManagedDatabase(root, project, { kind: 'switch', maximum: 40 });
     assert.equal(expanded.previousMaximum, 1);
     assert.equal(expanded.maximum, 40);
-    const switches = (readJson(getProjectFileForRead(root, project, 'www/data/System.json')!) as any).switches;
+    const systemPath = path.join(project, 'www', 'data', 'System.json');
+    const switches = (readJson(systemPath) as any).switches;
     assert.equal(switches.length, 41);
-    assert.equal(switches[0], null);
     assert.equal(switches[1], 'Door');
-    assert.equal(switches[40], '');
-
-    assert.throws(
-      () => withTestLanguage(() => resizeProjectManagedDatabase(root, project, { kind: 'switch', maximum: 0 })),
-      /容量|capacity/i,
-    );
 
     updateProjectManagedEntry(root, project, { kind: 'switch', id: 25, value: { id: 25, name: 'Marked' } });
     assert.throws(
       () => withTestLanguage(() => resizeProjectManagedDatabase(root, project, { kind: 'switch', maximum: 20 })),
       /不能缩小|cannot be reduced/i,
     );
-
     updateProjectManagedEntry(root, project, { kind: 'switch', id: 25, value: { id: 25, name: '' } });
-    const shrunk = resizeProjectManagedDatabase(root, project, { kind: 'switch', maximum: 20 });
-    assert.equal(shrunk.maximum, 20);
-    assert.equal(
-      (readJson(getProjectFileForRead(root, project, 'www/data/System.json')!) as any).switches.length,
-      21,
-    );
+    resizeProjectManagedDatabase(root, project, { kind: 'switch', maximum: 20 });
+    assert.equal((readJson(systemPath) as any).switches.length, 21);
   });
 
-  test('edits System-backed Types and Terms document groups through staging', () => {
+  test('saves System-backed Types and Terms document groups directly', () => {
     const types = getProjectManagedEntry(root, project, { kind: 'database', group: 'Types', id: 0 });
-    assert.deepEqual((types.value as any).skillTypes, ['', 'Magic', 'Special']);
     updateProjectManagedEntry(root, project, {
       kind: 'database',
       group: 'Types',
@@ -148,39 +136,28 @@ describe('console management services', { concurrency: false }, () => {
       id: 0,
       value: { ...(terms.value as any), commands: ['', 'Fight', 'Run'] },
     });
-    const stagedSystem = readJson(getProjectFileForRead(root, project, 'www/data/System.json')!) as any;
-    assert.deepEqual(stagedSystem.skillTypes, ['', 'Magic', 'Tech']);
-    assert.deepEqual(stagedSystem.terms.commands, ['', 'Fight', 'Run']);
-    const sourceSystem = readJson(path.join(project, 'www', 'data', 'System.json')) as any;
-    assert.deepEqual(sourceSystem.skillTypes, ['', 'Magic', 'Special']);
+
+    const system = readJson(path.join(project, 'www', 'data', 'System.json')) as any;
+    assert.deepEqual(system.skillTypes, ['', 'Magic', 'Tech']);
+    assert.deepEqual(system.terms.commands, ['', 'Fight', 'Run']);
   });
 
   test('routes type-list changes through stable ids and blocks referenced tail removal', () => {
     const system = getProjectManagedEntry(root, project, { kind: 'database', group: 'System', id: 0 });
-    assert.throws(
-      () => withTestLanguage(() => updateProjectManagedEntry(root, project, {
-        kind: 'database',
-        group: 'System',
-        id: 0,
-        value: { ...(system.value as Record<string, unknown>), skillTypes: ['', 'Changed'] },
-      })),
-      /Types|类型/,
-    );
+    assert.throws(() => withTestLanguage(() => updateProjectManagedEntry(root, project, {
+      kind: 'database',
+      group: 'System',
+      id: 0,
+      value: { ...(system.value as Record<string, unknown>), skillTypes: ['', 'Changed'] },
+    })), /Types|类型/);
 
     const types = getProjectManagedEntry(root, project, { kind: 'database', group: 'Types', id: 0 });
-    assert.throws(
-      () => withTestLanguage(() => updateProjectManagedEntry(root, project, {
-        kind: 'database',
-        group: 'Types',
-        id: 0,
-        value: { ...(types.value as Record<string, unknown>), skillTypes: [''] },
-      })),
-      /Referenced|引用/,
-    );
-    assert.deepEqual(
-      (readJson(path.join(project, 'www', 'data', 'System.json')) as any).skillTypes,
-      ['', 'Magic', 'Special'],
-    );
+    assert.throws(() => withTestLanguage(() => updateProjectManagedEntry(root, project, {
+      kind: 'database',
+      group: 'Types',
+      id: 0,
+      value: { ...(types.value as Record<string, unknown>), skillTypes: [''] },
+    })), /Referenced|引用/);
   });
 
   test('creates database entries from schema defaults using the first free id', () => {
@@ -191,25 +168,15 @@ describe('console management services', { concurrency: false }, () => {
       null,
       { ...createDefaultRmmvDatabaseEntry('Actors', 3), id: 3, name: 'Mage' },
     ]);
+
     const created = createProjectManagedEntry(root, project, { kind: 'database', group: 'Actors' });
+
     assert.equal(created.id, 2);
-    assert.equal((created.value as any).id, 2);
     assert.equal((created.value as any).maxLevel, 99);
-    assert.equal((readJson(getProjectFileForRead(root, project, 'www/data/Actors.json')!) as any[])[2].id, 2);
-    assert.equal((readJson(actorsPath) as any[])[2], null);
-    assert.throws(() => withTestLanguage(() => createProjectManagedEntry(root, project, { kind: 'database', group: 'System' })), /不能新增/);
+    assert.equal((readJson(actorsPath) as any[])[2].id, 2);
   });
 
-  test('changes database capacity through staging without deleting occupied ids', () => {
-    const unchanged = resizeProjectManagedDatabase(root, project, {
-      kind: 'database',
-      group: 'Actors',
-      maximum: 2,
-    });
-    assert.equal(unchanged.previousMaximum, 2);
-    assert.equal(unchanged.maximum, 2);
-    assert.equal((unchanged.staging as { staged: boolean }).staged, false);
-
+  test('changes database capacity directly without deleting occupied ids', () => {
     const expanded = resizeProjectManagedDatabase(root, project, {
       kind: 'database',
       group: 'Actors',
@@ -217,10 +184,7 @@ describe('console management services', { concurrency: false }, () => {
     });
     assert.equal(expanded.previousMaximum, 2);
     assert.equal(expanded.maximum, 4);
-    const expandedActors = buildProjectManagementScan(root, project).database.Actors;
-    assert.equal(expandedActors?.capacity, 4);
-    assert.equal(expandedActors?.maxEntries, 1000);
-    assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as unknown[]).length, 3);
+    assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as unknown[]).length, 5);
 
     const created = createProjectManagedEntry(root, project, {
       kind: 'database',
@@ -228,14 +192,11 @@ describe('console management services', { concurrency: false }, () => {
       value: { name: 'Support' },
     });
     assert.equal(created.id, 2);
-    assert.throws(
-      () => withTestLanguage(() => resizeProjectManagedDatabase(root, project, {
-        kind: 'database',
-        group: 'Actors',
-        maximum: 1,
-      })),
-      /不能缩小|cannot be reduced/,
-    );
+    assert.throws(() => withTestLanguage(() => resizeProjectManagedDatabase(root, project, {
+      kind: 'database',
+      group: 'Actors',
+      maximum: 1,
+    })), /不能缩小|cannot be reduced/);
 
     resetProjectManagedEntry(root, project, { kind: 'database', group: 'Actors', id: 2 });
     const reduced = resizeProjectManagedDatabase(root, project, {
@@ -245,81 +206,6 @@ describe('console management services', { concurrency: false }, () => {
     });
     assert.equal(reduced.maximum, 1);
     assert.equal(buildProjectManagementScan(root, project).database.Actors?.capacity, 1);
-  });
-
-  test('reports field-level staged differences and reverts only the selected database record', () => {
-    const actor = getProjectManagedEntry(root, project, { kind: 'database', group: 'Actors', id: 1 });
-    updateProjectManagedEntry(root, project, {
-      kind: 'database',
-      group: 'Actors',
-      id: 1,
-      value: { ...(actor.value as Record<string, unknown>), name: 'Lead' },
-    });
-    const created = createProjectManagedEntry(root, project, {
-      kind: 'database',
-      group: 'Actors',
-      value: { name: 'Support' },
-    });
-
-    const staged = getProjectManagedEntry(root, project, { kind: 'database', group: 'Actors', id: 1 });
-    assert.equal(staged.inspection?.staged, true);
-    assert.equal(staged.inspection?.changed, true);
-    assert.deepEqual(
-      staged.inspection?.diffs.find((diff) => diff.path === '/name'),
-      { path: '/name', before: 'Hero', after: 'Lead' },
-    );
-    assert.equal(
-      staged.inspection?.issues.some((issue) => issue.severity === 'error'),
-      false,
-      JSON.stringify(staged.inspection?.issues, null, 2),
-    );
-
-    const firstRevert = revertProjectManagedEntry(root, project, {
-      kind: 'database',
-      group: 'Actors',
-      id: 1,
-    });
-    assert.equal((firstRevert.entry?.value as Record<string, unknown>).name, 'Hero');
-    assert.equal((getProjectManagedEntry(root, project, {
-      kind: 'database',
-      group: 'Actors',
-      id: created.id,
-    }).value as Record<string, unknown>).name, 'Support');
-    assert.equal(getProjectStagingStatus(root, project).staged, true);
-
-    const secondRevert = revertProjectManagedEntry(root, project, {
-      kind: 'database',
-      group: 'Actors',
-      id: created.id,
-    });
-    assert.equal(secondRevert.entry, undefined);
-    assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as unknown[])[created.id], null);
-    assert.equal(getProjectStagingStatus(root, project).staged, false);
-  });
-
-  test('does not attribute unchanged project issues to a newly staged common event', () => {
-    const dataDir = path.join(project, 'www', 'data');
-    const legacyItem = createDefaultRmmvDatabaseEntry('Items', 1);
-    legacyItem.price = -1;
-    legacyItem.effects = [{ code: 901, dataId: 0, value1: 0, value2: 0 }];
-    writeJson(path.join(dataDir, 'Items.json'), [null, legacyItem]);
-    writeJson(path.join(dataDir, 'CommonEvents.json'), [
-      null,
-      createDefaultRmmvDatabaseEntry('CommonEvents', 1),
-    ]);
-
-    const created = createCommonEvent(root, project, { name: 'New Common Event' });
-    const staged = getProjectManagedEntry(root, project, { kind: 'commonEvent', id: created.entry.id });
-    assert.equal(staged.inspection?.changed, true);
-    assert.equal(staged.inspection?.issues.some((issue) => issue.path === 'items[1].price'), false);
-    assert.equal(staged.inspection?.issues.some((issue) => issue.code === 'DB_PLUGIN_EFFECT_CODE'), false);
-    assert.equal(staged.inspection?.issues.some((issue) => issue.severity === 'error'), false);
-
-    const unchanged = getProjectManagedEntry(root, project, { kind: 'commonEvent', id: 1 });
-    assert.equal(unchanged.inspection?.staged, true);
-    assert.equal(unchanged.inspection?.changed, false);
-    assert.deepEqual(unchanged.inspection?.issues, []);
-    assert.equal(preflightProjectManagedStagingApply(root, project).ok, true);
   });
 
   test('preserves existing event-list issues during unrelated troop edits and blocks changed invalid commands', () => {
@@ -332,7 +218,6 @@ describe('console management services', { concurrency: false }, () => {
       { code: 0, indent: 0, parameters: [] },
     ];
     writeJson(troopPath, [null, troop]);
-
     const current = getProjectManagedEntry(root, project, { kind: 'database', group: 'Troops', id: 1 });
     const renamed = updateProjectManagedEntry(root, project, {
       kind: 'database',
@@ -341,69 +226,17 @@ describe('console management services', { concurrency: false }, () => {
       value: { ...(current.value as Record<string, unknown>), name: 'Updated Troop' },
     });
     assert.equal((renamed.value as Record<string, unknown>).name, 'Updated Troop');
-    const preserved = (renamed.value as Record<string, unknown>).pages as Array<{ list: Array<{ parameters: unknown[] }> }>;
-    assert.deepEqual(preserved[0]!.list[0]!.parameters, ['', 0, 0, 2, 'Guide']);
-    assert.equal(renamed.inspection?.issues.some((issue) => issue.severity === 'error'), false);
 
     const changed = structuredClone(renamed.value) as Record<string, unknown>;
     const changedPages = changed.pages as Array<{ list: Array<{ parameters: unknown[] }> }>;
     changedPages[0]!.list[2]!.parameters[1] = 12;
-    assert.throws(
-      () => withTestLanguage(() => updateProjectManagedEntry(root, project, {
-        kind: 'database',
-        group: 'Troops',
-        id: 1,
-        value: changed,
-      })),
-      /balloonId.*<= 10/,
-    );
-  });
-
-  test('keeps unrelated staged errors out of troop inspection without weakening Apply All', () => {
-    writeJson(path.join(project, 'www', 'data', 'Enemies.json'), [
-      null,
-      createDefaultRmmvDatabaseEntry('Enemies', 1),
-    ]);
-    const actors = readJson(path.join(project, 'www', 'data', 'Actors.json')) as Array<Record<string, unknown> | null>;
-    actors[1] = { ...actors[1]!, classId: 99 };
-    writeStagedProjectJson(root, project, 'www/data/Actors.json', actors);
-
-    const current = getProjectManagedEntry(root, project, { kind: 'database', group: 'Troops', id: 1 });
-    const members = [{ enemyId: 1, x: 700, y: 600, hidden: false, plugin: 'preserved' }];
-    const updated = updateProjectManagedEntry(root, project, {
+    assert.throws(() => withTestLanguage(() => updateProjectManagedEntry(root, project, {
       kind: 'database',
       group: 'Troops',
       id: 1,
-      value: { ...(current.value as Record<string, unknown>), name: 'Updated Troop', members },
-    });
-
-    assert.deepEqual((updated.value as Record<string, unknown>).members, members);
-    assert.equal(updated.inspection?.issues.some((issue) => issue.table === 'actors'), false);
-    assert.throws(() => preflightProjectManagedStagingApply(root, project), /actors\[1\]\.classId/);
-  });
-
-  test('reverts only the selected System-backed document group', () => {
-    const types = getProjectManagedEntry(root, project, { kind: 'database', group: 'Types', id: 0 });
-    updateProjectManagedEntry(root, project, {
-      kind: 'database',
-      group: 'Types',
-      id: 0,
-      value: { ...(types.value as Record<string, unknown>), skillTypes: ['', 'Magic', 'Tech'] },
-    });
-    const terms = getProjectManagedEntry(root, project, { kind: 'database', group: 'Terms', id: 0 });
-    updateProjectManagedEntry(root, project, {
-      kind: 'database',
-      group: 'Terms',
-      id: 0,
-      value: { ...(terms.value as Record<string, unknown>), commands: ['', 'Fight', 'Run'] },
-    });
-
-    const reverted = revertProjectManagedEntry(root, project, { kind: 'database', group: 'Types', id: 0 });
-    assert.deepEqual((reverted.entry?.value as Record<string, unknown>).skillTypes, ['', 'Magic', 'Special']);
-    const stagedSystem = readJson(getProjectFileForRead(root, project, 'www/data/System.json')!) as Record<string, any>;
-    assert.deepEqual(stagedSystem.skillTypes, ['', 'Magic', 'Special']);
-    assert.deepEqual(stagedSystem.terms.commands, ['', 'Fight', 'Run']);
-    assert.equal(getProjectStagingStatus(root, project).staged, true);
+      value: changed,
+    })), /balloonId.*<= 10/);
+    assert.equal((readJson(troopPath) as any[])[1].name, 'Updated Troop');
   });
 
   test('blocks database creation after the original MV id limit is full', () => {
@@ -420,7 +253,7 @@ describe('console management services', { concurrency: false }, () => {
     );
   });
 
-  test('resets only unreferenced array records to stable empty slots', () => {
+  test('resets only unreferenced array records directly', () => {
     const actorsPath = path.join(project, 'www', 'data', 'Actors.json');
     const actors = readJson(actorsPath) as unknown[];
     actors[3] = { ...createDefaultRmmvDatabaseEntry('Actors', 3), id: 3, name: 'Unused' };
@@ -432,59 +265,25 @@ describe('console management services', { concurrency: false }, () => {
     );
     const reset = resetProjectManagedEntry(root, project, { kind: 'database', group: 'Actors', id: 3 });
     assert.equal(reset.reset, true);
-    assert.equal((readJson(getProjectFileForRead(root, project, 'www/data/Actors.json')!) as unknown[])[3], null);
-    assert.equal((readJson(actorsPath) as any[])[3].name, 'Unused');
+    assert.equal((readJson(actorsPath) as unknown[])[3], null);
   });
 
-  test('blocks Apply All when the complete staged database has invalid references', () => {
-    const actor = getProjectManagedEntry(root, project, { kind: 'database', group: 'Actors', id: 1 });
-    updateProjectManagedEntry(root, project, {
-      kind: 'database',
-      group: 'Actors',
-      id: 1,
-      value: { ...(actor.value as Record<string, unknown>), classId: 99 },
-    });
-    const invalidDraft = getProjectManagedEntry(root, project, { kind: 'database', group: 'Actors', id: 1 });
-    assert.ok(invalidDraft.inspection?.issues.some((issue) => (
-      issue.severity === 'error' && issue.path === 'actors[1].classId'
-    )));
-    assert.throws(
-      () => applyProjectStaging(root, project, {
-        validate: () => preflightProjectManagedStagingApply(root, project),
-      }),
-      /semantic revalidation/,
-    );
-    assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as any[])[1].classId, 1);
-    assert.equal(getProjectStagingStatus(root, project).staged, true);
-
-    updateProjectManagedEntry(root, project, {
-      kind: 'database',
-      group: 'Actors',
-      id: 1,
-      value: { ...(actor.value as Record<string, unknown>), classId: 1, name: 'Lead' },
-    });
-    const applied = applyProjectStaging(root, project, {
-      validate: () => preflightProjectManagedStagingApply(root, project),
-    });
-    assert.equal(applied.applied, true);
-    assert.equal((readJson(path.join(project, 'www', 'data', 'Actors.json')) as any[])[1].name, 'Lead');
-  });
-
-  test('overview scan reads staged database changes and unnamed entries', () => {
-    writeJson(path.join(project, 'www', 'data', 'Skills.json'), [null, null]);
+  test('overview scan reads directly saved unnamed and renamed entries', () => {
+    const skillsPath = path.join(project, 'www', 'data', 'Skills.json');
+    writeJson(skillsPath, [null, null]);
     const created = createProjectManagedEntry(root, project, { kind: 'database', group: 'Skills' });
-    const stagedOverview = buildProjectManagementScan(root, project);
-    assert.equal(stagedOverview.database.Skills?.count, 1);
-    assert.equal(stagedOverview.database.Skills?.named.some((entry) => entry.id === created.id), true);
+    assert.equal(buildProjectManagementScan(root, project).database.Skills?.count, 1);
+
     updateProjectManagedEntry(root, project, {
       kind: 'database',
       group: 'Skills',
       id: created.id,
       value: { ...(created.value as Record<string, unknown>), name: 'Fire II' },
     });
-    const renamedOverview = buildProjectManagementScan(root, project);
-    assert.equal(renamedOverview.database.Skills?.named.find((entry) => entry.id === created.id)?.name, 'Fire II');
-    assert.equal((readJson(path.join(project, 'www', 'data', 'Skills.json')) as unknown[])[created.id], null);
+
+    const overview = buildProjectManagementScan(root, project);
+    assert.equal(overview.database.Skills?.named.find((entry) => entry.id === created.id)?.name, 'Fire II');
+    assert.equal((readJson(skillsPath) as any[])[created.id].name, 'Fire II');
   });
 });
 

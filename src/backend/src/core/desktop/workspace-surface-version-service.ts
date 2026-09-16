@@ -7,10 +7,7 @@ import type {
   WorkspaceSurfaceVersionRequest,
   WorkspaceSurfaceVersionResult,
 } from '../../../../contract/types.ts';
-import { StagingManifestDao } from '../db/dao/staging-manifest-dao.ts';
 import { resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
-import { projectHash } from './staging-service.ts';
-import type { FileEntry } from './staging-service.ts';
 
 const SURFACES = new Set<WorkspaceSurfaceId>(['editor', 'projectManagement', 'mapOverview']);
 const MAP_FILE_PATTERN = /^Map\d{3}\.json$/i;
@@ -69,7 +66,7 @@ function cachedWorkspaceSurfaceVersion(
   return version;
 }
 
-function ensureProjectVersionCache(workflowRoot: string, project: string): ProjectVersionCache {
+function ensureProjectVersionCache(_workflowRoot: string, project: string): ProjectVersionCache {
   const identity = path.resolve(project).toLocaleLowerCase();
   const existing = projectVersionCaches.get(identity);
   if (existing) return existing;
@@ -83,14 +80,7 @@ function ensureProjectVersionCache(workflowRoot: string, project: string): Proje
     cache.generation += 1;
     cache.versions.clear();
   };
-  const runtimeRoot = path.join(path.resolve(workflowRoot), 'runtime');
-  const stagingRoot = path.join(runtimeRoot, 'agent-console-staging');
-  const watchTargets = [
-    { target: project, recursive: true },
-    fs.existsSync(stagingRoot)
-      ? { target: stagingRoot, recursive: true }
-      : { target: runtimeRoot, recursive: false },
-  ];
+  const watchTargets = [{ target: project, recursive: true }];
   for (const { target, recursive } of watchTargets) {
     if (!fs.existsSync(target)) {
       cache.reliable = false;
@@ -114,7 +104,7 @@ function ensureProjectVersionCache(workflowRoot: string, project: string): Proje
 }
 
 export function computeWorkspaceSurfaceVersion(
-  workflowRoot: string,
+  _workflowRoot: string,
   project: string,
   surface: WorkspaceSurfaceId,
   mapId?: number,
@@ -123,27 +113,10 @@ export function computeWorkspaceSurfaceVersion(
   const entries = surfaceDependencies(layout.projectRoot, layout.dataDir, layout.resourceRoot, surface, mapId);
   const excludeMapFiles = surface === 'projectManagement' ? MAP_FILE_PATTERN : undefined;
   const digest = crypto.createHash('sha256');
-  digest.update(`workspace-surface:v2:${surface}\n`);
+  digest.update(`workspace-surface:v3:${surface}\n`);
   for (const entry of [...entries.values()].sort((left, right) => left.relativePath.localeCompare(right.relativePath))) {
     if (excludeMapFiles && MAP_FILE_PATTERN.test(path.basename(entry.relativePath))) continue;
     digest.update(`${entry.relativePath}\0${entry.kind}\0${entry.size ?? ''}\0${entry.mtimeMs ?? ''}\n`);
-  }
-  // Staging contributes only the files this surface actually depends on. A map edit
-  // stages Map###.json (plus shared context files copied for the patcher); hashing the
-  // whole draft tree or the project-wide manifest timestamp used to invalidate the
-  // database surface even when no database content changed, forcing the database tab
-  // to reload + lock its first click on re-entry. By filtering manifest.files to the
-  // surface's own dependency set, a pure map edit no longer bumps projectManagement.
-  const stagingId = projectHash(layout.projectRoot);
-  const manifest = StagingManifestDao.getLatestByProject(stagingId)?.manifest as
-    | { files?: Record<string, FileEntry> }
-    | undefined;
-  const files = manifest?.files ?? {};
-  for (const relativePath of Object.keys(files).sort()) {
-    if (!entries.has(relativePath)) continue;
-    if (excludeMapFiles && MAP_FILE_PATTERN.test(path.basename(relativePath))) continue;
-    const entry = files[relativePath];
-    digest.update(`staged:${relativePath}\0${entry?.draftHash ?? ''}\0${entry?.delete ? 1 : 0}\0${entry?.updatedAt ?? ''}\n`);
   }
   return digest.digest('hex').slice(0, 24);
 }

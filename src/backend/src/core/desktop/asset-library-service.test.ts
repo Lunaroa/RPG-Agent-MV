@@ -15,7 +15,6 @@ import {
   validateAssetLibraryImport,
 } from './asset-library-service.ts';
 import { withTestLanguage } from '../i18n/with-test-language.ts';
-import { getProjectFileForRead } from './staging-service.ts';
 
 describe('static asset library', { concurrency: false }, () => {
   let root: string;
@@ -75,7 +74,7 @@ describe('static asset library', { concurrency: false }, () => {
     assert.throws(() => resolveAssetRequest(root, 'rmmv-asset://shared/pack/img/pictures/Portrait.png'));
   }));
 
-  test('imports static files and skills through staging without mutating library sources', () => withTestLanguage(() => {
+  test('imports static files and skills directly without mutating library sources', () => withTestLanguage(() => {
     const catalog = buildAssetLibraryCatalog(root);
     const file = catalog.entries.find((entry) => entry.kind === 'file');
     const skill = catalog.entries.find((entry) => entry.kind === 'skill');
@@ -85,16 +84,12 @@ describe('static asset library', { concurrency: false }, () => {
     const fileResult = importAssetLibraryEntry(root, project, file.assetId);
     const skillResult = importAssetLibraryEntry(root, project, skill.assetId);
     assert.equal(fileResult.relativePath, 'www/img/pictures/Portrait.png');
-    assert.equal(fs.existsSync(path.join(project, 'www', 'img', 'pictures', 'Portrait.png')), false);
-    const stagedPortrait = getProjectFileForRead(root, project, 'www/img/pictures/Portrait.png');
-    assert.ok(stagedPortrait);
-    assert.equal(fs.readFileSync(stagedPortrait, 'utf8'), 'library');
+    const importedPortrait = path.join(project, 'www', 'img', 'pictures', 'Portrait.png');
+    assert.equal(fs.existsSync(importedPortrait), true);
+    assert.equal(fs.readFileSync(importedPortrait, 'utf8'), 'library');
     assert.equal(fs.readFileSync(path.join(root, 'data', 'assets', 'sources', 'pack', 'img', 'pictures', 'Portrait.png'), 'utf8'), 'library');
     assert.equal(skillResult.importedId, 1);
-    const stagedSkills = getProjectFileForRead(root, project, 'www/data/Skills.json');
-    assert.ok(stagedSkills);
-    assert.equal((readJson(stagedSkills) as any[])[1].name, 'Fire');
-    assert.equal((readJson(path.join(project, 'www', 'data', 'Skills.json')) as any[])[1], undefined);
+    assert.equal((readJson(path.join(project, 'www', 'data', 'Skills.json')) as any[])[1].name, 'Fire');
   }));
 
   test('imports static files and skills into flat data projects without adding www prefix', () => withTestLanguage(() => {
@@ -124,11 +119,10 @@ describe('static asset library', { concurrency: false }, () => {
     const skillResult = importAssetLibraryEntry(root, flatProject, skill.assetId);
 
     assert.equal(fileResult.relativePath, 'img/pictures/Portrait.png');
-    assert.equal(fs.existsSync(path.join(flatProject, 'img', 'pictures', 'Portrait.png')), false);
-    assert.equal(fs.readFileSync(getProjectFileForRead(root, flatProject, 'img/pictures/Portrait.png')!, 'utf8'), 'library');
+    assert.equal(fs.existsSync(path.join(flatProject, 'img', 'pictures', 'Portrait.png')), true);
+    assert.equal(fs.readFileSync(path.join(flatProject, 'img', 'pictures', 'Portrait.png'), 'utf8'), 'library');
     assert.equal(skillResult.importedId, 1);
-    assert.equal((readJson(getProjectFileForRead(root, flatProject, 'data/Skills.json')!) as any[])[1].name, 'Fire');
-    assert.equal((readJson(path.join(flatProject, 'data', 'Skills.json')) as any[])[1], undefined);
+    assert.equal((readJson(path.join(flatProject, 'data', 'Skills.json')) as any[])[1].name, 'Fire');
   }));
 
   test('rejects skill import when a declared dependency is incompatible', () => withTestLanguage(() => {

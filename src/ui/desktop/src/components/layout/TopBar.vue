@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
 import { Expand, Fold } from '@element-plus/icons-vue';
 import { PanelRightClose, PanelRightOpen, Minus, Play, Square, X as XIcon } from '@lucide/vue';
 import type { InteractivePlaytestRun, InteractivePlaytestRuntimeInfo } from '@contract/types';
@@ -272,33 +272,13 @@ async function startPlaytest() {
     return;
   }
   playtestBusy.value = true;
-  let confirmedStagingHash: string | undefined;
   try {
     for (;;) {
       const result = await playtest.start({
         mode: 'project',
         project,
         ...(activeSession.value?.id ? { sessionId: activeSession.value.id } : {}),
-        ...(confirmedStagingHash ? { confirmedStagingHash } : {}),
       });
-      if (result.confirmationRequired) {
-        const summary = result.stagingSummary;
-        if (!summary || !result.stagingSummaryHash) throw new Error(t('topbar.playtest.invalidResponse'));
-        await ElMessageBox.confirm(
-          `${t('topbar.playtest.confirmStaging', {
-            files: summary.fileCount,
-            operations: summary.operationCount,
-          })}${summary.conflict ? t('topbar.playtest.confirmConflict') : ''}`,
-          t('topbar.playtest.confirmTitle'),
-          {
-            type: 'warning',
-            confirmButtonText: t('topbar.playtest.confirmAction'),
-            cancelButtonText: t('topbar.playtest.confirmCancel'),
-          },
-        );
-        confirmedStagingHash = result.stagingSummaryHash;
-        continue;
-      }
       if (result.runtimeSelectionRequired) {
         const selection = await playtest.selectRuntime(result.runtimeSelectionRequired);
         if (selection.canceled) return;

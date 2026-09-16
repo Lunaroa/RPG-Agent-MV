@@ -18,12 +18,13 @@ import type {
 import { resolveDataDir } from '../rmmv/project-scanner.ts';
 import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import {
-  getProjectFileForRead,
-  getProjectStagingStatus,
-  stageProjectFilesAtomically,
-  type StagedProjectFileMutation,
-  writeStagedProjectBuffer,
-} from './staging-service.ts';
+  readProjectFile,
+  readProjectFileVersion,
+  resolveProjectFileForRead,
+  type ProjectFileMutation,
+  writeProjectBuffer,
+  writeProjectFilesAtomically,
+} from './project-file-service.ts';
 import {
   extractDefaultPluginHeaderBlock,
   extractDefaultPluginHeaderBody,
@@ -48,6 +49,7 @@ interface PluginConfigEntry {
 interface ParsedPlugins {
   relativePath: string;
   exists: boolean;
+  sourceHash: string | null;
   entries: PluginConfigEntry[];
   parseError?: string;
 }
@@ -58,7 +60,7 @@ export interface ManagedUnlimitedTilesetsResult {
   pluginName: typeof UNLIMITED_TILESETS_PLUGIN_NAME;
   pluginRelativePath: string;
   backupRelativePath: string | null;
-  staging: unknown;
+  write: unknown;
 }
 
 export function setManagedUnlimitedTilesetsEnabled(
@@ -90,7 +92,8 @@ export function setManagedUnlimitedTilesetsEnabled(
   }
 
   const pluginRelativePath = `${pluginDirRelativePath(project)}/${UNLIMITED_TILESETS_PLUGIN_NAME}.js`;
-  const currentPath = getProjectFileForRead(workflowRoot, project, pluginRelativePath);
+  const currentPath = resolveProjectFileForRead(project, pluginRelativePath);
+  const currentHash = readProjectFileVersion(project, pluginRelativePath).sha256;
   const expectedContent = Buffer.from(buildUnlimitedTilesetsRuntimePlugin(manifest.engine), 'utf8');
   const currentContent = currentPath && fs.existsSync(currentPath) ? fs.readFileSync(currentPath) : null;
   const isManagedContent = currentContent ? currentContent.equals(expectedContent) : false;
@@ -116,50 +119,65 @@ export function setManagedUnlimitedTilesetsEnabled(
         parameters: {},
       });
     }
-    const mutations: StagedProjectFileMutation[] = [];
+    const mutations: ProjectFileMutation[] = [];
     if (currentContent && !isManagedContent) {
       backupRelativePath = `${pluginDirRelativePath(project)}/${UNLIMITED_TILESETS_PLUGIN_NAME}.rpg-agent-backup.js`;
-      if (getProjectFileForRead(workflowRoot, project, backupRelativePath)) {
+      if (resolveProjectFileForRead(project, backupRelativePath)) {
         throw new Error(`[MANAGED_PLUGIN_BACKUP_EXISTS] ${backupRelativePath}`);
       }
-      mutations.push({ relativePath: backupRelativePath, content: currentContent });
+      mutations.push({ relativePath: backupRelativePath, content: currentContent, expectedSourceHash: null });
     }
     mutations.push(
-      { relativePath: pluginRelativePath, content: expectedContent },
-      { relativePath: parsed.relativePath, content: Buffer.from(serializePlugins(nextEntries), 'utf8') },
+      { relativePath: pluginRelativePath, content: expectedContent, expectedSourceHash: currentHash },
+      {
+        relativePath: parsed.relativePath,
+        content: Buffer.from(serializePlugins(nextEntries), 'utf8'),
+        expectedSourceHash: parsed.sourceHash,
+      },
     );
-    stageProjectFilesAtomically(workflowRoot, project, mutations);
+    const write = writeProjectFilesAtomically(workflowRoot, project, mutations);
+    return {
+      enabled,
+      engine: manifest.engine,
+      pluginName: UNLIMITED_TILESETS_PLUGIN_NAME,
+      pluginRelativePath,
+      backupRelativePath,
+      write,
+    };
   } else {
     assertUnlimitedTilesetsCanBeDisabled(workflowRoot, project);
     if (currentContent && !isManagedContent) {
       throw new Error(`[MANAGED_PLUGIN_CONFLICT] ${pluginRelativePath}`);
     }
     const nextEntries = parsed.entries.filter((entry) => entry.name !== UNLIMITED_TILESETS_PLUGIN_NAME);
-    const mutations: StagedProjectFileMutation[] = [
-      { relativePath: parsed.relativePath, content: Buffer.from(serializePlugins(nextEntries), 'utf8') },
+    const mutations: ProjectFileMutation[] = [
+      {
+        relativePath: parsed.relativePath,
+        content: Buffer.from(serializePlugins(nextEntries), 'utf8'),
+        expectedSourceHash: parsed.sourceHash,
+      },
     ];
-    if (currentContent) mutations.unshift({ relativePath: pluginRelativePath, delete: true });
-    stageProjectFilesAtomically(workflowRoot, project, mutations);
+    if (currentContent) mutations.unshift({ relativePath: pluginRelativePath, delete: true, expectedSourceHash: currentHash });
+    const write = writeProjectFilesAtomically(workflowRoot, project, mutations);
+    return {
+      enabled,
+      engine: manifest.engine,
+      pluginName: UNLIMITED_TILESETS_PLUGIN_NAME,
+      pluginRelativePath,
+      backupRelativePath,
+      write,
+    };
   }
-
-  return {
-    enabled,
-    engine: manifest.engine,
-    pluginName: UNLIMITED_TILESETS_PLUGIN_NAME,
-    pluginRelativePath,
-    backupRelativePath,
-    staging: getProjectStagingStatus(workflowRoot, project),
-  };
 }
 
 export function inspectManagedUnlimitedTilesets(
   workflowRoot: string,
   project: string,
-): Omit<ManagedUnlimitedTilesetsResult, 'backupRelativePath' | 'staging'> & { valid: boolean; conflict: boolean } {
+): Omit<ManagedUnlimitedTilesetsResult, 'backupRelativePath' | 'write'> & { valid: boolean; conflict: boolean } {
   const manifest = inspectRmmvProject(project);
   const parsed = readPlugins(workflowRoot, project);
   const pluginRelativePath = `${pluginDirRelativePath(project)}/${UNLIMITED_TILESETS_PLUGIN_NAME}.js`;
-  const filePath = getProjectFileForRead(workflowRoot, project, pluginRelativePath);
+  const filePath = resolveProjectFileForRead(project, pluginRelativePath);
   const expected = Buffer.from(buildUnlimitedTilesetsRuntimePlugin(manifest.engine), 'utf8');
   const fileValid = Boolean(filePath && fs.existsSync(filePath) && fs.readFileSync(filePath).equals(expected));
   const entries = parsed.entries.filter((entry) => entry.name === UNLIMITED_TILESETS_PLUGIN_NAME);
@@ -183,7 +201,7 @@ export interface ManagedUnlimitedTileLayersResult {
   pluginName: typeof UNLIMITED_TILE_LAYERS_PLUGIN_NAME;
   pluginRelativePath: string;
   backupRelativePath: string | null;
-  staging: unknown;
+  write: unknown | null;
 }
 
 /**
@@ -216,7 +234,8 @@ export function ensureManagedUnlimitedTileLayers(
   }
 
   const pluginRelativePath = `${pluginDirRelativePath(project)}/${UNLIMITED_TILE_LAYERS_PLUGIN_NAME}.js`;
-  const currentPath = getProjectFileForRead(workflowRoot, project, pluginRelativePath);
+  const currentPath = resolveProjectFileForRead(project, pluginRelativePath);
+  const currentHash = readProjectFileVersion(project, pluginRelativePath).sha256;
   const expectedContent = Buffer.from(buildUnlimitedTileLayersRuntimePlugin(manifest.engine), 'utf8');
   const currentContent = currentPath && fs.existsSync(currentPath) ? fs.readFileSync(currentPath) : null;
   const isManagedContent = currentContent ? currentContent.equals(expectedContent) : false;
@@ -229,7 +248,7 @@ export function ensureManagedUnlimitedTileLayers(
       pluginName: UNLIMITED_TILE_LAYERS_PLUGIN_NAME,
       pluginRelativePath,
       backupRelativePath: null,
-      staging: getProjectStagingStatus(workflowRoot, project),
+      write: null,
     };
   }
   if (currentContent && !isManagedContent && !options.backupAndReplaceModified) {
@@ -244,19 +263,23 @@ export function ensureManagedUnlimitedTileLayers(
   };
   if (matches.length) nextEntries[matches[0]!.index] = entry;
   else nextEntries.push(entry);
-  const mutations: StagedProjectFileMutation[] = [];
+  const mutations: ProjectFileMutation[] = [];
   if (currentContent && !isManagedContent) {
     backupRelativePath = `${pluginDirRelativePath(project)}/${UNLIMITED_TILE_LAYERS_PLUGIN_NAME}.rpg-agent-backup.js`;
-    if (getProjectFileForRead(workflowRoot, project, backupRelativePath)) {
+    if (resolveProjectFileForRead(project, backupRelativePath)) {
       throw new Error(`[MANAGED_PLUGIN_BACKUP_EXISTS] ${backupRelativePath}`);
     }
-    mutations.push({ relativePath: backupRelativePath, content: currentContent });
+    mutations.push({ relativePath: backupRelativePath, content: currentContent, expectedSourceHash: null });
   }
   mutations.push(
-    { relativePath: pluginRelativePath, content: expectedContent },
-    { relativePath: parsed.relativePath, content: Buffer.from(serializePlugins(nextEntries), 'utf8') },
+    { relativePath: pluginRelativePath, content: expectedContent, expectedSourceHash: currentHash },
+    {
+      relativePath: parsed.relativePath,
+      content: Buffer.from(serializePlugins(nextEntries), 'utf8'),
+      expectedSourceHash: parsed.sourceHash,
+    },
   );
-  stageProjectFilesAtomically(workflowRoot, project, mutations);
+  const write = writeProjectFilesAtomically(workflowRoot, project, mutations);
 
   return {
     enabled: true,
@@ -264,7 +287,7 @@ export function ensureManagedUnlimitedTileLayers(
     pluginName: UNLIMITED_TILE_LAYERS_PLUGIN_NAME,
     pluginRelativePath,
     backupRelativePath,
-    staging: getProjectStagingStatus(workflowRoot, project),
+    write,
   };
 }
 
@@ -298,7 +321,7 @@ function unlimitedTilesetsRuntimeInterfaceIssue(manifest: ReturnType<typeof insp
 function assertUnlimitedTilesetsCanBeDisabled(workflowRoot: string, project: string): void {
   const dataDir = resolveDataDir(project);
   const tilesetsRelative = `${path.relative(project, dataDir).replace(/\\/g, '/')}/Tilesets.json`;
-  const tilesetsPath = getProjectFileForRead(workflowRoot, project, tilesetsRelative) || path.join(dataDir, 'Tilesets.json');
+  const tilesetsPath = resolveProjectFileForRead(project, tilesetsRelative) || path.join(dataDir, 'Tilesets.json');
   const tilesets = JSON.parse(fs.readFileSync(tilesetsPath, 'utf8')) as Array<Record<string, unknown> | null>;
   const populated = tilesets.filter(Boolean).filter((tileset) => (
     Array.isArray(tileset!.tilesetNames) && tileset!.tilesetNames.slice(9).some((name) => String(name || '').trim())
@@ -308,14 +331,14 @@ function assertUnlimitedTilesetsCanBeDisabled(workflowRoot: string, project: str
     throw new Error(`[UNLIMITED_TILESETS_DATA_PRESENT] Tilesets: ${ids}`);
   }
 
-  const infosPath = getProjectFileForRead(workflowRoot, project, `${path.relative(project, dataDir).replace(/\\/g, '/')}/MapInfos.json`)
+  const infosPath = resolveProjectFileForRead(project, `${path.relative(project, dataDir).replace(/\\/g, '/')}/MapInfos.json`)
     || path.join(dataDir, 'MapInfos.json');
   const infos = JSON.parse(fs.readFileSync(infosPath, 'utf8')) as Array<Record<string, unknown> | null>;
   const references: number[] = [];
   for (const info of infos.filter(Boolean)) {
     const mapId = Number(info!.id || 0);
     const relative = `${path.relative(project, dataDir).replace(/\\/g, '/')}/Map${String(mapId).padStart(3, '0')}.json`;
-    const mapPath = getProjectFileForRead(workflowRoot, project, relative) || path.join(dataDir, path.basename(relative));
+    const mapPath = resolveProjectFileForRead(project, relative) || path.join(dataDir, path.basename(relative));
     if (!fs.existsSync(mapPath)) continue;
     const map = JSON.parse(fs.readFileSync(mapPath, 'utf8')) as Record<string, unknown>;
     const mapTiles = Array.isArray(map.data) ? map.data : [];
@@ -478,14 +501,15 @@ export function installPluginFile(
     overwrite?: boolean;
     configuration?: Partial<PluginConfigEntry>;
   } = {},
-): { name: string; relativePath: string; staging: unknown; configuration?: PluginConfigurationResult } {
+): { name: string; relativePath: string; write: unknown; configuration?: PluginConfigurationResult } {
   const source = path.resolve(sourceFile);
   if (!fs.existsSync(source) || !fs.statSync(source).isFile()) throw new Error('Plugin source file does not exist');
   if (path.extname(source).toLowerCase() !== '.js') throw new Error('Only .js plugin files can be installed');
   if (options.overwrite !== undefined && typeof options.overwrite !== 'boolean') throw new Error('Plugin overwrite must be a boolean');
   const name = normalizePluginFileStem(options.name || path.basename(source, '.js'));
   const relativePath = `${pluginDirRelativePath(project)}/${name}.js`;
-  const targetExists = Boolean(getProjectFileForRead(workflowRoot, project, relativePath));
+  const targetVersion = readProjectFileVersion(project, relativePath);
+  const targetExists = targetVersion.exists;
   if (targetExists && !options.overwrite) {
     throw new Error(`Plugin file already exists: ${name}.js`);
   }
@@ -493,9 +517,10 @@ export function installPluginFile(
   const parsed = requireReadablePlugins(workflowRoot, project);
   const configured = parsed.entries.filter((entry) => entry.name === name);
   if (configured.length > 1) throw new Error(`Duplicate plugin configuration cannot be modified safely: ${name}`);
-  const mutations: StagedProjectFileMutation[] = [{
+  const mutations: ProjectFileMutation[] = [{
     relativePath,
     content: fs.readFileSync(source),
+    expectedSourceHash: targetVersion.sha256,
   }];
   if (configured.length === 0) {
     const configuration = options.configuration || {};
@@ -508,14 +533,15 @@ export function installPluginFile(
     mutations.push({
       relativePath: parsed.relativePath,
       content: Buffer.from(serializePlugins([...parsed.entries, entry]), 'utf8'),
+      expectedSourceHash: parsed.sourceHash,
     });
   }
-  stageProjectFilesAtomically(workflowRoot, project, mutations);
+  const write = writeProjectFilesAtomically(workflowRoot, project, mutations);
   const configuration = readPluginConfiguration(workflowRoot, project);
   return {
     name,
     relativePath,
-    staging: getProjectStagingStatus(workflowRoot, project),
+    write,
     configuration,
   };
 }
@@ -545,7 +571,7 @@ export function installPluginDirectory(
   options: { overwrite?: boolean } = {},
 ): {
   installed: Array<{ name: string; relativePath: string }>;
-  staging: unknown;
+  write: unknown;
   configuration: PluginConfigurationResult;
 } {
   if (options.overwrite !== undefined && typeof options.overwrite !== 'boolean') {
@@ -554,12 +580,13 @@ export function installPluginDirectory(
   const sources = collectPluginInstallEntriesFromDirectory(sourceDirectory);
   const parsed = requireReadablePlugins(workflowRoot, project);
   const nextEntries = clonePluginConfigEntries(parsed.entries);
-  const mutations: StagedProjectFileMutation[] = [];
+  const mutations: ProjectFileMutation[] = [];
   const installed: Array<{ name: string; relativePath: string }> = [];
 
   for (const source of sources) {
     const relativePath = `${pluginDirRelativePath(project)}/${source.name}.js`;
-    const targetExists = Boolean(getProjectFileForRead(workflowRoot, project, relativePath));
+    const targetVersion = readProjectFileVersion(project, relativePath);
+    const targetExists = targetVersion.exists;
     if (targetExists && !options.overwrite) {
       throw new Error(`Plugin file already exists: ${source.name}.js`);
     }
@@ -569,6 +596,7 @@ export function installPluginDirectory(
     mutations.push({
       relativePath,
       content: fs.readFileSync(source.sourceFile),
+      expectedSourceHash: targetVersion.sha256,
     });
     const configured = nextEntries.filter((entry) => entry.name === source.name);
     if (configured.length > 1) {
@@ -588,11 +616,12 @@ export function installPluginDirectory(
   mutations.push({
     relativePath: parsed.relativePath,
     content: Buffer.from(serializePlugins(nextEntries), 'utf8'),
+    expectedSourceHash: parsed.sourceHash,
   });
-  stageProjectFilesAtomically(workflowRoot, project, mutations);
+  const write = writeProjectFilesAtomically(workflowRoot, project, mutations);
   return {
     installed,
-    staging: getProjectStagingStatus(workflowRoot, project),
+    write,
     configuration: readPluginConfiguration(workflowRoot, project),
   };
 }
@@ -602,7 +631,7 @@ export function deletePluginFile(
   project: string,
   pluginName: string,
   options: { force?: boolean; removeConfigurationEntry?: boolean } = {},
-): { name: string; relativePath: string; staging: unknown; configuration?: PluginConfigurationResult } {
+): { name: string; relativePath: string; write: unknown; configuration?: PluginConfigurationResult } {
   if (options.force !== undefined) throw new Error('Plugin force deletion is not supported');
   if (options.removeConfigurationEntry === false) {
     throw new Error('Plugin file and configuration must be deleted together');
@@ -611,14 +640,16 @@ export function deletePluginFile(
   const parsed = requireReadablePlugins(workflowRoot, project);
   const configured = parsed.entries.filter((entry) => entry.name === name);
   if (configured.length > 1) throw new Error(`Duplicate plugin configuration cannot be modified safely: ${name}`);
-  const relativePath = pluginFileCandidates(project, name).find((candidate) => getProjectFileForRead(workflowRoot, project, candidate));
+  const relativePath = pluginFileCandidates(project, name).find((candidate) => resolveProjectFileForRead(project, candidate));
   if (!relativePath) throw new Error(`Plugin file does not exist: ${name}.js`);
+  const pluginSourceHash = readProjectFileVersion(project, relativePath).sha256;
   const next = parsed.entries.filter((entry) => entry.name !== name);
-  stageProjectFilesAtomically(workflowRoot, project, [
-    { relativePath, delete: true },
+  const write = writeProjectFilesAtomically(workflowRoot, project, [
+    { relativePath, delete: true, expectedSourceHash: pluginSourceHash },
     {
       relativePath: parsed.relativePath,
       content: Buffer.from(serializePlugins(next), 'utf8'),
+      expectedSourceHash: parsed.sourceHash,
     },
   ]);
   const configuration = readPluginConfiguration(workflowRoot, project);
@@ -626,7 +657,7 @@ export function deletePluginFile(
   return {
     name,
     relativePath,
-    staging: getProjectStagingStatus(workflowRoot, project),
+    write,
     configuration,
   };
 }
@@ -738,13 +769,20 @@ function updatePluginEntry(
 
 function readPlugins(workflowRoot: string, project: string): ParsedPlugins {
   const relativePath = pluginConfigRelativePath(workflowRoot, project);
-  const file = getProjectFileForRead(workflowRoot, project, relativePath);
-  if (!file) return { relativePath, exists: false, entries: [] };
-  const raw = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
+  const file = resolveProjectFileForRead(project, relativePath);
+  if (!file) return { relativePath, exists: false, sourceHash: null, entries: [] };
+  const source = readProjectFile(project, relativePath);
+  const raw = source.content.toString('utf8').replace(/^\uFEFF/, '');
   const start = raw.indexOf('[');
   const end = raw.lastIndexOf(']');
   if (start < 0 || end <= start) {
-    return { relativePath, exists: true, entries: [], parseError: 'Cannot locate $plugins array in plugins.js' };
+    return {
+      relativePath,
+      exists: true,
+      sourceHash: source.version.sha256,
+      entries: [],
+      parseError: 'Cannot locate $plugins array in plugins.js',
+    };
   }
   try {
     const parsed = JSON.parse(raw.slice(start, end + 1)) as unknown;
@@ -752,12 +790,14 @@ function readPlugins(workflowRoot: string, project: string): ParsedPlugins {
     return {
       relativePath,
       exists: true,
+      sourceHash: source.version.sha256,
       entries: parsed.filter(Boolean).map(normalizeParsedEntry),
     };
   } catch (error) {
     return {
       relativePath,
       exists: true,
+      sourceHash: source.version.sha256,
       entries: [],
       parseError: error instanceof Error ? error.message : String(error),
     };
@@ -773,7 +813,8 @@ function requireReadablePlugins(workflowRoot: string, project: string): ParsedPl
 
 function writePluginsJs(workflowRoot: string, project: string, relativePath: string, entries: PluginConfigEntry[]): void {
   const payload = serializePlugins(entries.map((entry, index) => normalizeWritableEntry(entry, index)));
-  writeStagedProjectBuffer(workflowRoot, project, relativePath, Buffer.from(payload, 'utf8'));
+  const expectedSourceHash = readProjectFileVersion(project, relativePath).sha256;
+  writeProjectBuffer(workflowRoot, project, relativePath, Buffer.from(payload, 'utf8'), expectedSourceHash);
 }
 
 function serializePlugins(entries: PluginConfigEntry[]): string {
@@ -824,7 +865,7 @@ function toManagedEntry(
   const targets = fileRelativePath ? readPluginTargets(workflowRoot, project, fileRelativePath) : [];
   const dependencies = fileRelativePath ? readPluginDependencies(workflowRoot, project, fileRelativePath) : undefined;
   const fileName = entry.name ? `${entry.name}.js` : '';
-  const absolutePath = fileRelativePath ? getProjectFileForRead(workflowRoot, project, fileRelativePath) : null;
+  const absolutePath = fileRelativePath ? resolveProjectFileForRead(project, fileRelativePath) : null;
   const header = absolutePath
     ? parseDefaultPluginHeaderMetadata(fs.readFileSync(absolutePath, 'utf8'), fileRelativePath, entry.name)
     : parseDefaultPluginHeaderMetadata('', fileRelativePath, entry.name);
@@ -837,7 +878,7 @@ function toManagedEntry(
     parameterCount: isPlainObject(entry.parameters) ? Object.keys(entry.parameters).length : 0,
     fileName,
     fileRelativePath,
-    fileExists: entry.name ? pluginFileCandidates(project, entry.name).some((candidate) => Boolean(getProjectFileForRead(workflowRoot, project, candidate))) : false,
+    fileExists: entry.name ? pluginFileCandidates(project, entry.name).some((candidate) => Boolean(resolveProjectFileForRead(project, candidate))) : false,
     parameterSchema: metadata.schema,
     parameterSchemaWarnings: metadata.warnings,
     commandHints,
@@ -854,14 +895,12 @@ function listPluginFiles(workflowRoot: string, project: string): ManagedPluginFi
     if (!fs.existsSync(absoluteDir)) continue;
     for (const fileName of listFilesRecursively(absoluteDir).filter((name) => name.toLowerCase().endsWith('.js')).sort()) {
       const relativePath = `${dir}/${fileName}`;
-      const absolute = getProjectFileForRead(workflowRoot, project, relativePath) || path.join(absoluteDir, fileName);
+      const absolute = resolveProjectFileForRead(project, relativePath) || path.join(absoluteDir, fileName);
       result.set(relativePath, {
         name: fileName.slice(0, -3),
         fileName,
         relativePath,
         exists: true,
-        staged: absolute.includes(path.join(path.resolve(workflowRoot), 'runtime', 'agent-console-staging')),
-        deleted: false,
         size: fs.existsSync(absolute) ? fs.statSync(absolute).size : null,
         header: parseDefaultPluginHeaderMetadata(
           fs.existsSync(absolute) ? fs.readFileSync(absolute, 'utf8') : '',
@@ -872,32 +911,12 @@ function listPluginFiles(workflowRoot: string, project: string): ManagedPluginFi
     }
   }
 
-  for (const file of getProjectStagingStatus(workflowRoot, project).files) {
-    if (!isPluginFileRelativePath(file.relativePath)) continue;
-    const fileName = path.posix.basename(file.relativePath);
-    const pluginName = pluginNameFromRelativePath(file.relativePath);
-    const existing = result.get(file.relativePath);
-    const absolute = getProjectFileForRead(workflowRoot, project, file.relativePath);
-    result.set(file.relativePath, {
-      name: pluginName,
-      fileName,
-      relativePath: file.relativePath,
-      exists: !file.delete && Boolean(absolute),
-      staged: true,
-      deleted: Boolean(file.delete),
-      size: absolute && fs.existsSync(absolute) ? fs.statSync(absolute).size : existing?.size ?? null,
-      header: absolute && fs.existsSync(absolute)
-        ? parseDefaultPluginHeaderMetadata(fs.readFileSync(absolute, 'utf8'), file.relativePath, pluginName)
-        : existing?.header || parseDefaultPluginHeaderMetadata('', file.relativePath, pluginName),
-    });
-  }
-
   return Array.from(result.values()).sort((a, b) => a.relativePath.localeCompare(b.relativePath));
 }
 
 function pluginConfigRelativePath(workflowRoot: string, project: string): string {
   const candidates = pluginConfigCandidates(project);
-  return candidates.find((relativePath) => getProjectFileForRead(workflowRoot, project, relativePath)) || candidates[0];
+  return candidates.find((relativePath) => resolveProjectFileForRead(project, relativePath)) || candidates[0];
 }
 
 function pluginConfigCandidates(project: string): string[] {
@@ -923,7 +942,7 @@ function pluginFileCandidates(project: string, pluginName: string): string[] {
 
 function resolveExistingPluginFileRelativePath(workflowRoot: string, project: string, pluginName: string): string | null {
   if (!pluginName) return null;
-  return pluginFileCandidates(project, pluginName).find((candidate) => Boolean(getProjectFileForRead(workflowRoot, project, candidate))) || null;
+  return pluginFileCandidates(project, pluginName).find((candidate) => Boolean(resolveProjectFileForRead(project, candidate))) || null;
 }
 
 function projectJsRelativeRoot(project: string): string {
@@ -945,11 +964,6 @@ function normalizePluginFileStem(value: string): string {
   return name;
 }
 
-function isPluginFileRelativePath(relativePath: string): boolean {
-  return /^(?:www\/)?js\/plugins\/(?:[^/]+\/)*[^/]+\.js$/i.test(relativePath)
-    && !relativePath.split('/').some((part) => part === '..');
-}
-
 function listFilesRecursively(root: string): string[] {
   const files: string[] = [];
   const visit = (directory: string, prefix: string): void => {
@@ -966,7 +980,7 @@ function listFilesRecursively(root: string): string[] {
 }
 
 function readPluginTargets(workflowRoot: string, project: string, fileRelativePath: string): string[] {
-  const absolutePath = fileRelativePath ? getProjectFileForRead(workflowRoot, project, fileRelativePath) : null;
+  const absolutePath = fileRelativePath ? resolveProjectFileForRead(project, fileRelativePath) : null;
   if (!absolutePath) return [];
   return parseDefaultPluginHeaderMetadata(
     fs.readFileSync(absolutePath, 'utf8'),
@@ -979,7 +993,7 @@ function readPluginDependencies(
   project: string,
   fileRelativePath: string,
 ): PluginDependencyMetadata {
-  const absolutePath = getProjectFileForRead(workflowRoot, project, fileRelativePath);
+  const absolutePath = resolveProjectFileForRead(project, fileRelativePath);
   if (!absolutePath) return { base: [], orderAfter: [], orderBefore: [], requiredAssets: [], noteAssets: [] };
   const raw = fs.readFileSync(absolutePath, 'utf8');
   const defaultHeader = extractDefaultPluginHeaderBody(raw) || '';
@@ -996,13 +1010,6 @@ function readPluginDependencies(
     requiredAssets: dedupeStrings(tags('requiredAssets').map((value) => value.replace(/\\/g, '/'))),
     noteAssets: readPluginNoteAssetDeclarations(defaultHeader),
   };
-}
-
-function pluginNameFromRelativePath(relativePath: string): string {
-  return relativePath
-    .replace(/\\/g, '/')
-    .replace(/^(?:www\/)?js\/plugins\//i, '')
-    .replace(/\.js$/i, '');
 }
 
 function readPluginNoteAssetDeclarations(raw: string): PluginDependencyMetadata['noteAssets'] {
@@ -1184,7 +1191,7 @@ function parsePluginParameterSchema(
   pluginName: string,
   fileRelativePath: string,
 ): PluginMetadataParseResult {
-  const absolutePath = getProjectFileForRead(workflowRoot, project, fileRelativePath);
+  const absolutePath = resolveProjectFileForRead(project, fileRelativePath);
   if (!absolutePath) return { warnings: [`Plugin ${pluginName} file does not exist, so parameter metadata cannot be read`] };
   const raw = fs.readFileSync(absolutePath, 'utf8');
   const header = extractPlugindescHeader(raw);
@@ -1787,7 +1794,7 @@ function extractPluginCommandHintsFromFile(
   pluginName: string,
   fileRelativePath: string,
 ): PluginCommandHint[] {
-  const absolutePath = getProjectFileForRead(workflowRoot, project, fileRelativePath);
+  const absolutePath = resolveProjectFileForRead(project, fileRelativePath);
   if (!absolutePath) return [];
   return extractPluginCommandHints(pluginName, fs.readFileSync(absolutePath, 'utf8'));
 }

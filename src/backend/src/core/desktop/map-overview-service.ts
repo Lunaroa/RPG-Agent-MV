@@ -33,7 +33,7 @@ import {
   renderMapToFittedRgba,
 } from '../workflow/map/map-render.ts';
 import { mapOverviewEdgeAggregateKey } from '../../../../contract/map-overview-edge-key.ts';
-import { createProjectReadFileIndex, type ProjectReadFileIndex } from './staging-service.ts';
+import { createProjectReadFileIndex, type ProjectReadFileIndex } from './project-file-service.ts';
 
 const SNAPSHOT_CACHE_SCHEMA_VERSION = 6;
 const THUMBNAIL_CACHE_SCHEMA_VERSION = 1;
@@ -116,7 +116,7 @@ export function buildMapOverviewSnapshot(
   removeLegacySnapshotCaches(cacheFile);
   const cached = readSnapshotCache(cacheFile, resolvedProject);
   if (cached && dependenciesMatch(
-    createProjectReadFileIndex(resolvedWorkflowRoot, resolvedProject),
+    createProjectReadFileIndex(resolvedProject),
     cached.dependencies,
     progress => reportProgress?.({ phase: 'checking-cache', ...progress }),
   )) {
@@ -127,7 +127,7 @@ export function buildMapOverviewSnapshot(
   const dependencies = [...result.context.dependencies.values()]
     .sort((left, right) => left.logicalPath.localeCompare(right.logicalPath));
   if (!dependenciesMatch(
-    createProjectReadFileIndex(resolvedWorkflowRoot, resolvedProject),
+    createProjectReadFileIndex(resolvedProject),
     dependencies,
     progress => reportProgress?.({ phase: 'verifying-project', ...progress }),
   )) {
@@ -572,7 +572,7 @@ export function finalizeMapOverviewThumbnailCache(workflowRoot: string, project:
 
 function buildContext(workflowRoot: string, project: string): OverviewBuildContext {
   const manifest = inspectRmmvProject(project);
-  const readIndex = createProjectReadFileIndex(workflowRoot, project);
+  const readIndex = createProjectReadFileIndex(project);
   const dependencies = new Map<string, SnapshotDependency>();
   const baseContext = {
     workflowRoot: path.resolve(workflowRoot),

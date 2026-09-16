@@ -25,7 +25,6 @@ import {
   type ProjectAssetScannedFile,
 } from './project-asset-logical-grouping.ts';
 import { invalidateProjectAssetReferenceGraphCache } from './project-asset-reference-graph-cache-store.ts';
-import { getProjectFileForRead, getProjectStagingStatus } from './staging-service.ts';
 
 const BROWSER_CATEGORIES = RMMV_ASSET_CATEGORIES.filter((category) => category.id !== 'plugins');
 const IMAGE_BROWSER_EXTENSIONS = BROWSER_CATEGORIES.find((category) => category.directory.startsWith('img/'))?.extensions ?? ['.png', '.jpg', '.jpeg', '.webp', '.rpgmvp'];
@@ -42,12 +41,9 @@ export type ProjectAssetDirectoryScanner = (
 
 export type ProjectAssetSubdirectoryScanner = (absoluteDirectory: string) => string[];
 
-type ProjectStagingStatus = ReturnType<typeof getProjectStagingStatus>;
-
 export interface ProjectAssetBrowserDependencies {
   readDirectoryEntries?: ProjectAssetDirectoryScanner;
   readSubdirectories?: ProjectAssetSubdirectoryScanner;
-  stagingStatus?: ProjectStagingStatus;
   /** Selection-only view that exposes every directory under the game img root. */
   includeAllImageDirectories?: boolean;
 }
@@ -79,7 +75,7 @@ export function invalidateProjectAssetBrowserCache(project?: string): void {
  * Watch the project's asset directories for file system changes and invoke
  * `onChange` after a short debounce. Scope is limited to the engine resource
  * buckets (img/audio/fonts/movies/effects) so app/session writes elsewhere
- * (save/, data/, staging) do not churn the asset browser.
+ * (save/ and data/) do not churn the asset browser.
  * Returns a cleanup function that stops all watchers.
  */
 export function startProjectAssetWatcher(
@@ -150,8 +146,7 @@ export function buildProjectAssetCategoryTree(
   project: string,
   dependencies: ProjectAssetBrowserDependencies = {},
 ): ProjectAssetCategoryTree {
-  const stagingStatus = dependencies.stagingStatus ?? getProjectStagingStatus(workflowRoot, project);
-  const deps: ProjectAssetBrowserDependencies = { ...dependencies, stagingStatus };
+  const deps = dependencies;
   const layout = resolveRmmvLayout(project);
   const includeAllImageDirectories = dependencies.includeAllImageDirectories === true;
   const groups = new Map<string, {
@@ -163,7 +158,7 @@ export function buildProjectAssetCategoryTree(
 
   for (const category of BROWSER_CATEGORIES) {
     const relativeDirectory = resourceRelativePath(layout, category.directory);
-    if (!projectRelativeDirectoryPresent(project, relativeDirectory, stagingStatus)) continue;
+    if (!projectRelativeDirectoryPresent(project, relativeDirectory)) continue;
     const imageCategory = category.directory.startsWith('img/');
     const recursiveImageCategory = imageCategory && (includeAllImageDirectories
       || (category.id === PROJECT_ASSET_PICTURES_CATEGORY_ID && projectAllowsPictureSubfolders(project)));
@@ -174,7 +169,6 @@ export function buildProjectAssetCategoryTree(
         relativeDirectory,
         '',
         category.extensions,
-        stagingStatus,
         deps.readDirectoryEntries ?? defaultDirectoryScanner,
         true,
       )
@@ -192,7 +186,6 @@ export function buildProjectAssetCategoryTree(
         relativeDirectory,
         '',
         category.extensions,
-        stagingStatus,
         deps,
       );
       if (children.length > 0) node.children = children;
@@ -217,7 +210,7 @@ export function buildProjectAssetCategoryTree(
     const standardImageDirectories = new Set(BROWSER_CATEGORIES
       .filter((category) => category.directory.startsWith('img/'))
       .map((category) => category.directory.slice('img/'.length).split('/')[0]));
-    const customDirectories = projectAssetSubdirectories(project, imageGroup.directory, '', stagingStatus, deps)
+    const customDirectories = projectAssetSubdirectories(project, imageGroup.directory, '', deps)
       .filter((name) => !standardImageDirectories.has(name));
     for (const name of customDirectories) {
       const children = buildImageSubfolderNodes(
@@ -227,7 +220,6 @@ export function buildProjectAssetCategoryTree(
         imageGroup.directory,
         name,
         IMAGE_BROWSER_EXTENSIONS,
-        stagingStatus,
         deps,
       );
       imageGroup.children.push({
@@ -239,7 +231,6 @@ export function buildProjectAssetCategoryTree(
           imageGroup.directory,
           name,
           IMAGE_BROWSER_EXTENSIONS,
-          stagingStatus,
           deps.readDirectoryEntries ?? defaultDirectoryScanner,
           true,
         ),
@@ -298,7 +289,6 @@ export function listProjectAssetCategory(
   }
 
   const sizeBucket = resolveProjectAssetThumbnailSizeBucket(thumbnailSizeBucket);
-  const stagingStatus = dependencies.stagingStatus ?? getProjectStagingStatus(workflowRoot, project);
   const readDirectoryEntries = dependencies.readDirectoryEntries ?? defaultDirectoryScanner;
   const layout = resolveRmmvLayout(project);
   const categoryRelativeDirectory = resourceRelativePath(layout, genericImageCategory ? 'img' : category!.directory);
@@ -306,7 +296,7 @@ export function listProjectAssetCategory(
     ? `${categoryRelativeDirectory}/${subpath}`
     : categoryRelativeDirectory;
   const nodeId = projectAssetBrowserNodeId(categoryId, subpath);
-  const revision = computeListingRevision(project, relativeDirectory, stagingStatus);
+  const revision = computeListingRevision(project, relativeDirectory);
   const cacheKey = `${cacheProjectKey(project)}\0${nodeId}\0${sizeBucket}`;
   const cached = listingCache.get(cacheKey);
   if (cached && cached.revision === revision) return cached.listing;
@@ -317,7 +307,6 @@ export function listProjectAssetCategory(
     categoryRelativeDirectory,
     subpath,
     genericImageCategory ? IMAGE_BROWSER_EXTENSIONS : category!.extensions,
-    stagingStatus,
     readDirectoryEntries,
   );
   const grouped = groupProjectAssetLogicalEntries(scanned, genericImageCategory ? IMAGE_BROWSER_EXTENSIONS : category!.extensions);
@@ -358,7 +347,6 @@ function projectAssetSubdirectories(
   project: string,
   categoryRelativeDirectory: string,
   parentSubpath: string,
-  stagingStatus: ProjectStagingStatus,
   dependencies: ProjectAssetBrowserDependencies,
 ): string[] {
   const readSubdirectories = dependencies.readSubdirectories ?? defaultSubdirectoryScanner;
@@ -370,14 +358,6 @@ function projectAssetSubdirectories(
   if (fs.existsSync(absoluteDirectory) && fs.statSync(absoluteDirectory).isDirectory()) {
     for (const name of readSubdirectories(absoluteDirectory)) names.add(name);
   }
-  const prefix = `${categoryRelativeDirectory}/${parentSubpath ? `${parentSubpath}/` : ''}`;
-  for (const staged of stagingStatus.files) {
-    if (staged.delete || !staged.relativePath.startsWith(prefix)) continue;
-    const remainder = staged.relativePath.slice(prefix.length);
-    const slash = remainder.indexOf('/');
-    if (slash <= 0) continue;
-    names.add(remainder.slice(0, slash));
-  }
   return [...names].sort((left, right) => left.localeCompare(right));
 }
 
@@ -388,11 +368,10 @@ function buildImageSubfolderNodes(
   categoryRelativeDirectory: string,
   parentSubpath: string,
   extensions: readonly string[],
-  stagingStatus: ProjectStagingStatus,
   dependencies: ProjectAssetBrowserDependencies,
 ): ProjectAssetCategoryTreeNode[] {
   const readDirectoryEntries = dependencies.readDirectoryEntries ?? defaultDirectoryScanner;
-  const names = projectAssetSubdirectories(project, categoryRelativeDirectory, parentSubpath, stagingStatus, dependencies);
+  const names = projectAssetSubdirectories(project, categoryRelativeDirectory, parentSubpath, dependencies);
 
   const nodes: ProjectAssetCategoryTreeNode[] = [];
   for (const name of names) {
@@ -406,7 +385,6 @@ function buildImageSubfolderNodes(
       categoryRelativeDirectory,
       childSubpath,
       extensions,
-      stagingStatus,
       dependencies,
     );
     const entryCount = countCategoryFiles(
@@ -415,7 +393,6 @@ function buildImageSubfolderNodes(
       categoryRelativeDirectory,
       childSubpath,
       extensions,
-      stagingStatus,
       readDirectoryEntries,
       true,
     );
@@ -430,12 +407,11 @@ function buildImageSubfolderNodes(
 }
 
 function scanCategoryFiles(
-  workflowRoot: string,
+  _workflowRoot: string,
   project: string,
   categoryRelativeDirectory: string,
   subpath: string,
   extensions: readonly string[],
-  stagingStatus: ProjectStagingStatus,
   readDirectoryEntries: ProjectAssetDirectoryScanner,
 ): ProjectAssetScannedFile[] {
   const accepted = new Set(extensions.map((extension) => extension.toLowerCase()));
@@ -459,43 +435,15 @@ function scanCategoryFiles(
     }
   }
 
-  const prefix = `${relativeDirectory}/`;
-  for (const staged of stagingStatus.files) {
-    if (!staged.relativePath.startsWith(prefix)) continue;
-    const fileName = staged.relativePath.slice(prefix.length);
-    if (!fileName || fileName.includes('/')) continue;
-    const extension = path.extname(fileName).toLowerCase();
-    if (!accepted.has(extension)) continue;
-    if (staged.delete) {
-      files.delete(fileName);
-      continue;
-    }
-    const absolute = getProjectFileForRead(workflowRoot, project, staged.relativePath);
-    if (!absolute || !fs.existsSync(absolute) || fs.statSync(absolute).isDirectory()) {
-      throw new Error(
-        `Staged project asset is missing or not a file: ${staged.relativePath}. Re-stage the file or discard the staging entry.`,
-      );
-    }
-    const stat = fs.statSync(absolute);
-    files.set(fileName, {
-      fileName,
-      relativePath: staged.relativePath,
-      bytes: stat.size,
-      mtimeMs: stat.mtimeMs,
-      logicalName: logicalNameForFile(subpath, fileName),
-    });
-  }
-
   return [...files.values()];
 }
 
 function countCategoryFiles(
-  workflowRoot: string,
+  _workflowRoot: string,
   project: string,
   categoryRelativeDirectory: string,
   subpath: string,
   extensions: readonly string[],
-  stagingStatus: ProjectStagingStatus,
   readDirectoryEntries: ProjectAssetDirectoryScanner,
   recursive: boolean,
 ): number {
@@ -522,28 +470,13 @@ function countCategoryFiles(
   };
   walk(absoluteDirectory, relativeDirectory);
 
-  // Prefer scanned files when a custom scanner is injected (tests); still union staging.
+  // Prefer scanned files when a custom scanner is injected (tests).
   if (fs.existsSync(absoluteDirectory) && fs.statSync(absoluteDirectory).isDirectory()) {
     for (const entry of readDirectoryEntries(absoluteDirectory)) {
       const extension = path.extname(entry.fileName).toLowerCase();
       if (!accepted.has(extension)) continue;
       counted.add(`${relativeDirectory}/${entry.fileName}`);
     }
-  }
-
-  const prefix = `${relativeDirectory}/`;
-  for (const staged of stagingStatus.files) {
-    if (!staged.relativePath.startsWith(prefix)) continue;
-    const remainder = staged.relativePath.slice(prefix.length);
-    if (!remainder) continue;
-    if (!recursive && remainder.includes('/')) continue;
-    const extension = path.extname(remainder).toLowerCase();
-    if (!accepted.has(extension)) continue;
-    if (staged.delete) {
-      counted.delete(staged.relativePath);
-      continue;
-    }
-    counted.add(staged.relativePath);
   }
 
   return counted.size;
@@ -558,39 +491,29 @@ function logicalNameForFile(subpath: string, fileName: string): string {
 function computeListingRevision(
   project: string,
   relativeDirectory: string,
-  stagingStatus: ProjectStagingStatus,
 ): string {
   const absoluteDirectory = absoluteProjectPath(project, relativeDirectory);
-  let directoryMtime = 0;
-  if (fs.existsSync(absoluteDirectory)) {
-    const stat = fs.statSync(absoluteDirectory);
-    if (!stat.isDirectory()) {
-      throw new Error(
-        `Project asset category path is not a directory: ${relativeDirectory}`,
-      );
-    }
-    directoryMtime = stat.mtimeMs;
+  if (!fs.existsSync(absoluteDirectory)) return 'missing';
+  const stat = fs.statSync(absoluteDirectory);
+  if (!stat.isDirectory()) {
+    throw new Error(`Project asset category path is not a directory: ${relativeDirectory}`);
   }
-  const stagingRevision = stagingStatus.files.length === 0
-    ? 'unstaged'
-    : stagingStatus.files
-      .map((file) => `${file.relativePath}:${file.updatedAt}:${file.delete ? 'D' : 'A'}`)
-      .sort()
-      .join('|');
-  return `${directoryMtime}|${stagingStatus.projectHash}|${stagingRevision}`;
+  const entries = fs.readdirSync(absoluteDirectory, { withFileTypes: true })
+    .map((entry) => {
+      const file = path.join(absoluteDirectory, entry.name);
+      const entryStat = fs.statSync(file);
+      return `${entry.name}:${entry.isDirectory() ? 'd' : 'f'}:${entryStat.size}:${entryStat.mtimeMs}`;
+    })
+    .sort();
+  return `${stat.mtimeMs}|${entries.join('|')}`;
 }
 
 function projectRelativeDirectoryPresent(
   project: string,
   relativeDirectory: string,
-  stagingStatus: ProjectStagingStatus,
 ): boolean {
   const absolute = absoluteProjectPath(project, relativeDirectory);
-  if (fs.existsSync(absolute) && fs.statSync(absolute).isDirectory()) return true;
-  const prefix = `${relativeDirectory}/`;
-  return stagingStatus.files.some((entry) => (
-    !entry.delete && entry.relativePath.startsWith(prefix)
-  ));
+  return fs.existsSync(absolute) && fs.statSync(absolute).isDirectory();
 }
 
 function defaultDirectoryScanner(

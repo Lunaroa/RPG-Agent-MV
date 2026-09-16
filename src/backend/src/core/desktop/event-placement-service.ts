@@ -8,7 +8,7 @@ import { createMapEvent, updateMapEvent } from '../workflow/map/map-event-edit.t
 import { loadRegistry, updateContractPlacement } from '../workflow/event/event-registry.ts';
 import { eventContentFingerprint } from '../workflow/event/event-fingerprint.ts';
 import { eventPlacementRegistryMissing } from './eventPlacementServiceLocalization.ts';
-import { withStagedMapMutation, type StagedMapMutationTarget } from './staging-service.ts';
+import { withProjectMapMutation, type ProjectMapMutationTarget } from './project-file-service.ts';
 
 export interface CreatePlacementEventPayload {
   name: string;
@@ -136,7 +136,7 @@ function resolveRegistryPages(
 }
 
 function placeViaContractPatch(
-  staged: StagedMapMutationTarget,
+  target: ProjectMapMutationTarget,
   mapId: number,
   payload: CreatePlacementEventPayload,
   pages: Array<Record<string, unknown>>,
@@ -146,7 +146,7 @@ function placeViaContractPatch(
     ? buildPlacementNote(contractId, payload.note)
     : stripInternalAiMarkers(String(payload.note || ''));
   const spec = {
-    engine: inspectRmmvProject(staged.sourceProject).engine,
+    engine: inspectRmmvProject(target.sourceProject).engine,
     operations: [{
       op: 'add-map-event',
       mapId,
@@ -157,8 +157,8 @@ function placeViaContractPatch(
       pages,
     }],
   };
-  staged.ensureCompleteProjectContext();
-  const patchReport = applyPatchToProject(staged.project, spec);
+  target.ensureCompleteProjectContext();
+  const patchReport = applyPatchToProject(target.project, spec);
   const opReport = patchReport.operations[patchReport.operations.length - 1] as { eventId?: number };
   const eventId = Number(opReport?.eventId);
   return {
@@ -176,17 +176,17 @@ export function createPlacementEvent(
   mapId: number,
   payload: CreatePlacementEventPayload,
 ) {
-  const staged = withStagedMapMutation(
+  const written = withProjectMapMutation(
     workflowRoot,
     project,
     mapId,
-    (target) => createPlacementEventInStagedMap(target, workflowRoot, project, mapId, payload),
+    (target) => createPlacementEventInProjectCopy(target, workflowRoot, project, mapId, payload),
   );
-  return { ...staged.result, staging: staged.staging };
+  return { ...written.result, write: written.write };
 }
 
-function createPlacementEventInStagedMap(
-  staged: StagedMapMutationTarget,
+function createPlacementEventInProjectCopy(
+  target: ProjectMapMutationTarget,
   workflowRoot: string,
   project: string,
   mapId: number,
@@ -197,16 +197,16 @@ function createPlacementEventInStagedMap(
 
   // Legacy path: place older full-command events with AIWF note markers and strip internal markers.
   if (contractId) {
-    const existing = findStoryEvent(staged.mapFile, contractId, sceneId);
+    const existing = findStoryEvent(target.mapFile, contractId, sceneId);
     if (existing) {
       const note = stripInternalAiMarkers(existing.note);
       const report = updateMapEvent({
-        project: staged.project,
+        project: target.project,
         mapId,
         eventId: existing.id,
         event: { x: payload.x, y: payload.y, note },
       });
-      const contentHash = fingerprintMapEvent(staged.mapFile, existing.id);
+      const contentHash = fingerprintMapEvent(target.mapFile, existing.id);
       markPlacementInRegistry(workflowRoot, project, contractId, mapId, existing.id, payload.x, payload.y, contentHash);
       return {
         ...report,
@@ -224,9 +224,9 @@ function createPlacementEventInStagedMap(
     pages = resolveRegistryPages(workflowRoot, project, contractId);
   }
   if (pages && hasAbstractPages(pages)) {
-    const report = placeViaContractPatch(staged, mapId, payload, normalizeAbstractPages(pages));
+    const report = placeViaContractPatch(target, mapId, payload, normalizeAbstractPages(pages));
     if (contractId && Number.isInteger(report.eventId)) {
-      const contentHash = fingerprintMapEvent(staged.mapFile, report.eventId);
+      const contentHash = fingerprintMapEvent(target.mapFile, report.eventId);
       markPlacementInRegistry(workflowRoot, project, contractId, mapId, report.eventId, payload.x, payload.y, contentHash);
     }
     return report;
@@ -237,13 +237,13 @@ function createPlacementEventInStagedMap(
     ? buildPlacementNote(contractId, payload.note)
     : stripInternalAiMarkers(String(payload.note || ''));
   const report = createMapEvent({
-    project: staged.project,
+    project: target.project,
     mapId,
     event: { name: payload.name || contractId || `EV`, x: payload.x, y: payload.y, note },
   });
   const eventId = report.eventId;
   if (contractId && Number.isInteger(eventId)) {
-    const contentHash = fingerprintMapEvent(staged.mapFile, eventId);
+    const contentHash = fingerprintMapEvent(target.mapFile, eventId);
     // Shell placements may not exist in the JSON registry yet; skip write-back until register fills implementation.
     tryMarkPlacementInRegistry(workflowRoot, project, contractId, mapId, eventId, payload.x, payload.y, contentHash);
   }

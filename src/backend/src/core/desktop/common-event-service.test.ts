@@ -20,7 +20,6 @@ import {
   updateCommonEvent,
 } from './common-event-service.ts';
 import { withTestLanguage } from '../i18n/with-test-language.ts';
-import { applyProjectStaging, getProjectFileForRead, getProjectStagingStatus } from './staging-service.ts';
 
 describe('common event service', { concurrency: false }, () => {
   let root: string;
@@ -96,7 +95,7 @@ describe('common event service', { concurrency: false }, () => {
     assert.equal((entry.value as { name: string }).name, 'Intro');
   });
 
-  test('creates a common event in staging and keeps source unchanged until apply', () => {
+  test('creates a common event directly in the project', () => {
     const created = createCommonEvent(root, project, {
       name: 'Parallel Loop',
       trigger: 2,
@@ -110,15 +109,7 @@ describe('common event service', { concurrency: false }, () => {
 
     assert.equal(created.entry.id, 2);
     assert.equal((created.entry.value as { trigger: number }).trigger, 2);
-    assert.equal((readJson(commonEventsFile) as unknown[])[2], null);
-    const stagedFile = getProjectFileForRead(root, project, 'www/data/CommonEvents.json');
-    assert.ok(stagedFile);
-    assert.equal((readJson(stagedFile) as Array<{ name?: string } | null>)[2]?.name, 'Parallel Loop');
-    assert.equal(getProjectStagingStatus(root, project).staged, true);
-
-    assert.equal(applyProjectStaging(root, project).applied, true);
     assert.equal((readJson(commonEventsFile) as Array<{ name?: string } | null>)[2]?.name, 'Parallel Loop');
-    assert.equal(getProjectStagingStatus(root, project).staged, false);
   });
 
   test('updates, renames, changes trigger, and edits command list', () => {
@@ -136,14 +127,11 @@ describe('common event service', { concurrency: false }, () => {
       ],
     });
 
-    const stagedFile = getProjectFileForRead(root, project, 'www/data/CommonEvents.json');
-    assert.ok(stagedFile);
-    const event = (readJson(stagedFile) as RmmvCommonEventTest[])[1];
+    const event = (readJson(commonEventsFile) as RmmvCommonEventTest[])[1];
     assert.equal(event.name, 'Intro Renamed');
     assert.equal(event.trigger, 1);
     assert.equal(event.switchId, 1);
     assert.equal(event.list[0].code, 117);
-    assert.equal((readJson(commonEventsFile) as RmmvCommonEventTest[])[1].name, 'Intro');
   });
 
   test('preserves unchanged legacy command issues while rejecting changes to the invalid list', () => {
@@ -181,9 +169,7 @@ describe('common event service', { concurrency: false }, () => {
     const duplicated = duplicateCommonEvent(root, project, { id: 1 });
     assert.equal(duplicated.entry.id, 2);
     assert.equal((duplicated.entry.value as { name: string }).name, 'Intro Copy');
-    const stagedFile = getProjectFileForRead(root, project, 'www/data/CommonEvents.json');
-    assert.ok(stagedFile);
-    assert.equal((readJson(stagedFile) as RmmvCommonEventTest[])[2].id, 2);
+    assert.equal((readJson(commonEventsFile) as RmmvCommonEventTest[])[2].id, 2);
   });
 
   test('blocks create and duplicate beyond the original MV common-event limit', () => {
@@ -218,13 +204,10 @@ describe('common event service', { concurrency: false }, () => {
     );
   });
 
-  test('deletes an unreferenced common event through staging', () => {
+  test('deletes an unreferenced common event directly', () => {
     const result = deleteCommonEvent(root, project, { id: 1 });
     assert.equal(result.deleted, true);
-    assert.equal((readJson(commonEventsFile) as unknown[])[1] === null, false);
-    const stagedFile = getProjectFileForRead(root, project, 'www/data/CommonEvents.json');
-    assert.ok(stagedFile);
-    assert.equal((readJson(stagedFile) as unknown[])[1], null);
+    assert.equal((readJson(commonEventsFile) as unknown[])[1], null);
   });
 
   test('validates autorun and parallel switch range', () => {

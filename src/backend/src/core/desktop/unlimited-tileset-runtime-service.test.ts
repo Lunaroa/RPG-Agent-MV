@@ -9,7 +9,7 @@ import sharp from 'sharp';
 
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
-import { getProjectFileForRead, getProjectStagingStatus } from './staging-service.ts';
+import { resolveProjectFileForRead } from './project-file-service.ts';
 import {
   inspectManagedUnlimitedTilesets,
   setManagedUnlimitedTilesetsEnabled,
@@ -34,17 +34,14 @@ describe('managed unlimited tilesets runtime', { concurrency: false }, () => {
   });
 
   for (const engine of ['MV', 'MZ'] as const) {
-    test(`stages the ${engine} plugin and plugins.js as one transaction`, () => {
+    test(`saves the ${engine} plugin and plugins.js as one transaction`, () => {
       const project = createProject(root, engine);
       const result = setManagedUnlimitedTilesetsEnabled(root, project, true);
-      const staging = getProjectStagingStatus(root, project);
       assert.equal(result.engine, engine === 'MV' ? 'rpg-maker-mv' : 'rpg-maker-mz');
-      assert.deepEqual(
-        staging.files.map((file) => file.relativePath).sort(),
-        [`${engine === 'MV' ? 'www/' : ''}js/plugins.js`, `${engine === 'MV' ? 'www/' : ''}js/plugins/RPGAgentUnlimitedTilesets.js`].sort(),
-      );
+      assert.ok(resolveProjectFileForRead(project, `${engine === 'MV' ? 'www/' : ''}js/plugins.js`));
+      assert.ok(resolveProjectFileForRead(project, `${engine === 'MV' ? 'www/' : ''}js/plugins/RPGAgentUnlimitedTilesets.js`));
       assert.equal(inspectManagedUnlimitedTilesets(root, project).valid, true);
-      const plugin = fs.readFileSync(getProjectFileForRead(root, project, result.pluginRelativePath)!, 'utf8');
+      const plugin = fs.readFileSync(resolveProjectFileForRead(project, result.pluginRelativePath)!, 'utf8');
       assert.match(plugin, new RegExp(`@target ${engine}`));
       assert.match(plugin, /A1.*A2.*A3.*A4.*A5.*normal/s);
     });
@@ -70,7 +67,7 @@ describe('managed unlimited tilesets runtime', { concurrency: false }, () => {
     const result = setManagedUnlimitedTilesetsEnabled(root, project, true, { backupAndReplaceModified: true });
     assert.equal(result.backupRelativePath, 'www/js/plugins/RPGAgentUnlimitedTilesets.rpg-agent-backup.js');
     assert.equal(
-      fs.readFileSync(getProjectFileForRead(root, project, result.backupRelativePath!)!, 'utf8'),
+      fs.readFileSync(resolveProjectFileForRead(project, result.backupRelativePath!)!, 'utf8'),
       '/* user modified */',
     );
   });
@@ -103,8 +100,8 @@ describe('managed unlimited tilesets runtime', { concurrency: false }, () => {
 
     fs.writeFileSync(path.join(dataDir, 'Map001.json'), JSON.stringify({ width: 1, height: 1, tilesetId: 1, data: Array(6).fill(0), events: [null] }), 'utf8');
     setManagedUnlimitedTilesetsEnabled(root, project, false);
-    assert.equal(getProjectFileForRead(root, project, enabled.pluginRelativePath), null);
-    assert.doesNotMatch(fs.readFileSync(getProjectFileForRead(root, project, 'www/js/plugins.js')!, 'utf8'), /RPGAgentUnlimitedTilesets/);
+    assert.equal(resolveProjectFileForRead(project, enabled.pluginRelativePath), null);
+    assert.doesNotMatch(fs.readFileSync(resolveProjectFileForRead(project, 'www/js/plugins.js')!, 'utf8'), /RPGAgentUnlimitedTilesets/);
   });
 
   test('requires a valid managed runtime and complete sheet data for extended autotile paint requests', () => {
@@ -149,8 +146,8 @@ describe('managed unlimited tilesets runtime', { concurrency: false }, () => {
 
     postMapTiles(root, project, 1, [{ kind: 'tile', x: 0, y: 0, layer: 0, tileId: 8192 }]);
 
-    const map = JSON.parse(fs.readFileSync(getProjectFileForRead(root, project, 'www/data/Map001.json')!, 'utf8'));
-    const tilesets = JSON.parse(fs.readFileSync(getProjectFileForRead(root, project, 'www/data/Tilesets.json')!, 'utf8'));
+    const map = JSON.parse(fs.readFileSync(resolveProjectFileForRead(project, 'www/data/Map001.json')!, 'utf8'));
+    const tilesets = JSON.parse(fs.readFileSync(resolveProjectFileForRead(project, 'www/data/Tilesets.json')!, 'utf8'));
     assert.equal(map.data[0], 8192);
     assert.equal(tilesets[1].flags.length, flags.length);
   });

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { getProjectFileForRead } from "../desktop/staging-service.ts";
+import { resolveProjectFileForRead } from "../desktop/project-file-service.ts";
 import { readJson } from "./json.ts";
 import { dataRelativePath, resolveRmmvLayout, type RmmvProjectLayout } from "./rmmv-layout.ts";
 
@@ -219,7 +219,7 @@ class EffectiveProjectReader {
   readOptional(fileName: string): unknown | null {
     const relativePath = dataRelativePath(this.layout, fileName);
     const file = this.workflowRoot
-      ? getProjectFileForRead(this.workflowRoot, this.projectRoot, relativePath)
+      ? resolveProjectFileForRead(this.projectRoot, relativePath)
       : sourceFile(this.projectRoot, relativePath);
     if (!file) return null;
     try {

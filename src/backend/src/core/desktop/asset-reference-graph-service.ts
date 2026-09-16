@@ -12,7 +12,7 @@ import {
   assetGraphTargetNameOccupied,
   assetGraphUnsupportedCategory,
 } from './assetReferenceGraphLocalization.ts';
-import { getProjectFileForRead, getProjectStagingStatus } from './staging-service.ts';
+import { resolveProjectFileForRead } from './project-file-service.ts';
 import { readPluginConfiguration } from './plugin-management-service.ts';
 import type { PluginParameterSchemaField } from '../../../../contract/types.ts';
 import {
@@ -60,7 +60,6 @@ export interface RmmvProjectAsset {
   relativePath: string;
   absolutePath: string;
   size: number;
-  staged: boolean;
 }
 
 export interface RmmvAssetReference {
@@ -667,7 +666,7 @@ function scanMapReferences(context: ScanContext): void {
   }
   for (const mapId of Array.from(mapIds).sort((a, b) => a - b)) {
     const relative = `${context.layout.dataRelativeDir}/Map${String(mapId).padStart(3, '0')}.json`;
-    const file = getProjectFileForRead(context.workflowRoot, context.project, relative);
+    const file = resolveProjectFileForRead(context.project, relative);
     if (!file) continue;
     scanMap(context, readJson(file), relative);
   }
@@ -687,7 +686,7 @@ function scanCommandList(context: ScanContext, value: unknown, file: string, jso
 
 function scanPluginConfiguration(context: ScanContext): void {
   const relative = `${context.layout.gameRootRelative ? `${context.layout.gameRootRelative}/` : ''}js/plugins.js`;
-  const file = getProjectFileForRead(context.workflowRoot, context.project, relative);
+  const file = resolveProjectFileForRead(context.project, relative);
   if (!file) return;
   const raw = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
   const start = raw.indexOf('[');
@@ -771,7 +770,7 @@ function scanPluginNoteAssets(
   const fileName = dataFiles[declaration.data.toLowerCase().replace(/[\s-]/g, '')] || dataFiles[declaration.data.toLowerCase()];
   if (!fileName) return;
   const relative = `${context.layout.dataRelativeDir}/${fileName}`;
-  const absolute = getProjectFileForRead(context.workflowRoot, context.project, relative);
+  const absolute = resolveProjectFileForRead(context.project, relative);
   if (!absolute) return;
   const escaped = declaration.parameter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const pattern = new RegExp(`<${escaped}\\s*:\\s*([^>]+)>`, 'gi');
@@ -838,20 +837,9 @@ function listProjectAssets(context: ScanContext): RmmvProjectAsset[] {
         if (!category.extensions.includes(extension)) continue;
         const relativePath = `${relativeDir}/${fileName}`;
         const absolutePath = path.join(sourceDir, ...fileName.split('/'));
-        byRelative.set(relativePath, makeAsset(category.id, relativePath, absolutePath, false, context.layout));
+        byRelative.set(relativePath, makeAsset(category.id, relativePath, absolutePath, context.layout));
       }
     }
-  }
-  for (const staged of getProjectStagingStatus(context.workflowRoot, context.project).files || []) {
-    const category = categoryForRelativePath(context.layout, staged.relativePath);
-    if (!category) continue;
-    if (staged.delete) {
-      byRelative.delete(staged.relativePath);
-      continue;
-    }
-    const absolutePath = getProjectFileForRead(context.workflowRoot, context.project, staged.relativePath);
-    if (!absolutePath) continue;
-    byRelative.set(staged.relativePath, makeAsset(category.id, staged.relativePath, absolutePath, true, context.layout));
   }
   return Array.from(byRelative.values()).sort((a, b) => a.category.localeCompare(b.category) || a.relativePath.localeCompare(b.relativePath));
 }
@@ -860,7 +848,6 @@ function makeAsset(
   category: RmmvAssetCategory,
   relativePath: string,
   absolutePath: string,
-  staged: boolean,
   layout: ProjectAssetLayout,
 ): RmmvProjectAsset {
   const relativeDir = categoryRelativeDirectory(layout, category);
@@ -872,19 +859,7 @@ function makeAsset(
     relativePath,
     absolutePath,
     size: fs.statSync(absolutePath).size,
-    staged,
   };
-}
-
-function categoryForRelativePath(layout: ProjectAssetLayout, relativePath: string): RmmvAssetCategoryDefinition | null {
-  const normalized = relativePath.replace(/\\/g, '/');
-  for (const category of RMMV_ASSET_CATEGORIES) {
-    const dir = categoryRelativeDirectory(layout, category.id);
-    if (!normalized.startsWith(`${dir}/`)) continue;
-    if (!category.extensions.includes(path.extname(normalized).toLowerCase())) continue;
-    return category;
-  }
-  return null;
 }
 
 function listFilesRecursively(root: string): string[] {
@@ -910,17 +885,12 @@ function listDataJsonRelatives(context: ScanContext): string[] {
       if (entry.isFile() && entry.name.endsWith('.json')) result.add(`${context.layout.dataRelativeDir}/${entry.name}`);
     }
   }
-  for (const staged of getProjectStagingStatus(context.workflowRoot, context.project).files || []) {
-    if (!staged.relativePath.startsWith(`${context.layout.dataRelativeDir}/`) || !staged.relativePath.endsWith('.json')) continue;
-    if (staged.delete) result.delete(staged.relativePath);
-    else result.add(staged.relativePath);
-  }
   return Array.from(result).sort();
 }
 
 function readDataJson(context: ScanContext, stem: string): { relative: string; value: unknown } | null {
   const relative = `${context.layout.dataRelativeDir}/${stem}.json`;
-  const file = getProjectFileForRead(context.workflowRoot, context.project, relative);
+  const file = resolveProjectFileForRead(context.project, relative);
   if (!file) return null;
   return { relative, value: readJson(file) };
 }
@@ -932,8 +902,8 @@ function resolveProjectAssetLayout(workflowRoot: string, project: string): Proje
   ];
   for (const candidate of candidates) {
     if (
-      getProjectFileForRead(workflowRoot, project, `${candidate.dataRelativeDir}/System.json`) ||
-      getProjectFileForRead(workflowRoot, project, `${candidate.dataRelativeDir}/MapInfos.json`) ||
+      resolveProjectFileForRead(project, `${candidate.dataRelativeDir}/System.json`) ||
+      resolveProjectFileForRead(project, `${candidate.dataRelativeDir}/MapInfos.json`) ||
       fs.existsSync(path.join(project, ...candidate.dataRelativeDir.split('/')))
     ) {
       return candidate;

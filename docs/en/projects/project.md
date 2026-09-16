@@ -46,7 +46,7 @@ After switching projects, confirm the MV/MZ badge beside the project name. If da
 
 Editing depends only on the source project. Normal playtest first validates a project-local runtime. A source-only MZ project uses `nwjs-win/nw.exe` from a local MZ installation; a source-only MV project uses the original editor playtest runner at `nwjs-win-test/Game.exe`. Right-click Play to inspect or change the current engine's runtime. Only a complete executable-file path is accepted; legacy directory settings must be selected again. Paths are stored per engine and used in place without copying the runtime. MZ 1.10.0 remains the fully validated baseline; another recognizable MZ core version may attempt a launch, but a successful run is evidence for that playtest rather than a complete compatibility guarantee. Selection never executes the runner, scans arbitrary game folders, or downloads files. Isolated Battle Test keeps the stricter project-local runtime boundary.
 
-If the local runtime is missing or incomplete, map, event, database, asset, plugin, and staging work remains available. Normal playtest can use the saved selection flow above; isolated workflows that require a project-local runtime still fail before launch with the missing runtime file named explicitly.
+If the local runtime is missing or incomplete, map, event, database, asset, and plugin editing remains available. Normal playtest can use the saved selection flow above; isolated workflows that require a project-local runtime still fail before launch with the missing runtime file named explicitly.
 
 ## Game-Level Rules
 
@@ -54,7 +54,7 @@ If a project needs long-lived instructions, such as world tone, naming tables, o
 
 ## Controlled Editing And Version Management
 
-Map and event editing are available by default; version management does not need to be enabled first. Edits enter staging and can be reviewed before being kept.
+Map and event editing are available by default; version management does not need to be enabled first. Confirmed edits are saved directly to the source project, where they can be reviewed through the actual result and Git diff.
 
 Version management is an optional enhancement on the console home page. When enabled, it records event identity, syncs story-page fingerprints, and saves local version snapshots. It does not require a remote repository or online sync.
 
@@ -65,5 +65,5 @@ To enable it:
 3. Optionally enter a version note, such as "initial draft".
 4. If you do not want a snapshot yet, choose the edit-only option when available.
 
-Before modifying maps or events, the Agent should read project facts. After writing, the user can review staged changes and run logs; with version management enabled, the user can also save named local versions.
+Before modifying maps or events, the Agent should read project facts. After writing, the user can review the actual project result, Git diff, and run logs; with version management enabled, the user can also save named local versions.
 

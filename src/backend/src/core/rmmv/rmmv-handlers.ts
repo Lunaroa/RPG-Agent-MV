@@ -48,14 +48,6 @@ import {
   removeEvent,
   updateEvent,
 } from "../desktop/event-service.ts";
-import {
-  applyProjectStaging,
-  applyStagedMap,
-  discardProjectStaging,
-  discardStagedMap,
-  getProjectStagingStatus,
-  getStagingStatus,
-} from "../desktop/staging-service.ts";
 import type { StorySyncActor } from "../desktop/story-page-sync-service.ts";
 import { patchRequiresAgentGuard } from "../desktop/controlled-editing-policy.ts";
 
@@ -161,10 +153,6 @@ export function runRmmvMapEditor(input: RmmvHandlerInput): RmmvHandlerResult {
     data = buildMapPayload(workflowRoot, project, mapId);
   } else if (action === "tilesets") {
     data = buildTilesetIndex(workflowRoot, project);
-  } else if (action === "project-staging") {
-    data = getProjectStagingStatus(workflowRoot, project);
-  } else if (action === "map-staging") {
-    data = getStagingStatus(workflowRoot, project, requirePositiveIntField(input, "mapId"));
   } else if (action === "create") {
     const properties = mapPropertiesFromInput(input, true);
     assertMapParentExists(workflowRoot, project, Number(properties.parentId));
@@ -186,14 +174,6 @@ export function runRmmvMapEditor(input: RmmvHandlerInput): RmmvHandlerResult {
     const edits = input.edits;
     if (!Array.isArray(edits) || edits.length === 0) throw new Error('"edits" must be a non-empty array.');
     data = postMapTiles(workflowRoot, project, requirePositiveIntField(input, "mapId"), edits as never);
-  } else if (action === "apply-map") {
-    data = applyStagedMap(workflowRoot, project, requirePositiveIntField(input, "mapId"));
-  } else if (action === "discard-map") {
-    data = discardStagedMap(workflowRoot, project, requirePositiveIntField(input, "mapId"));
-  } else if (action === "apply-project") {
-    data = applyProjectStaging(workflowRoot, project, { rejectOperationOwned: true });
-  } else if (action === "discard-project") {
-    data = discardProjectStaging(workflowRoot, project, { rejectOperationOwned: true });
   } else {
     throw new Error(`Unsupported map-editor action: ${action}`);
   }

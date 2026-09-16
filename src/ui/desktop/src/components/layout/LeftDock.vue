@@ -145,7 +145,6 @@
                 </button>
               </span>
               <span v-if="!data.mapFileExists" class="node-missing" :title="t('editor.left.mapFileMissing')">{{ t('editor.left.missing') }}</span>
-              <span v-if="stagedMapIds.has(data.id)" class="node-staged" :title="t('editor.left.stagedTitle')">{{ t('editor.left.staged') }}</span>
             </span>
           </template>
         </el-tree>
@@ -210,7 +209,6 @@ const props = defineProps<{
   mapTreeError: string;
   mapTreeDraggable: boolean;
   selectedMapId: number | null;
-  stagedMapIds: Set<number>;
   expandedMapIds: number[];
   currentEvents: EditorEventListItem[];
   selectedEventId: number | null;
@@ -642,7 +640,6 @@ onMounted(() => {
 .node-fav:hover { background:var(--app-bg-sunken); color:var(--app-ink); }
 .node-fav.active { display:flex; color:#f5a623; }
 .tree-node:hover .node-fav, .tree-node:focus-within .node-fav { display:flex; }
-.node-staged { flex:0 0 auto; padding: 1px 4px; border-radius: 4px; background: var(--app-warn-soft); color: var(--app-warn); font-size: 9px; font-weight:600; }
 .tree-node.missing .node-label { color: var(--app-warn); text-decoration: line-through; text-decoration-thickness: 1px; }
 .node-missing { flex:0 0 auto; padding: 1px 4px; border-radius: 4px; background: var(--app-warn-soft); color: var(--app-warn); font-size: 9px; font-weight:650; }
 .pane-empty { padding: 10px; color: var(--app-ink-muted); font-size: 12px; }

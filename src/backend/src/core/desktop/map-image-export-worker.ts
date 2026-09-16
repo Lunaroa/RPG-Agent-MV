@@ -30,7 +30,7 @@ import {
 } from '../../../../contract/ulds.ts';
 import { resolveDataDir } from '../rmmv/project-scanner.ts';
 import { closeDatabase, configureDatabase } from '../db/pool.ts';
-import { getMapFileForRead, getProjectFileForRead } from './staging-service.ts';
+import { resolveMapFileForRead, resolveProjectFileForRead } from './project-file-service.ts';
 import { decodePng, renderMapToPng } from '../workflow/map/map-render.ts';
 
 export const MAP_IMAGE_EXPORT_MAX_DIMENSION = 32_767;
@@ -390,7 +390,7 @@ function validateScene(request: { scene: MapImageExportScene; project: string })
 }
 
 function assertCurrentRevision(request: { workflowRoot: string; project: string; scene: MapImageExportScene }): void {
-  const file = getMapFileForRead(request.workflowRoot, request.project, request.scene.mapId);
+  const file = resolveMapFileForRead(request.project, request.scene.mapId);
   if (!file || !fs.existsSync(file)) throw new Error('[MAP_IMAGE_MAP_MISSING] The selected map no longer exists.');
   const revision = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
   if (revision !== request.scene.mapRevision) {
@@ -401,7 +401,7 @@ function assertCurrentRevision(request: { workflowRoot: string; project: string;
 function assertCurrentTilesetProtocol(request: { workflowRoot: string; project: string; scene: MapImageExportScene }): void {
   const dataDir = resolveDataDir(request.project);
   const relative = path.relative(request.project, path.join(dataDir, 'Tilesets.json')).replace(/\\/g, '/');
-  const file = getProjectFileForRead(request.workflowRoot, request.project, relative)
+  const file = resolveProjectFileForRead(request.project, relative)
     || path.join(dataDir, 'Tilesets.json');
   if (!fs.existsSync(file)) throw new Error('[MAP_IMAGE_TILESET_MISSING] Tilesets.json is unavailable.');
   let database: unknown;
@@ -690,7 +690,7 @@ function effectiveResource(
   }
   const relative = path.relative(request.project, absolute).replace(/\\/g, '/');
   if (relative.startsWith('../') || path.isAbsolute(relative)) throw new Error('[MAP_IMAGE_RESOURCE_INVALID] Resource is outside the project.');
-  return getProjectFileForRead(request.workflowRoot, request.project, relative)
+  return resolveProjectFileForRead(request.project, relative)
     || (fs.existsSync(absolute) ? absolute : null);
 }
 

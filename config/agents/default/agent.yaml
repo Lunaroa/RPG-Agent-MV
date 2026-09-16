@@ -30,7 +30,7 @@
       "webfetch",
       "rmmv_RmmvReadContext",
       "rmmv_RmmvDatabase",
-      "rmmv_RmmvDatabaseApply",
+      "rmmv_RmmvDatabaseCommit",
       "rmmv_RmmvMap",
       "rmmv_RmmvVerify",
       "rmmv_RmmvEvent",

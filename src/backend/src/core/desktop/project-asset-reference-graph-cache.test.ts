@@ -20,7 +20,7 @@ import {
   applyProjectAssetReferenceGraphRename,
 } from './project-asset-reference-graph-cache.ts';
 import { invalidateProjectAssetBrowserCache } from './project-asset-browser-service.ts';
-import { stageProjectFilesAtomically, writeStagedProjectJson } from './staging-service.ts';
+import { writeProjectFilesAtomically, writeProjectJson } from './project-file-service.ts';
 
 describe('project asset reference graph cache', { concurrency: false }, () => {
   let root: string;
@@ -62,7 +62,7 @@ describe('project asset reference graph cache', { concurrency: false }, () => {
     assert.equal(builds, 1);
   });
 
-  test('staging a new reference invalidates the cache so delete safety sees it', () => withTestLanguage(() => {
+  test('saving a new reference invalidates the cache so delete safety sees it', () => withTestLanguage(() => {
     const before = checkProjectAssetDeleteSafetyBatch(root, project, [{
       category: 'pictures',
       relativePath: 'www/img/pictures/Unused.png',
@@ -70,7 +70,7 @@ describe('project asset reference graph cache', { concurrency: false }, () => {
     assert.equal(before[0]?.ok, true);
 
     const map = readJson(path.join(project, 'www', 'data', 'Map001.json')) as Record<string, unknown>;
-    writeStagedProjectJson(root, project, 'www/data/Map001.json', {
+    writeProjectJson(root, project, 'www/data/Map001.json', {
       ...map,
       events: [
         null,
@@ -170,9 +170,9 @@ describe('project asset reference graph cache', { concurrency: false }, () => {
     assert.equal(builds, 2);
   });
 
-  test('atomic staging writes invalidate the graph cache', () => {
+  test('atomic project writes invalidate the graph cache', () => {
     const first = getProjectAssetReferenceGraph(root, project);
-    stageProjectFilesAtomically(root, project, [{
+    writeProjectFilesAtomically(root, project, [{
       relativePath: 'www/data/Map001.json',
       content: Buffer.from(JSON.stringify({ events: [null] }), 'utf8'),
     }]);

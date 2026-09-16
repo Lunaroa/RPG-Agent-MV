@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { EventContractDao } from '../db/dao/event-contract-dao.ts';
 import { MapSelectionDao } from '../db/dao/map-selection-dao.ts';
-import { StagingManifestDao } from '../db/dao/staging-manifest-dao.ts';
 import { StoryProjectDao } from '../db/dao/story-project-dao.ts';
 import { closeDatabase, getConfiguredDatabasePath } from '../db/pool.ts';
 import { readJson, writeJson } from '../rmmv/json.ts';
@@ -29,18 +28,12 @@ import {
   updateMapPropertiesDraft,
 } from './map-service.ts';
 import {
-  applyProjectStaging,
-  applyStagedMap,
-  deleteStagedProjectFile,
-  discardProjectStaging,
-  discardStagedMap,
-  getMapFileForRead,
-  getProjectFileForRead,
-  getProjectStagingStatus,
-  projectHash,
-  writeStagedProjectBuffer,
-  writeStagedProjectJson,
-} from './staging-service.ts';
+  deleteProjectFile,
+  resolveMapFileForRead,
+  resolveProjectFileForRead,
+  writeProjectBuffer,
+  writeProjectJson,
+} from './project-file-service.ts';
 import { registerExternalProject } from './project-service.ts';
 import { initializeOriginalStoryProject } from './story-page-sync-service.ts';
 
@@ -133,9 +126,9 @@ describe('desktop map services', { concurrency: false }, () => {
     assert.equal(resolveAssetRequest(fixture.root, payload.tileset!.imageUrls[0]!), path.join(project, 'img', 'tilesets', 'Outside_A1.png'));
 
     postMapTiles(fixture.root, project, 1, [{ x: 0, y: 0, layer: 0, tileId: 7 }]);
-    const stagedMap = readMapForTest(fixture.root, project, 1) as any;
-    assert.equal(stagedMap.data[0], 7);
-    assert.equal((readJson(path.join(dataDir, 'Map001.json')) as any).data[0], 0);
+    const savedMap = readMapForTest(fixture.root, project, 1) as any;
+    assert.equal(savedMap.data[0], 7);
+    assert.equal((readJson(path.join(dataDir, 'Map001.json')) as any).data[0], 7);
   });
 
   test('fails fast when a referenced tileset image is missing', () => {
@@ -152,14 +145,14 @@ describe('desktop map services', { concurrency: false }, () => {
     );
   });
 
-  test('builds an editor catalog from staged database and asset overrides', () => {
-    writeStagedProjectJson(fixture.root, fixture.project, 'www/data/System.json', { switches: [null, 'Door', 'Night'], variables: [null, 'Progress'] });
-    writeStagedProjectBuffer(fixture.root, fixture.project, 'www/img/characters/Hero.png', Buffer.from('hero'));
-    writeStagedProjectBuffer(fixture.root, fixture.project, 'www/img/faces/Hero.png', Buffer.from('face'));
-    writeStagedProjectBuffer(fixture.root, fixture.project, 'www/audio/bgm/Theme.ogg', Buffer.from('bgm'));
-    writeStagedProjectBuffer(fixture.root, fixture.project, 'www/img/pictures/Portrait.png', Buffer.from('picture'));
-    writeStagedProjectBuffer(fixture.root, fixture.project, 'www/audio/se/Open1.ogg', Buffer.from('se'));
-    deleteStagedProjectFile(fixture.root, fixture.project, 'www/img/characters/Removed.png');
+  test('builds an editor catalog from directly saved database and asset changes', () => {
+    writeProjectJson(fixture.root, fixture.project, 'www/data/System.json', { switches: [null, 'Door', 'Night'], variables: [null, 'Progress'] });
+    writeProjectBuffer(fixture.root, fixture.project, 'www/img/characters/Hero.png', Buffer.from('hero'));
+    writeProjectBuffer(fixture.root, fixture.project, 'www/img/faces/Hero.png', Buffer.from('face'));
+    writeProjectBuffer(fixture.root, fixture.project, 'www/audio/bgm/Theme.ogg', Buffer.from('bgm'));
+    writeProjectBuffer(fixture.root, fixture.project, 'www/img/pictures/Portrait.png', Buffer.from('picture'));
+    writeProjectBuffer(fixture.root, fixture.project, 'www/audio/se/Open1.ogg', Buffer.from('se'));
+    deleteProjectFile(fixture.root, fixture.project, 'www/img/characters/Removed.png');
 
     const catalog = buildEditorProjectCatalog(fixture.root, fixture.project);
     assert.deepEqual(catalog.switches, [{ id: 1, name: 'Door' }, { id: 2, name: 'Night' }]);
@@ -170,29 +163,19 @@ describe('desktop map services', { concurrency: false }, () => {
     assert.equal(catalog.assets.bgm[0].name, 'Theme');
     assert.equal(catalog.assets.pictures[0].name, 'Portrait');
     assert.equal(catalog.assets.se[0].name, 'Open1');
-    const stagedHero = resolveAssetRequest(fixture.root, catalog.assets.characters[0].url);
-    assert.ok(stagedHero.startsWith(path.join(fixture.root, 'runtime', 'agent-console-staging')));
-    assert.equal(fs.readFileSync(stagedHero).toString(), 'hero');
+    const savedHero = resolveAssetRequest(fixture.root, catalog.assets.characters[0].url);
+    assert.equal(savedHero, path.join(fixture.project, 'www', 'img', 'characters', 'Hero.png'));
+    assert.equal(fs.readFileSync(savedHero).toString(), 'hero');
   });
 
-  test('keeps tile edits in draft until apply and discards without touching source', () => {
+  test('saves tile edits directly after validation', () => {
     postMapTiles(fixture.root, fixture.project, 1, [{ x: 0, y: 0, layer: 0, tileId: 7 }]);
-    assert.equal((readJson(fixture.mapFile) as any).data[0], 0);
+    assert.equal((readJson(fixture.mapFile) as any).data[0], 7);
     assert.equal((readMapForTest(fixture.root, fixture.project, 1) as any).data[0], 7);
-    const stagingBackupRoot = path.join(fixture.root, 'runtime', 'agent-console-staging', projectHash(fixture.project));
-    assert.equal(fs.existsSync(path.join(stagingBackupRoot, 'manifest.json')), false);
-    assert.ok(StagingManifestDao.getLatestByProject(projectHash(fixture.project)));
-    assert.equal(discardStagedMap(fixture.root, fixture.project, 1).discarded, true);
-    assert.equal((readJson(fixture.mapFile) as any).data[0], 0);
-    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
 
     postMapTiles(fixture.root, fixture.project, 1, [{ x: 0, y: 0, layer: 0, tileId: 8 }]);
-    assert.equal((readJson(fixture.mapFile) as any).data[0], 0);
-    assert.equal((readMapForTest(fixture.root, fixture.project, 1) as any).data[0], 8);
-    assert.equal(applyStagedMap(fixture.root, fixture.project, 1).applied, true);
     assert.equal((readJson(fixture.mapFile) as any).data[0], 8);
-    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
-    assert.equal(fs.existsSync(path.join(fixture.root, 'runtime', 'agent-console-staging')) && getProjectStagingStatus(fixture.root, fixture.project).files.length, 0);
+    assert.equal((readMapForTest(fixture.root, fixture.project, 1) as any).data[0], 8);
   });
 
   test('edits tile, shadow and region layers explicitly without cross-layer pollution', () => {
@@ -202,24 +185,14 @@ describe('desktop map services', { concurrency: false }, () => {
       { kind: 'region', x: 0, y: 1, layer: 5, regionId: 42 },
     ]);
 
-    const source = readJson(fixture.mapFile) as any;
-    const staged = readMapForTest(fixture.root, fixture.project, 1) as any;
-    const layerSize = staged.width * staged.height;
-    assert.equal(source.data[0], 0);
-    assert.equal(source.data[4 * layerSize + 1], 0);
-    assert.equal(source.data[5 * layerSize + 2], 0);
-    assert.equal(staged.data[0], 7);
-    assert.equal(staged.data[4 * layerSize + 1], 9);
-    assert.equal(staged.data[5 * layerSize + 2], 42);
-    assert.equal(staged.data[1], 0);
-    assert.equal(staged.data[2], 0);
-    assert.equal(staged.data[layerSize], 0);
-
-    assert.equal(applyStagedMap(fixture.root, fixture.project, 1).applied, true);
-    const applied = readJson(fixture.mapFile) as any;
-    assert.equal(applied.data[0], 7);
-    assert.equal(applied.data[4 * layerSize + 1], 9);
-    assert.equal(applied.data[5 * layerSize + 2], 42);
+    const saved = readJson(fixture.mapFile) as any;
+    const layerSize = saved.width * saved.height;
+    assert.equal(saved.data[0], 7);
+    assert.equal(saved.data[4 * layerSize + 1], 9);
+    assert.equal(saved.data[5 * layerSize + 2], 42);
+    assert.equal(saved.data[1], 0);
+    assert.equal(saved.data[2], 0);
+    assert.equal(saved.data[layerSize], 0);
   });
 
   test('supports MV automatic placement and exact manual edits across all four tile layers', () => {
@@ -243,9 +216,9 @@ describe('desktop map services', { concurrency: false }, () => {
       { kind: 'tile', x: 2, y: 1, layer: 3, tileId: 5 },
     ]);
 
-    const staged = readMapForTest(fixture.root, fixture.project, 1) as { width: number; height: number; data: number[] };
-    const layerSize = staged.width * staged.height;
-    const tileAt = (layer: number, x: number, y: number) => staged.data[layer * layerSize + y * staged.width + x];
+    const saved = readMapForTest(fixture.root, fixture.project, 1) as { width: number; height: number; data: number[] };
+    const layerSize = saved.width * saved.height;
+    const tileAt = (layer: number, x: number, y: number) => saved.data[layer * layerSize + y * saved.width + x];
     const autotileKindAt = (layer: number, x: number, y: number) => Math.floor((tileAt(layer, x, y) - 2048) / 48);
 
     assert.equal(tileAt(0, 0, 0), 1536);
@@ -257,7 +230,7 @@ describe('desktop map services', { concurrency: false }, () => {
     assert.equal(tileAt(2, 1, 1), 2);
     assert.equal(tileAt(3, 1, 1), 3);
     assert.deepEqual([0, 1, 2, 3].map((layer) => tileAt(layer, 2, 1)), [1536, 1537, 4, 5]);
-    assert.equal((readJson(fixture.mapFile) as { data: number[] }).data.every((value) => value === 0), true);
+    assert.deepEqual((readJson(fixture.mapFile) as { data: number[] }).data, saved.data);
 
     postMapTiles(fixture.root, fixture.project, 1, [{ kind: 'tile', x: 1, y: 1, layer: 'auto', tileId: 0 }]);
     const erased = readMapForTest(fixture.root, fixture.project, 1) as { width: number; height: number; data: number[] };
@@ -272,14 +245,14 @@ describe('desktop map services', { concurrency: false }, () => {
       { kind: 'autotile', x: 0, y: 1, layer: 2, autotileKind: 88 },
     ]);
 
-    const staged = readMapForTest(fixture.root, fixture.project, 1) as any;
-    const layerSize = staged.width * staged.height;
-    assert.equal(staged.data[0], 2048 + 5 * 48 + 2);
-    assert.equal(staged.data[layerSize + 1], 2048 + 48 * 48 + 9);
-    assert.equal(staged.data[2 * layerSize + 2], 2048 + 88 * 48 + 6);
-    assert.equal(staged.data[4 * layerSize], 0);
-    assert.equal(staged.data[5 * layerSize], 0);
-    assert.equal((readJson(fixture.mapFile) as any).data.every((value: number) => value === 0), true);
+    const saved = readMapForTest(fixture.root, fixture.project, 1) as any;
+    const layerSize = saved.width * saved.height;
+    assert.equal(saved.data[0], 2048 + 5 * 48 + 2);
+    assert.equal(saved.data[layerSize + 1], 2048 + 48 * 48 + 9);
+    assert.equal(saved.data[2 * layerSize + 2], 2048 + 88 * 48 + 6);
+    assert.equal(saved.data[4 * layerSize], 0);
+    assert.equal(saved.data[5 * layerSize], 0);
+    assert.deepEqual((readJson(fixture.mapFile) as any).data, saved.data);
   });
 
   test('rejects invalid tile, shadow, region and out-of-range autotile edits before writing source', () => {
@@ -306,7 +279,7 @@ describe('desktop map services', { concurrency: false }, () => {
     assert.equal((readJson(fixture.mapFile) as any).data.every((value: number) => value === 0), true);
   });
 
-  test('updates complete RMMV map properties through project staging', () => {
+  test('updates complete RMMV map properties through one direct save', () => {
     updateMapPropertiesDraft(fixture.root, fixture.project, 1, {
       name: 'Renamed',
       displayName: 'Village Entrance',
@@ -334,78 +307,54 @@ describe('desktop map services', { concurrency: false }, () => {
       note: '<weather:rain>',
     });
 
-    const sourceMap = readJson(fixture.mapFile) as any;
-    const sourceInfos = readJson(path.join(fixture.project, 'www', 'data', 'MapInfos.json')) as any[];
-    const stagedMap = readMapForTest(fixture.root, fixture.project, 1) as any;
-    const stagedInfos = readProjectJsonForTest(fixture.root, fixture.project, 'www/data/MapInfos.json') as any[];
-
-    assert.equal(sourceInfos[1].name, 'Start');
-    assert.equal(sourceMap.displayName, undefined);
-    assert.equal(stagedInfos[1].name, 'Renamed');
-    assert.equal(stagedMap.displayName, 'Village Entrance');
-    assert.equal(stagedMap.scrollType, 3);
-    assert.equal(stagedMap.specifyBattleback, true);
-    assert.equal(stagedMap.battleback1Name, 'Grassland');
-    assert.equal(stagedMap.battleback2Name, 'Clouds');
-    assert.equal(stagedMap.autoplayBgm, true);
-    assert.deepEqual(stagedMap.bgm, { name: 'Field1', volume: 80, pitch: 95, pan: -10 });
-    assert.equal(stagedMap.autoplayBgs, true);
-    assert.deepEqual(stagedMap.bgs, { name: 'River', volume: 55, pitch: 105, pan: 12 });
-    assert.equal(stagedMap.disableDashing, true);
-    assert.equal(stagedMap.parallaxName, 'Sky');
-    assert.equal(stagedMap.parallaxLoopX, true);
-    assert.equal(stagedMap.parallaxLoopY, true);
-    assert.equal(stagedMap.parallaxSx, 4);
-    assert.equal(stagedMap.parallaxSy, -3);
-    assert.equal(stagedMap.parallaxShow, true);
-    assert.deepEqual(stagedMap.encounterList, [{ troopId: 2, weight: 7, regionSet: [1, 2] }]);
-    assert.equal(stagedMap.encounterStep, 45);
-    assert.equal(stagedMap.note, '<weather:rain>');
-
-    assert.equal(applyProjectStaging(fixture.root, fixture.project).applied, true);
-    const appliedMap = readJson(fixture.mapFile) as any;
-    const appliedInfos = readJson(path.join(fixture.project, 'www', 'data', 'MapInfos.json')) as any[];
-    assert.equal(appliedInfos[1].name, 'Renamed');
-    assert.equal(appliedMap.displayName, 'Village Entrance');
-    assert.deepEqual(appliedMap.bgm, { name: 'Field1', volume: 80, pitch: 95, pan: -10 });
-    assert.deepEqual(appliedMap.encounterList, [{ troopId: 2, weight: 7, regionSet: [1, 2] }]);
-    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
+    const savedMap = readJson(fixture.mapFile) as any;
+    const savedInfos = readJson(path.join(fixture.project, 'www', 'data', 'MapInfos.json')) as any[];
+    assert.equal(savedInfos[1].name, 'Renamed');
+    assert.equal(savedMap.displayName, 'Village Entrance');
+    assert.equal(savedMap.scrollType, 3);
+    assert.equal(savedMap.specifyBattleback, true);
+    assert.equal(savedMap.battleback1Name, 'Grassland');
+    assert.equal(savedMap.battleback2Name, 'Clouds');
+    assert.equal(savedMap.autoplayBgm, true);
+    assert.deepEqual(savedMap.bgm, { name: 'Field1', volume: 80, pitch: 95, pan: -10 });
+    assert.equal(savedMap.autoplayBgs, true);
+    assert.deepEqual(savedMap.bgs, { name: 'River', volume: 55, pitch: 105, pan: 12 });
+    assert.equal(savedMap.disableDashing, true);
+    assert.equal(savedMap.parallaxName, 'Sky');
+    assert.equal(savedMap.parallaxLoopX, true);
+    assert.equal(savedMap.parallaxLoopY, true);
+    assert.equal(savedMap.parallaxSx, 4);
+    assert.equal(savedMap.parallaxSy, -3);
+    assert.equal(savedMap.parallaxShow, true);
+    assert.deepEqual(savedMap.encounterList, [{ troopId: 2, weight: 7, regionSet: [1, 2] }]);
+    assert.equal(savedMap.encounterStep, 45);
+    assert.equal(savedMap.note, '<weather:rain>');
   });
 
-  test('sets the player start position through project staging', () => {
+  test('sets the player start position directly', () => {
     const result = setStartPositionDraft(fixture.root, fixture.project, 1, 1, 1);
     const system = readProjectJsonForTest(fixture.root, fixture.project, 'www/data/System.json') as any;
-    const sourceSystem = readJson(path.join(fixture.project, 'www', 'data', 'System.json')) as any;
 
     assert.equal(result.target, 'player');
     assert.equal(result.relativePath, 'www/data/System.json');
     assert.equal(system.startMapId, 1);
     assert.equal(system.startX, 1);
     assert.equal(system.startY, 1);
-    assert.equal(sourceSystem.startX, 0);
-    assert.equal(sourceSystem.startY, 0);
-    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, true);
-    assert.equal(applyProjectStaging(fixture.root, fixture.project).applied, true);
-    const appliedSystem = readJson(path.join(fixture.project, 'www', 'data', 'System.json')) as any;
-    assert.equal(appliedSystem.startMapId, 1);
-    assert.equal(appliedSystem.startX, 1);
-    assert.equal(appliedSystem.startY, 1);
-    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
+    assert.deepEqual(system, readJson(path.join(fixture.project, 'www', 'data', 'System.json')));
     assert.throws(() => withTestLanguage(() => setStartPositionDraft(fixture.root, fixture.project, 1, 2, 0)), /x=2\)/);
   });
 
-  test('sets boat, ship and airship positions through project staging', () => {
+  test('sets boat, ship and airship positions directly', () => {
     setSystemPositionDraft(fixture.root, fixture.project, 'boat', 1, 1, 0);
     setSystemPositionDraft(fixture.root, fixture.project, 'ship', 1, 0, 1);
     setSystemPositionDraft(fixture.root, fixture.project, 'airship', 1, 1, 1);
 
-    const stagedSystem = readProjectJsonForTest(fixture.root, fixture.project, 'www/data/System.json') as any;
-    const sourceSystem = readJson(path.join(fixture.project, 'www', 'data', 'System.json')) as any;
+    const savedSystem = readProjectJsonForTest(fixture.root, fixture.project, 'www/data/System.json') as any;
     assert.deepEqual(
       {
-        boat: pickPosition(stagedSystem.boat),
-        ship: pickPosition(stagedSystem.ship),
-        airship: pickPosition(stagedSystem.airship),
+        boat: pickPosition(savedSystem.boat),
+        ship: pickPosition(savedSystem.ship),
+        airship: pickPosition(savedSystem.airship),
       },
       {
         boat: { startMapId: 1, startX: 1, startY: 0 },
@@ -413,45 +362,27 @@ describe('desktop map services', { concurrency: false }, () => {
         airship: { startMapId: 1, startX: 1, startY: 1 },
       },
     );
-    assert.deepEqual(pickPosition(sourceSystem.boat), { startMapId: 0, startX: 0, startY: 0 });
-    assert.deepEqual(pickPosition(sourceSystem.ship), { startMapId: 0, startX: 0, startY: 0 });
-    assert.deepEqual(pickPosition(sourceSystem.airship), { startMapId: 0, startX: 0, startY: 0 });
-
-    assert.equal(applyProjectStaging(fixture.root, fixture.project).applied, true);
-    const appliedSystem = readJson(path.join(fixture.project, 'www', 'data', 'System.json')) as any;
-    assert.deepEqual(pickPosition(appliedSystem.boat), { startMapId: 1, startX: 1, startY: 0 });
-    assert.deepEqual(pickPosition(appliedSystem.ship), { startMapId: 1, startX: 0, startY: 1 });
-    assert.deepEqual(pickPosition(appliedSystem.airship), { startMapId: 1, startX: 1, startY: 1 });
-    assert.equal(appliedSystem.boat.characterName, 'Vehicle');
+    assert.equal(savedSystem.boat.characterName, 'Vehicle');
     assert.throws(() => withTestLanguage(() => setSystemPositionDraft(fixture.root, fixture.project, 'boat', 1, 2, 0)), /x=2\)/);
   });
 
-  test('blocks per-map actions when a draft also changes shared files', () => {
-    updateMapPropertiesDraft(fixture.root, fixture.project, 1, { name: 'Renamed' });
-    assert.throws(() => discardStagedMap(fixture.root, fixture.project, 1));
-    assert.equal(discardProjectStaging(fixture.root, fixture.project).discarded, true);
-    assert.equal((readJson(path.join(fixture.project, 'www', 'data', 'MapInfos.json')) as any[])[1].name, 'Start');
-  });
-
-  test('keeps event edits in draft and tracks staging', () => {
+  test('saves event creation directly', () => {
     const report = createEvent(fixture.root, fixture.project, 1, { name: 'Chest', x: 1, y: 1 });
     assert.equal(report.op, 'create');
     const events = (readMapForTest(fixture.root, fixture.project, 1) as any).events;
     assert.equal(events[report.eventId].name, 'Chest');
-    assert.equal((readJson(fixture.mapFile) as any).events[report.eventId], undefined);
-    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, true);
+    assert.equal((readJson(fixture.mapFile) as any).events[report.eventId].name, 'Chest');
   });
 
-  test('keeps event coordinate updates in the draft file', () => {
+  test('saves event coordinate updates directly', () => {
     const created = createEvent(fixture.root, fixture.project, 1, { name: 'Chest', x: 1, y: 1 });
     const report = updateEvent(fixture.root, fixture.project, 1, created.eventId, { x: 0, y: 1 });
     const live = buildMapPayload(fixture.root, fixture.project, 1);
 
     assert.equal(report.op, 'update');
-    assert.equal((readJson(fixture.mapFile) as any).events[created.eventId], undefined);
+    assert.equal((readJson(fixture.mapFile) as any).events[created.eventId].x, 0);
     assert.equal((live.map.events[created.eventId] as any).x, 0);
     assert.equal((live.map.events[created.eventId] as any).y, 1);
-    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, true);
   });
 
   test('rejects event coordinate updates outside map bounds', () => {
@@ -524,8 +455,9 @@ describe('desktop map services', { concurrency: false }, () => {
     assert.equal(kept.events[1].name, 'Library NPC');
   });
 
-  test('rejects cross-engine library event commands before staging any files', () => {
+  test('rejects cross-engine library event commands before saving any files', () => {
     const local = createFixture();
+    const infosBefore = fs.readFileSync(path.join(local.project, 'www', 'data', 'MapInfos.json'));
     const libraryMapPath = path.join(
       local.root,
       'data/assets/map-visual-library/assets/demo/maps/Map001.json',
@@ -556,10 +488,10 @@ describe('desktop map services', { concurrency: false }, () => {
       }),
       /357.*RPG Maker MV|RPG Maker MV.*357/i,
     );
-    assert.equal(getProjectStagingStatus(local.root, local.project).staged, false);
+    assert.deepEqual(fs.readFileSync(path.join(local.project, 'www', 'data', 'MapInfos.json')), infosBefore);
   });
 
-  test('lists library screenshots, persists selection projection and imports into project staging', () => withTestLanguage(() => {
+  test('lists library screenshots, persists selection projection and imports directly into the project', () => withTestLanguage(() => {
     const library = listMapLibrary(fixture.root);
     assert.equal(library.entries.length, 1);
     assert.match(library.entries[0].screenshotUrl, /^rmmv-asset:\/\/library\//);
@@ -573,38 +505,19 @@ describe('desktop map services', { concurrency: false }, () => {
 
     const imported = importMapDraftFromLibrary(fixture.root, fixture.project, 'demo-map', { parentId: 0 });
     assert.equal(imported.mapId, 2);
-    assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'data', 'Map002.json')), false);
+    assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'data', 'Map002.json')), true);
     const importedMap = readMapForTest(fixture.root, fixture.project, 2) as any;
     const tilesetsAfter = readProjectJsonForTest(fixture.root, fixture.project, 'www/data/Tilesets.json') as any[];
     const importedTileset = tilesetsAfter[importedMap.tilesetId];
     const namespacedTile = String(importedTileset.tilesetNames.find((name: string) => name && name.includes('Imported_A1')));
     assert.ok(namespacedTile.includes('__Imported_A1'));
     const namespacedTileFile = `${namespacedTile}.png`;
-    assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'img', 'tilesets', namespacedTileFile)), false);
-    assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'img', 'parallaxes', 'Sky.png')), false);
-    const stagedTile = readProjectFileForTest(fixture.root, fixture.project, `www/img/tilesets/${namespacedTileFile}`);
-    assert.ok(stagedTile.startsWith(path.join(fixture.root, 'runtime', 'agent-console-staging')));
-    assert.equal(fs.readFileSync(stagedTile).toString(), 'tileset png');
-    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, true);
-    assert.equal(applyProjectStaging(fixture.root, fixture.project).applied, true);
-    assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'data', 'Map002.json')), true);
     assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'img', 'tilesets', namespacedTileFile)), true);
-    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
+    assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'img', 'parallaxes', 'Sky.png')), true);
+    const savedTile = readProjectFileForTest(fixture.root, fixture.project, `www/img/tilesets/${namespacedTileFile}`);
+    assert.equal(savedTile, path.join(fixture.project, 'www', 'img', 'tilesets', namespacedTileFile));
+    assert.equal(fs.readFileSync(savedTile).toString(), 'tileset png');
   }));
-
-  test('discard removes a newly imported map draft without touching source', () => {
-    const imported = importMapDraftFromLibrary(fixture.root, fixture.project, 'demo-map', { parentId: 0 });
-    const importedMap = readMapForTest(fixture.root, fixture.project, imported.mapId) as any;
-    const tilesetsAfter = readProjectJsonForTest(fixture.root, fixture.project, 'www/data/Tilesets.json') as any[];
-    const namespacedTile = String(tilesetsAfter[importedMap.tilesetId].tilesetNames.find((name: string) => name));
-    assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'data', 'Map002.json')), false);
-    assert.ok(getProjectFileForRead(fixture.root, fixture.project, 'www/data/Map002.json'));
-    assert.ok(getProjectFileForRead(fixture.root, fixture.project, `www/img/tilesets/${namespacedTile}.png`));
-    assert.equal(discardProjectStaging(fixture.root, fixture.project).discarded, true);
-    assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'data', 'Map002.json')), false);
-    assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'img', 'tilesets', `${namespacedTile}.png`)), false);
-    assert.equal(getProjectFileForRead(fixture.root, fixture.project, 'www/data/Map002.json'), null);
-  });
 
   test('library import namespaces tileset PNG when project already has same RTP filename', () => {
     const local = createFixture();
@@ -632,7 +545,7 @@ describe('desktop map services', { concurrency: false }, () => {
     const namespaced = tileset.tilesetNames.find((name: string) => String(name).includes('Outside_A1'));
     assert.ok(namespaced);
     assert.equal(fs.readFileSync(projectTile).toString(), 'project-A');
-    assert.equal(fs.existsSync(path.join(local.project, 'www', 'img', 'tilesets', `${namespaced}.png`)), false);
+    assert.equal(fs.existsSync(path.join(local.project, 'www', 'img', 'tilesets', `${namespaced}.png`)), true);
     assert.equal(fs.readFileSync(readProjectFileForTest(local.root, local.project, `www/img/tilesets/${namespaced}.png`)).toString(), 'source-B');
   });
 
@@ -960,7 +873,7 @@ describe('desktop map services', { concurrency: false }, () => {
 });
 
 function readMapForTest(root: string, project: string, mapId: number): unknown {
-  return readJson(getMapFileForRead(root, project, mapId));
+  return readJson(resolveMapFileForRead(project, mapId));
 }
 
 function readProjectJsonForTest(root: string, project: string, relativePath: string): unknown {
@@ -968,7 +881,7 @@ function readProjectJsonForTest(root: string, project: string, relativePath: str
 }
 
 function readProjectFileForTest(root: string, project: string, relativePath: string): string {
-  const file = getProjectFileForRead(root, project, relativePath);
+  const file = resolveProjectFileForRead(project, relativePath);
   assert.ok(file, `expected project file for ${relativePath}`);
   return file;
 }

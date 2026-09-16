@@ -607,7 +607,6 @@ export interface MapPayload {
     vehiclePositions: Record<Exclude<RmmvSystemPositionTarget, 'player'>, RmmvSystemPosition>;
   };
   previewState: MapPreviewStateCatalog;
-  staging: unknown;
 }
 
 // ---- External map import (from another RPG Maker project) ----
@@ -723,7 +722,7 @@ export interface ExternalMapImportApplyRequest {
 export interface ExternalMapImportApplyResult {
   mapIds: number[];
   warnings: ExternalMapImportWarning[];
-  staging: unknown;
+  write: unknown;
 }
 
 // ---- Replace current map (phase 2) ----
@@ -922,7 +921,6 @@ export interface ManagedAssetDetail {
   relativePath: string;
   url?: string;
   size: number;
-  staged: boolean;
   references: ManagedAssetRef[];
   /** Present only when this detail is the result of a mutation such as rename. */
   changeManifest?: ProjectAssetChangeManifest;
@@ -934,7 +932,6 @@ export interface ProjectAssetReferenceGraphAsset {
   fileName: string;
   relativePath: string;
   size: number;
-  staged: boolean;
 }
 
 export interface ProjectAssetReference {
@@ -1235,45 +1232,13 @@ export interface ProjectManagedEntry {
   value: unknown;
   relativePath: string;
   schema?: RmmvDatabaseEntrySchema;
-  inspection?: ProjectManagedEntryInspection;
-}
-
-export interface ProjectManagedFieldDiff {
-  path: string;
-  before?: unknown;
-  after?: unknown;
-}
-
-export interface ProjectManagedEntryIssue {
-  code: string;
-  severity: 'error' | 'warning';
-  table: string;
-  id?: number;
-  path: string;
-  message: string;
-}
-
-export interface ProjectManagedEntryInspection {
-  staged: boolean;
-  changed: boolean;
-  conflict: boolean;
-  operationId?: string;
-  diffs: ProjectManagedFieldDiff[];
-  issues: ProjectManagedEntryIssue[];
-  limitations: string[];
-}
-
-export interface ProjectManagedEntryRevertResult {
-  reverted: true;
-  entry?: ProjectManagedEntry;
-  staging: unknown;
 }
 
 export interface ProjectManagedEntryResetResult {
   reset: true;
   id: number;
   group: string;
-  staging: unknown;
+  write?: unknown;
 }
 
 export interface ProjectManagedDatabaseResizeResult {
@@ -1281,7 +1246,7 @@ export interface ProjectManagedDatabaseResizeResult {
   group: string;
   previousMaximum: number;
   maximum: number;
-  staging: unknown;
+  write?: unknown;
 }
 
 export type InteractivePlaytestRunStatus =
@@ -1325,7 +1290,6 @@ export interface InteractivePlaytestStartRequest {
   project: string;
   mode: InteractivePlaytestMode;
   sessionId?: string;
-  confirmedStagingHash?: string;
   troopId?: number;
   battlers?: InteractiveBattleTestBattler[];
   battleback1Name?: string;
@@ -1353,14 +1317,6 @@ export interface InteractivePlaytestRuntimeInfo {
   status: 'ready' | 'missing' | 'invalid';
 }
 
-export interface InteractivePlaytestStagingSummary {
-  fileCount: number;
-  operationCount: number;
-  mapCount: number;
-  conflict: boolean;
-  files: string[];
-}
-
 export interface InteractivePlaytestRun {
   runId: string;
   status: InteractivePlaytestRunStatus;
@@ -1379,17 +1335,14 @@ export interface InteractivePlaytestRun {
   signal: string | null;
   error?: string;
   forced: boolean;
-  stagingIncluded: boolean;
   sourceSaveRisk: boolean;
   temporaryProject: boolean;
   troopId?: number;
   troopName?: string;
-  stagedFileCount?: number;
   effectName?: string;
   sceneName?: string;
   sourceUnchanged?: boolean;
   savesUnchanged?: boolean;
-  stagingUnchanged?: boolean;
   temporaryProjectCleaned?: boolean;
   lifecycleOnly: true;
   artifactDir: string;
@@ -1400,10 +1353,7 @@ export interface InteractivePlaytestRun {
 }
 
 export interface InteractivePlaytestResult {
-  confirmationRequired: boolean;
   runtimeSelectionRequired?: InteractivePlaytestRuntimeSelectionRequired;
-  stagingSummary?: InteractivePlaytestStagingSummary;
-  stagingSummaryHash?: string;
   run?: InteractivePlaytestRun;
   error?: string;
 }
@@ -1421,10 +1371,8 @@ export type MapPreviewStatus =
 
 export type MapPreviewLoadStage =
   | 'starting-worker'
-  | 'checking-staged-changes'
   | 'scanning-project'
   | 'copying-project'
-  | 'applying-staged-changes'
   | 'verifying-isolation'
   | 'preparing-runtime'
   | 'waiting-for-engine'
@@ -1447,31 +1395,12 @@ export interface MapPreviewLoadProgress {
   totalBytes?: number;
 }
 
-export type MapPreviewStagingConflictReasonCode =
-  | 'SOURCE_EXISTENCE_CHANGED'
-  | 'SOURCE_HASH_CHANGED'
-  | 'DRAFT_MISSING'
-  | 'DRAFT_HASH_CHANGED';
-
-export interface MapPreviewStagingConflictFile {
-  relativePath: string;
-  reasons: MapPreviewStagingConflictReasonCode[];
-}
-
-export interface MapPreviewPreflightFailure {
-  code: 'staging-conflict';
-  stage: 'staging-preflight';
-  conflictCount: number;
-  conflicts: MapPreviewStagingConflictFile[];
-}
-
 export type MapPreviewFailureCode =
   | 'runtime-handshake-timeout'
   | 'runtime-resume-failed'
   | 'map-render-failed'
   | 'isolation-preparation-failed'
-  | 'preview-debug-marker-conflict'
-  | 'staging-conflict';
+  | 'preview-debug-marker-conflict';
 
 export interface MapPreviewFailureDetail {
   stage: string;
@@ -1484,7 +1413,6 @@ export interface MapPreviewFailureDetail {
   resources?: string[];
   message: string;
   runtimeOutput?: string;
-  stagingConflicts?: MapPreviewStagingConflictFile[];
 }
 
 export interface MapPreviewOverrides {
@@ -1580,7 +1508,6 @@ export interface MapPreviewSession {
 export interface MapPreviewResult {
   session?: MapPreviewSession;
   runtimeSelectionRequired?: InteractivePlaytestRuntimeSelectionRequired;
-  preflightFailure?: MapPreviewPreflightFailure;
   error?: string;
 }
 
@@ -1680,7 +1607,6 @@ export interface RmmvVerifyProbeEvidence {
   savesExcluded: boolean;
   sourceUnchanged: boolean;
   savesUnchanged: boolean;
-  stagingUnchanged: boolean;
   temporaryProjectCleaned: boolean;
 }
 
@@ -1694,9 +1620,6 @@ export interface RmmvVerifyResult {
   requestedMapId?: number;
   requestedX?: number;
   requestedY?: number;
-  stagedFileCount: number;
-  stagedFiles: string[];
-  stagingDigest: string;
   evidence: RmmvVerifyProbeEvidence;
   blockers: string[];
   review: string[];
@@ -1904,8 +1827,6 @@ export interface ManagedPluginFile {
   fileName: string;
   relativePath: string;
   exists: boolean;
-  staged: boolean;
-  deleted: boolean;
   size: number | null;
   header: PluginHeaderMetadata;
 }
@@ -2117,7 +2038,6 @@ export interface EventReport {
   mapId: number;
   eventId: number;
   event: Record<string, unknown> | null;
-  staging: unknown;
   mapFile?: string;
   before?: unknown;
   after?: unknown;

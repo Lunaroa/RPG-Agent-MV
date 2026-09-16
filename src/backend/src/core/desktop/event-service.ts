@@ -5,7 +5,7 @@ import {
   updateMapEvent,
 } from '../workflow/map/map-event-edit.ts';
 import { createPlacementEvent as createPlacementEventImpl } from './event-placement-service.ts';
-import { withStagedMapMutation } from './staging-service.ts';
+import { withProjectMapMutation } from './project-file-service.ts';
 import type { CreatePlacementEventPayload } from './event-placement-service.ts';
 import {
   assertStoryProjectInitialized,
@@ -44,13 +44,13 @@ export function createEvent(
   actor: StorySyncActor = DESKTOP_EVENT_EDITOR_ACTOR,
 ) {
   return runEventMutation(project, [mapId], actor, 'create', () => {
-    const staged = withStagedMapMutation(
+    const written = withProjectMapMutation(
       workflowRoot,
       project,
       mapId,
       (target) => createMapEvent({ project: target.project, mapId, event }),
     );
-    return { ...staged.result, staging: staged.staging };
+    return { ...written.result, write: written.write };
   });
 }
 
@@ -73,13 +73,13 @@ export function updateEvent(
   actor: StorySyncActor = DESKTOP_EVENT_EDITOR_ACTOR,
 ) {
   return runEventMutation(project, [mapId], actor, 'update', () => {
-    const staged = withStagedMapMutation(
+    const written = withProjectMapMutation(
       workflowRoot,
       project,
       mapId,
       (target) => updateMapEvent({ project: target.project, mapId, eventId, event }),
     );
-    return { ...staged.result, staging: staged.staging };
+    return { ...written.result, write: written.write };
   });
 }
 
@@ -91,13 +91,13 @@ export function removeEvent(
   actor: StorySyncActor = DESKTOP_EVENT_EDITOR_ACTOR,
 ) {
   return runEventMutation(project, [mapId], actor, 'remove', () => {
-    const staged = withStagedMapMutation(
+    const written = withProjectMapMutation(
       workflowRoot,
       project,
       mapId,
       (target) => deleteMapEvent({ project: target.project, mapId, eventId }),
     );
-    return { ...staged.result, staging: staged.staging };
+    return { ...written.result, write: written.write };
   });
 }
 
@@ -109,12 +109,12 @@ export function duplicateEvent(
   actor: StorySyncActor = DESKTOP_EVENT_EDITOR_ACTOR,
 ) {
   return runEventMutation(project, [mapId], actor, 'duplicate', () => {
-    const staged = withStagedMapMutation(
+    const written = withProjectMapMutation(
       workflowRoot,
       project,
       mapId,
       (target) => duplicateMapEvent({ project: target.project, mapId, eventId }),
     );
-    return { ...staged.result, staging: staged.staging };
+    return { ...written.result, write: written.write };
   });
 }

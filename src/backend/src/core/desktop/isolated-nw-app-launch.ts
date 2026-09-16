@@ -13,7 +13,7 @@ const ENTRY_MAX_BYTES = 512 * 1024
 const SESSION_ID_MAX_LENGTH = 256
 
 export type IsolatedNwAppKind = 'map-preview'
-export type IsolatedNwProjectLocalRuntimeLocation = 'source-project' | 'staged-project'
+export type IsolatedNwProjectLocalRuntimeLocation = 'source-project' | 'isolated-project'
 
 export interface IsolatedNwLaunchEvidencePlan {
   readonly schemaVersion: '1.0.0'
@@ -21,7 +21,7 @@ export interface IsolatedNwLaunchEvidencePlan {
   readonly launchStyle: 'embedded' | 'external'
   readonly runtimeSource: 'project-local' | 'configured' | 'official-install'
   readonly projectLocalRuntimeLocation: IsolatedNwProjectLocalRuntimeLocation
-  readonly executableRole: 'copied-project-runtime' | 'staged-project-runtime' | 'external-runtime'
+  readonly executableRole: 'copied-project-runtime' | 'isolated-project-runtime' | 'external-runtime'
   readonly argumentRoles: readonly ('session-profile' | 'nwapp-temporary-project' | 'test')[]
   readonly checks: {
     readonly sourceTemporaryDistinct: boolean
@@ -152,7 +152,7 @@ export function writeIsolatedNwAppPackage(
   options: {
     window?: IsolatedNwWindowPatch
     disableRafThrottling?: boolean
-    stagedIndexSource?: string
+    injectedIndexSource?: string
   } = {},
 ): IsolatedNwAppPackageResult {
   const sourceBytes = Buffer.byteLength(entrySource, 'utf8')
@@ -163,7 +163,7 @@ export function writeIsolatedNwAppPackage(
   ordinaryDirectoryRealpath(plan.resourceRoot, 'Isolated NW resource root', plan.projectRoot)
   ordinaryDirectoryRealpath(plan.entryDirectory, 'Isolated NW entry directory', plan.projectRoot)
   const activeIndexSource = boundedOrdinaryFileSource(plan.indexPath, 'Isolated NW index.html', INDEX_MAX_BYTES, plan.projectRoot)
-  const expectedIndexSource = options.stagedIndexSource ?? plan.indexSource
+  const expectedIndexSource = options.injectedIndexSource ?? plan.indexSource
   if (activeIndexSource !== expectedIndexSource) throw new Error('Isolated NW index.html changed after validation.')
   const currentPackageSource = boundedOrdinaryFileSource(plan.packagePath, 'Isolated NW package.json', PACKAGE_MAX_BYTES, plan.projectRoot)
   if (currentPackageSource !== plan.packageSource) throw new Error('Isolated NW package.json changed after validation.')
@@ -195,7 +195,7 @@ export function writeIsolatedNwAppPackage(
     fs.writeFileSync(plan.packagePath, writtenPackageSource, 'utf8')
   } catch (error) {
     if (entryWritten) {
-      try { fs.rmSync(plan.entryPath, { force: true }) } catch { /* Preserve the package staging failure. */ }
+      try { fs.rmSync(plan.entryPath, { force: true }) } catch { /* Preserve the package preparation failure. */ }
     }
     throw error
   }
@@ -206,7 +206,7 @@ export function writeIsolatedNwAppPackage(
   const persistedEntrySource = boundedOrdinaryFileSource(plan.entryPath, 'Isolated NW entry script', ENTRY_MAX_BYTES, plan.projectRoot)
   if (persistedPackageSource !== writtenPackageSource
     || persistedEntrySource !== entrySource) {
-    throw new Error('Isolated NW active package changed after staging.')
+    throw new Error('Isolated NW active package changed after preparation.')
   }
   return {
     packagePath: plan.packagePath,
@@ -348,10 +348,10 @@ function isolatedNwExecutable(
   projectLocalRuntimeLocation: IsolatedNwProjectLocalRuntimeLocation,
 ): { path: string; role: IsolatedNwLaunchEvidencePlan['executableRole'] } {
   if (runtime.source === 'project-local') {
-    if (projectLocalRuntimeLocation === 'staged-project') {
+    if (projectLocalRuntimeLocation === 'isolated-project') {
       return {
-        path: ordinaryFileRealpath(runtime.executable, 'Staged project-local NW executable', temporaryProject),
-        role: 'staged-project-runtime',
+        path: ordinaryFileRealpath(runtime.executable, 'Isolated project-local NW executable', temporaryProject),
+        role: 'isolated-project-runtime',
       }
     }
     const runtimeExecutable = ordinaryFileRealpath(runtime.executable, 'Source project-local NW executable', sourceProject)

@@ -149,19 +149,19 @@
       "kind": "mcp",
       "scope": "project",
       "layer": "rmmv",
-      "title": "RMMV 数据库暂存",
-      "description": "校验、预演、暂存或放弃数据库批量修改；不会直接写入源工程",
+      "title": "RMMV 数据库预演",
+      "description": "校验或预演数据库批量修改；不会写入源工程",
       "readOnly": false,
       "riskLevel": "normal",
       "defaultAllow": true
     },
     {
-      "id": "rmmv_RmmvDatabaseApply",
+      "id": "rmmv_RmmvDatabaseCommit",
       "kind": "mcp",
       "scope": "project",
       "layer": "rmmv",
-      "title": "RMMV 数据库应用",
-      "description": "在原生审批后仅按 operationId 应用一项已暂存数据库操作",
+      "title": "RMMV 数据库保存",
+      "description": "在原生审批后核对预演摘要和源文件版本，并将同一批修改原子保存到源工程",
       "readOnly": false,
       "riskLevel": "high",
       "defaultAllow": true
@@ -172,7 +172,7 @@
       "scope": "project",
       "layer": "rmmv",
       "title": "RMMV 地图编辑",
-      "description": "通过 MCP 调用地图创建、属性更新、复制、删除、绘制和 staging 操作",
+      "description": "通过 MCP 直接保存地图创建、属性更新、复制、删除和绘制操作",
       "readOnly": false,
       "riskLevel": "normal",
       "defaultAllow": true
@@ -183,7 +183,7 @@
       "scope": "runtime",
       "layer": "rmmv",
       "title": "RMMV 隔离试玩验证",
-      "description": "仅主 Agent 可用：在排除存档的隔离副本中覆盖当前全部暂存并执行严格、有界的试玩探针",
+      "description": "仅主 Agent 可用：复制当前已保存的源工程（排除存档）并执行严格、有界的试玩探针",
       "readOnly": false,
       "riskLevel": "normal",
       "defaultAllow": true

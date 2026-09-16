@@ -75,9 +75,6 @@ onMounted(() => {
     <span class="sb-fill" />
     <span v-if="ui.sbContextText" class="sb-item">{{ ui.sbContextText }}</span>
     <span v-if="!ui.sbHideZoom" class="sb-item">{{ ui.sbZoom }}%</span>
-    <span class="sb-item" :class="{ 'sb-warn': ui.sbStagingDirty }">
-      {{ ui.sbStagingDirty ? t('status.staging.dirty') : t('status.staging.clean') }}
-    </span>
     <span v-if="ui.sbPlacementActive && ui.sbPlacementHint" class="sb-item sb-placement">
       {{ ui.sbPlacementHint }}
     </span>

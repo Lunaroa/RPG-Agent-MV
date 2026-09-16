@@ -1,20 +1,33 @@
-# Staging, Apply, And Revert
+# Direct Save, Review, And Recovery
 
 [Back to User Guide](../README.md)
 
-RPG Agent MV keeps generated changes reviewable before they are written back to the game project. Saving a draft to staging does not mutate the source project.
+RPG Agent MV now uses direct save. Once an edit is confirmed, map, event, database, plugin, and asset changes are written directly to the selected game project. There is no separate project staging area and no Apply All step.
 
-Staged changes represent draft edits produced by the desktop app or the Agent. Database operations also bind ownership, session, plan hash, affected files, and source hashes. Review field differences and validation errors before applying. Do not edit staged files by hand.
+## Save Behavior
 
-Applying writes the staged change into the selected RPG Maker MV or supported MZ project. Agent database operations require approval bound to the current session and operation. Desktop Apply All lists included Agent operations and runs the same preflight. Multi-file changes are all-or-nothing.
+- A single-file edit uses atomic replacement so a partial JSON document is not left in the project.
+- A multi-file operation either writes every file or writes none of them.
+- The app checks the disk version before saving. If RPG Maker or another program changed the file, saving stops and asks for a reload instead of guessing how to merge.
+- Inspector undo and redo cover only the current unsaved edit session. After saving, use Git version management or your own project backup for recovery.
 
-Discarding removes the staged draft and leaves the source project unchanged. Database and common-event Inspector actions can also revert only the current staged entry without removing unrelated edits in the same file.
+Do not edit the same data file in RPG Maker and RPG Agent MV at the same time. If an external-change warning appears, reload project facts before recreating the edit.
 
-Source drift, draft drift, or ownership conflicts block apply. RPG Agent MV does not automatically merge or repair these conflicts.
+## Review
 
-The global **Play** action runs only the source project from the configured `System.json` start location and excludes staging. It checks the project-local runtime first. A source-only MZ project uses a selected `nwjs-win/nw.exe`; a source-only MV project uses the original editor playtest runner at `nwjs-win-test/Game.exe`. Right-click Play to inspect or change the current engine's runtime. The runtime stays in its installation directory. MZ 1.10.0 remains the fully validated baseline; another recognizable MZ version is only allowed to attempt a normal playtest launch. The app does not scan arbitrary game folders or download a runner. The game may write to `save/`. When staging exists, its summary must be confirmed again whenever it changes.
+Direct save does not remove the review step. After a task, check the Agent's change summary and blockers, inspect the actual map or database result, review the Git diff, and run the relevant playtest. Mechanical checks do not replace human review of story, presentation, plugin behavior, or playability.
 
-Agent verification instead uses an isolated system-temporary copy, excludes saves and the MZ runtime, overlays all current staging, and launches that temporary app with the validated `Game.exe` that remains in the source project. It returns verified only when its screenshot, map, coordinate, ready, idle, JavaScript-error, source-integrity, save-integrity, and cleanup evidence all pass. Interactive playtest cards prove process lifecycle only, not story or playability quality.
+The existing **Version Management** feature tracks Git project history. **Game Version** tracks the player-facing release version. They are independent systems.
 
-When version management is available, create or confirm a clean baseline before broad edits. Do not use a full test run as a substitute for reviewing the actual project diff.
+## Playtest And Isolated Verification
 
+The global **Play** action launches the saved source project, so saved edits are visible immediately. The game may write to its own `save/` directory.
+
+Agent verification creates a system-temporary copy from the saved source and excludes player saves. It runs bounded structural and runtime probes, then checks that the source project and save data were not changed by the probe. A passed probe is not human acceptance of the final game.
+
+## Recovery
+
+1. Before saving, use the editor's undo or redo controls.
+2. After saving with Git version management enabled, inspect the diff, preserve the current state if needed, and restore only the intended files from a known version.
+3. Without version history, restore from your own project backup or make an explicit reverse edit.
+4. On an external-edit conflict, reload first. Repeated save attempts do not merge the files.

@@ -18,12 +18,10 @@ import {
 import type { NwjsPlayableProbeResult } from '../workflow/probe/nwjs-playable-probe.ts';
 import {
   cleanupIsolatedProject,
-  emptyIsolatedStagingSnapshot,
   IsolatedProjectPreparationError,
-  prepareIsolatedStagedProject,
+  prepareIsolatedProject,
   verifyIsolatedSourceState,
   type IsolatedProjectPreparation,
-  type IsolatedStagingSnapshot,
 } from './isolated-project-preparation.ts';
 import {
   createRpgMakerMZRuntimeOutputSanitizer,
@@ -103,7 +101,6 @@ export async function runIsolatedRmmvPlaytestProbe(
   fs.mkdirSync(artifactDir, { recursive: true });
 
   let timeoutMs = DEFAULT_TIMEOUT_MS;
-  let stagingBefore: IsolatedStagingSnapshot = emptyIsolatedStagingSnapshot();
   let preparation: IsolatedProjectPreparation | null = null;
   let requestedStart: RequestedStart = { mapId: 0, x: 0, y: 0 };
   let temporaryProject = '';
@@ -116,7 +113,7 @@ export async function runIsolatedRmmvPlaytestProbe(
   let engine: RpgMakerEngine = 'rpg-maker-mv';
   let runtimeExecutable = '';
   let runtimeLaunchStyle: 'embedded' | 'external' = 'embedded';
-  let isolationState = { sourceUnchanged: true, savesUnchanged: true, stagingUnchanged: true } as ReturnType<typeof verifyIsolatedSourceState>;
+  let isolationState = { sourceUnchanged: true, savesUnchanged: true } as ReturnType<typeof verifyIsolatedSourceState>;
 
   try {
     timeoutMs = normalizeTimeout(options.timeoutMs);
@@ -132,7 +129,7 @@ export async function runIsolatedRmmvPlaytestProbe(
       runtimeExecutable = resolveRpgMakerMZProjectRuntime(project).executable;
       runtimeLaunchStyle = 'external';
     }
-    preparation = prepareIsolatedStagedProject(workflowRoot, project, {
+    preparation = prepareIsolatedProject(workflowRoot, project, {
       temporaryPrefix: 'rmmv-agent-verify-',
       ...(dependencies.temporaryProjectPath ? { temporaryProjectPath: dependencies.temporaryProjectPath } : {}),
       ...(engine === 'rpg-maker-mz'
@@ -140,7 +137,6 @@ export async function runIsolatedRmmvPlaytestProbe(
         : {}),
     });
     project = preparation.sourceProject;
-    stagingBefore = preparation.staging;
     temporaryProject = preparation.temporaryProject;
     savesExcluded = preparation.savesExcluded;
     requestedStart = configureTemporaryStart(temporaryProject, options);
@@ -187,15 +183,9 @@ export async function runIsolatedRmmvPlaytestProbe(
 
   const temporaryProjectCleaned = !temporaryProject || !fs.existsSync(temporaryProject);
   if (!temporaryProjectCleaned && !cleanupError) cleanupError = 'Temporary project still exists after cleanup.';
-  const { sourceUnchanged, savesUnchanged, stagingUnchanged } = isolationState;
-  if ('stagingError' in isolationState && isolationState.stagingError) {
-    blockers.push(`Staging preflight changed or conflicted during probe: ${isolationState.stagingError}`);
-  }
+  const { sourceUnchanged, savesUnchanged } = isolationState;
   if (!sourceUnchanged) blockers.push('Source project content changed during the isolated probe.');
   if (!savesUnchanged) blockers.push('Source project save content changed during the isolated probe.');
-  if (!stagingUnchanged && !blockers.some((item) => item.startsWith('Staging preflight'))) {
-    blockers.push('Staged project content changed during the isolated probe.');
-  }
 
   const evidence = deriveStrictEvidence(
     workerResponse?.run,
@@ -204,7 +194,6 @@ export async function runIsolatedRmmvPlaytestProbe(
     savesExcluded,
     sourceUnchanged,
     savesUnchanged,
-    stagingUnchanged,
     temporaryProjectCleaned,
   );
 
@@ -248,9 +237,6 @@ export async function runIsolatedRmmvPlaytestProbe(
     ...(options.mapId !== undefined ? { requestedMapId: options.mapId } : {}),
     ...(options.x !== undefined ? { requestedX: options.x } : {}),
     ...(options.y !== undefined ? { requestedY: options.y } : {}),
-    stagedFileCount: stagingBefore.files.length,
-    stagedFiles: stagingBefore.files.map((entry) => entry.relativePath),
-    stagingDigest: stagingBefore.digest,
     evidence,
     blockers: dedupeStrings(blockers),
     review: dedupeStrings(review),
@@ -301,7 +287,6 @@ function deriveStrictEvidence(
   savesExcluded: boolean,
   sourceUnchanged: boolean,
   savesUnchanged: boolean,
-  stagingUnchanged: boolean,
   temporaryProjectCleaned: boolean,
 ): RmmvVerifyProbeEvidence {
   const raw = readRawProbe(run);
@@ -341,7 +326,6 @@ function deriveStrictEvidence(
     savesExcluded: Boolean(temporaryProject) && savesExcluded,
     sourceUnchanged,
     savesUnchanged,
-    stagingUnchanged,
     temporaryProjectCleaned,
   };
 }
@@ -366,7 +350,6 @@ const STRICT_BOOLEAN_EVIDENCE = new Set([
   'savesExcluded',
   'sourceUnchanged',
   'savesUnchanged',
-  'stagingUnchanged',
   'temporaryProjectCleaned',
 ]);
 
@@ -383,7 +366,6 @@ function isReviewable(run: NwjsPlayableProbeResult, evidence: RmmvVerifyProbeEvi
     && evidence.savesExcluded
     && evidence.sourceUnchanged
     && evidence.savesUnchanged
-    && evidence.stagingUnchanged
     && evidence.temporaryProjectCleaned;
 }
 

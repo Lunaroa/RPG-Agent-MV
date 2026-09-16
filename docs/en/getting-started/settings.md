@@ -17,5 +17,5 @@ Language settings control product UI language. RPG Agent MV supports `zh-CN` and
 
 Permission settings define what the Agent runtime may read or write. The Agent should work inside the selected RPG Maker MV or supported MZ project and the RPG Agent MV product workspace. It should not inspect unrelated user folders or global configuration paths.
 
-Rules and preferences shape Agent behavior. Product rules protect controlled event placement, staged writes, reviewable changes, and fail-fast behavior when required context is missing.
+Rules and preferences shape Agent behavior. Product rules protect controlled event placement, reviewed direct saves, recoverable changes, and fail-fast behavior when required context is missing.
 

@@ -1,18 +1,11 @@
 import fs from 'node:fs';
 
-import type {
-  MapPreviewLoadProgress,
-  MapPreviewPreflightFailure,
-} from '../../../../contract/types.ts';
+import type { MapPreviewLoadProgress } from '../../../../contract/types.ts';
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { writeJsonAtomic } from '../rmmv/json.ts';
 import { prepareIsolatedMapPreviewProject } from './isolated-project-preparation.ts';
 import type { IsolatedProjectOwnershipChallenge } from './isolated-project-attestation.ts';
-import {
-  inspectMapPreviewStagingConflict,
-  mapPreviewStagingConflictFromError,
-} from './map-preview-staging-conflict.ts';
 
 export interface MapPreviewPreparationWorkerRequest {
   taskId: string;
@@ -28,7 +21,6 @@ export type MapPreviewPreparationWorkerResponse =
     ok: false;
     stage: string;
     error: string;
-    preflightFailure?: MapPreviewPreflightFailure;
   };
 
 export type MapPreviewPreparationWorkerMessage =
@@ -47,21 +39,11 @@ function errorMessage(error: unknown): string {
 function writeFailure(
   responsePath: string,
   error: unknown,
-  request?: MapPreviewPreparationWorkerRequest,
 ): void {
-  let preflightFailure = mapPreviewStagingConflictFromError(error);
-  if (!preflightFailure && request) {
-    try {
-      preflightFailure = inspectMapPreviewStagingConflict(request.workflowRoot, request.project);
-    } catch {
-      // Preserve the original preparation failure when staging cannot be inspected.
-    }
-  }
   writeJsonAtomic(responsePath, {
     ok: false,
     stage: currentStage,
     error: errorMessage(error),
-    ...(preflightFailure ? { preflightFailure } : {}),
   } satisfies MapPreviewPreparationWorkerResponse);
 }
 
@@ -90,7 +72,7 @@ async function main(): Promise<void> {
     currentStage = 'write-worker-response';
     writeJsonAtomic(responsePath, { ok: true, preparation } satisfies MapPreviewPreparationWorkerResponse);
   } catch (error) {
-    writeFailure(responsePath, error, request);
+    writeFailure(responsePath, error);
     process.exitCode = 1;
   } finally {
     closeDatabase();

@@ -7,7 +7,6 @@ import { resolveInstallRoot, resolveUserDataRoot } from '../../../backend/src/co
 import { initFileLogger } from '../../../backend/src/core/file-log.ts';
 import {
   cleanupIpcHandlers,
-  confirmProjectStagingBeforeClose,
   currentProductLanguage,
   getWorkspaceSettings,
   initializeIpcHandlers,
@@ -218,11 +217,6 @@ async function createWindow() {
         const win = mainWindow!;
         const rendererProceed = await requestRendererCloseResolution(win);
         if (!rendererProceed || win.isDestroyed()) {
-          closeGuardRunning = false;
-          return;
-        }
-        const confirmed = await confirmProjectStagingBeforeClose(userDataRoot, win);
-        if (!confirmed || win.isDestroyed()) {
           closeGuardRunning = false;
           return;
         }

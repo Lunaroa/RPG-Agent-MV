@@ -24,7 +24,6 @@ export interface RmmvDbEntryResult {
   value: unknown;
   schema: RmmvDbEntrySchema;
   relativePath: string;
-  staged: boolean;
   contentHash: string;
 }
 
@@ -69,7 +68,6 @@ export function readRmmvDbEntry(
     value,
     schema: schemaPayload(schema),
     relativePath: effective.relativePath,
-    staged: effective.staged,
     contentHash: effective.contentHash,
   };
 }

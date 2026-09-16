@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { computed, onActivated, onDeactivated, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus';
-import { WarningFilled } from '@element-plus/icons-vue';
 import { useProjectStore } from '../stores/project';
 import { useRoute, useRouter } from 'vue-router';
 import {
   commonEvents as commonEventsApi,
-  maps as mapsApi,
   projectManagement,
   workspaceSurfaces,
   playtest,
@@ -18,19 +16,12 @@ import {
 } from '../api/client';
 import { cloneDraft } from '../utils/clone-draft';
 import { createDraftHistory } from '../utils/draft-history';
-import {
-  readStagingConflictDetails,
-  stagingConflictReasonLabel,
-  type MapPreviewStagingConflictFile,
-} from '../utils/staging-conflicts';
-import { useWorkbenchUiStore } from '../stores/workbenchUi';
 import { usePmEventEditor } from '../composables/usePmEventEditor';
 import StructuredFieldsEditor from '../components/console/StructuredFieldsEditor.vue';
 import CommonEventDetailEditor from '../components/console/CommonEventDetailEditor.vue';
 import DatabaseEntryDetailEditor from '../components/console/DatabaseEntryDetailEditor.vue';
 import SystemNamedEntryDetailEditor from '../components/console/SystemNamedEntryDetailEditor.vue';
 import BattleTestSetupDialog from '../components/console/BattleTestSetupDialog.vue';
-import StagedEntryInspection from '../components/console/StagedEntryInspection.vue';
 import ConsoleSearchInput from '../components/console/ConsoleSearchInput.vue';
 import { useI18n } from '../i18n';
 import { formatUserFacingErrorMessage } from '../utils/user-facing-error';
@@ -40,7 +31,6 @@ import {
   newCommonEventName,
 } from '../utils/consoleStoryLocalization';
 import { databaseGroupLabel } from '../utils/rmmvDatabaseLocalization';
-import { parseProjectStagingSummary, type ProjectStagingSummary } from '../utils/projectStaging';
 import { LatestAsyncCoordinator } from '../utils/latestAsyncCoordinator';
 import { normalizeDatabaseSection } from '../utils/projectManagementRoute';
 import {
@@ -54,139 +44,12 @@ import {
 type PmDetail = { kind: 'managed'; entry: ProjectManagedEntry };
 
 const projectStore = useProjectStore();
-const workbenchUi = useWorkbenchUiStore();
 const route = useRoute();
 const router = useRouter();
 const { language, t } = useI18n();
 
-const stagingDirty = ref(false);
-const stagingBusy = ref(false);
-
-function isProjectStagingDirty(status: unknown): boolean {
-  if (!status || typeof status !== 'object') return false;
-  return Boolean((status as { staged?: boolean }).staged);
-}
-
-async function confirmAgentOperations(summary: ProjectStagingSummary): Promise<boolean> {
-  if (!summary.operations.length) return true;
-  const operations = summary.operations
-    .map((operation) => t('story.agentOperationSummary', {
-      operationId: operation.operationId,
-      count: operation.files.length,
-    }))
-    .join('\n');
-  try {
-    await ElMessageBox.confirm(
-      t('story.applyAgentOperationsConfirm', { operations }),
-      t('story.applyAgentOperationsTitle'),
-      { type: 'warning' },
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function refreshStagingStatus() {
-  if (!projectStore.currentProject) {
-    stagingDirty.value = false;
-    workbenchUi.sbStagingDirty = false;
-    return;
-  }
-  try {
-    const status = await mapsApi.projectStaging(projectStore.currentProject);
-    stagingDirty.value = isProjectStagingDirty(status);
-    workbenchUi.sbStagingDirty = stagingDirty.value;
-  } catch {
-    /* staging status does not block project management */
-  }
-}
-
-async function applyProjectStaging() {
-  if (!projectStore.currentProject || stagingBusy.value || surfaceWriteLocked.value) return;
-  stagingBusy.value = true;
-  detailError.value = '';
-  stagingSaveConflicts.value = null;
-  try {
-    const status = await mapsApi.projectStaging(projectStore.currentProject);
-    const summary = parseProjectStagingSummary(status);
-    if (!await confirmAgentOperations(summary)) return;
-    const result = await mapsApi.applyProjectStaging(
-      projectStore.currentProject,
-      summary.operations.map((operation) => operation.operationId),
-    ) as { canceled?: boolean };
-    if (result?.canceled) return;
-    await refreshStagingStatus();
-    await loadData();
-  } catch (applyError) {
-    detailError.value = stagingConflictMessage(applyError) ?? (applyError as Error).message;
-  } finally {
-    stagingBusy.value = false;
-  }
-}
-
-async function discardProjectStaging() {
-  if (!projectStore.currentProject || stagingBusy.value || surfaceWriteLocked.value) return;
-  stagingBusy.value = true;
-  detailError.value = '';
-  stagingSaveConflicts.value = null;
-  try {
-    await mapsApi.discardProjectStaging(projectStore.currentProject);
-    pmDetail.value = null;
-    resetDetailDraft(null);
-    await refreshStagingStatus();
-    await loadData();
-  } catch (discardError) {
-    detailError.value = (discardError as Error).message;
-  } finally {
-    stagingBusy.value = false;
-  }
-}
-
-async function revertCurrentStagedEntry() {
-  if (pmDetail.value?.kind !== 'managed' || !projectStore.currentProject || detailBusy.value || surfaceWriteLocked.value) return;
-  const current = pmDetail.value.entry;
-  detailBusy.value = true;
-  detailError.value = '';
-  try {
-    const result = await projectManagement.revertEntry({
-      kind: current.kind,
-      group: current.group,
-      id: current.id,
-    }, projectStore.currentProject);
-    if (result.entry) {
-      pmDetail.value = { kind: 'managed', entry: result.entry };
-      resetDetailDraft(cloneDraft(result.entry.value));
-    } else {
-      closeDetail();
-    }
-    resetCatalog();
-    await ensureCatalog();
-    await loadData();
-    await refreshStagingStatus();
-  } catch (revertError) {
-    detailError.value = (revertError as Error).message;
-  } finally {
-    detailBusy.value = false;
-  }
-}
-
-
 function formatErrorText(errorValue: unknown): string {
   return formatUserFacingErrorMessage(errorValue, 'general', language.value);
-}
-
-function stagingConflictMessage(errorValue: unknown): string | null {
-  const conflicts = readStagingConflictDetails(errorValue);
-  if (!conflicts) return null;
-  stagingSaveConflicts.value = conflicts.conflicts;
-  const parsedMessage = errorValue instanceof Error ? errorValue.message.split('\n')[0] : '';
-  return parsedMessage.replace(/^\[STAGING_CONFLICT\]\s*/i, '');
-}
-
-function stagingSaveConflictSummary(): string {
-  const count = stagingSaveConflicts.value?.length || 0;
-  return t(count === 1 ? 'story.stagingConflict.one' : 'story.stagingConflict.many', { count });
 }
 
 const loading = ref(false);
@@ -228,7 +91,6 @@ async function loadData(startVersion?: string) {
     }, project);
     if (!settled.unchanged) throw new Error(t('story.workspaceChangedDuringLoad'));
     surfaceVersion = settled.version;
-    await refreshStagingStatus();
     if (!overviewCoordinator.isCurrent(token) || projectStore.currentProject !== project) return;
     overview.value = nextOverview;
   } catch (e) {
@@ -288,7 +150,6 @@ const pmDetail = ref<PmDetail | null>(null);
 const detailDraft = ref<unknown>(null);
 const detailBusy = ref(false);
 const detailError = ref('');
-const stagingSaveConflicts = ref<MapPreviewStagingConflictFile[] | null>(null);
 const battleTestDialogVisible = ref(false);
 const battleTestBusy = ref(false);
 const temporaryBattleback1Name = ref('');
@@ -311,11 +172,6 @@ const hasUnsavedDraft = computed(() => {
   void detailDraft.value;
   return supportsDraftHistory.value && draftHistory.dirty;
 });
-const canRevertCurrentStagedEntry = computed(() => (
-  pmDetail.value?.kind === 'managed'
-  && Boolean(pmDetail.value.entry.inspection?.changed)
-  && !pmDetail.value.entry.inspection?.operationId
-));
 const currentTroopName = computed(() => {
   const entry = pmDetail.value?.kind === 'managed' ? pmDetail.value.entry : null;
   if (!entry || entry.group !== 'Troops') return '';
@@ -414,7 +270,6 @@ watch(() => projectStore.currentProject, (project) => {
   selectedDbGroup.value = dbGroupForSection(normalizeDatabaseSection(route.query.section));
   closeDetail();
   resetCatalog();
-  stagingDirty.value = false;
   battleTestDialogVisible.value = false;
   temporaryBattleback1Name.value = '';
   temporaryBattleback2Name.value = '';
@@ -427,7 +282,6 @@ watch(() => projectStore.currentProject, (project) => {
   refreshing.value = false;
   draftConflict.value = false;
   if (project && surfaceActive) void activateProjectManagement();
-  else workbenchUi.sbStagingDirty = false;
 });
 
 watch(editorCatalog, (catalog) => {
@@ -881,7 +735,6 @@ async function pasteDbEntry(id: number) {
     resetDetailDraft(cloneDraft(updated.value));
     resetCatalog();
     await loadData();
-    await refreshStagingStatus();
   } catch (pasteError) {
     detailError.value = (pasteError as Error).message;
   } finally {
@@ -903,7 +756,6 @@ async function clearDbEntry(id: number) {
     resetDetailDraft(null);
     resetCatalog();
     await loadData();
-    await refreshStagingStatus();
   } catch (clearError) {
     detailError.value = (clearError as Error).message;
   } finally {
@@ -943,7 +795,7 @@ async function createSelectedDatabaseEntry() {
 async function changeSelectedDatabaseMaximum() {
   const group = selectedDbGroup.value;
   const limit = selectedDbMaximumLimit.value;
-  if (!limit || !projectStore.currentProject || detailBusy.value || stagingBusy.value || surfaceWriteLocked.value) return;
+  if (!limit || !projectStore.currentProject || detailBusy.value || surfaceWriteLocked.value) return;
   try {
     const answer = await ElMessageBox.prompt(
       t('story.databaseMaximumPrompt', { current: selectedDbCapacity.value, limit }),
@@ -973,7 +825,6 @@ async function changeSelectedDatabaseMaximum() {
     resetCatalog();
     await ensureCatalog();
     await loadData();
-    await refreshStagingStatus();
     ElMessage.success(t('story.databaseMaximumChanged', { maximum }));
   } catch (changeError) {
     if (changeError === 'cancel' || changeError === 'close') return;
@@ -1057,7 +908,6 @@ async function saveDetail() {
   if (!pmDetail.value || surfaceWriteLocked.value) return;
   detailBusy.value = true;
   detailError.value = '';
-  stagingSaveConflicts.value = null;
   try {
     if (pmDetail.value.kind === 'managed') {
       const entry = pmDetail.value.entry;
@@ -1080,9 +930,8 @@ async function saveDetail() {
       await ensureCatalog();
     }
     await loadData();
-    await refreshStagingStatus();
   } catch (saveError) {
-    detailError.value = stagingConflictMessage(saveError) ?? (saveError as Error).message;
+    detailError.value = (saveError as Error).message;
   } finally {
     detailBusy.value = false;
   }
@@ -1252,7 +1101,7 @@ function detailTitle(): string {
               <button
                 type="button"
                 class="link-button"
-                :disabled="detailBusy || stagingBusy || Boolean(selectedDatabaseReadIssue)"
+                :disabled="detailBusy || Boolean(selectedDatabaseReadIssue)"
                 @click="changeSelectedDatabaseMaximum"
               >
                 {{ t('story.databaseMaximum', { maximum: selectedDbCapacity }) }}
@@ -1290,7 +1139,7 @@ function detailTitle(): string {
                 v-if="canCreateSelectedDbGroup"
                 type="button"
                 class="link-button"
-                :disabled="detailBusy || stagingBusy"
+                :disabled="detailBusy"
                 @click="createSelectedDatabaseEntry"
               >
                 {{ t('story.addNew') }}
@@ -1299,7 +1148,7 @@ function detailTitle(): string {
                 v-if="canResizeSelectedDbGroup"
                 type="button"
                 class="link-button"
-                :disabled="detailBusy || stagingBusy"
+                :disabled="detailBusy"
                 @click="changeSelectedDatabaseMaximum"
               >
                 {{ t('story.databaseMaximum', { maximum: selectedDbCapacity }) }}
@@ -1353,7 +1202,6 @@ function detailTitle(): string {
             @focusout="endDraftFocusEdit"
             @keydown="handleDraftHistoryShortcut"
           >
-            <StagedEntryInspection :inspection="pmDetail.entry.inspection" />
             <CommonEventDetailEditor
               :model-value="detailDraft"
               :catalog="editorCatalog"
@@ -1369,7 +1217,6 @@ function detailTitle(): string {
             @focusout="endDraftFocusEdit"
             @keydown="handleDraftHistoryShortcut"
           >
-            <StagedEntryInspection :inspection="pmDetail.entry.inspection" />
             <DatabaseEntryDetailEditor
               :model-value="detailDraft"
               :group="pmDetail.entry.group"
@@ -1391,7 +1238,6 @@ function detailTitle(): string {
               && (pmDetail.entry.kind === 'switch' || pmDetail.entry.kind === 'variable')"
             class="pm-detail-body"
           >
-            <StagedEntryInspection :inspection="pmDetail.entry.inspection" />
             <SystemNamedEntryDetailEditor
               :model-value="detailDraft"
               :id-label="t('story.systemNamedId')"
@@ -1402,90 +1248,12 @@ function detailTitle(): string {
           <div v-else-if="pmDetail && detailEditable" class="pm-detail-body">
             <StructuredFieldsEditor v-model="detailDraft" :label="t('story.entryFields')" />
           </div>
-          <div v-else-if="detailError && !pmDetail" class="detail-error">
-            <template v-if="stagingSaveConflicts">
-              <div class="staging-conflict-panel" role="alert" data-ui-id="pm-staging-save-conflict">
-                <strong><WarningFilled /> {{ t('story.stagingConflict.title') }}</strong>
-                <p>{{ stagingSaveConflictSummary() }}</p>
-                <p class="staging-conflict-hint">{{ t('story.stagingConflict.hint') }}</p>
-                <ul class="staging-conflict-list">
-                  <li v-for="conflict in stagingSaveConflicts" :key="conflict.relativePath">
-                    <code>{{ conflict.relativePath }}</code>
-                    <span v-for="reason in conflict.reasons" :key="reason">
-                      {{ stagingConflictReasonLabel(reason, language) }}
-                    </span>
-                  </li>
-                </ul>
-                <div class="staging-conflict-actions">
-                  <button type="button" class="secondary-button" :disabled="detailBusy || stagingBusy" @click="saveDetail">
-                    {{ t('editor.preview.stagingConflict.recheck') }}
-                  </button>
-                  <button v-if="stagingDirty" type="button" class="secondary-button" :disabled="detailBusy || stagingBusy" @click="discardProjectStaging">
-                    {{ t('story.stagingConflict.discard') }}
-                  </button>
-                </div>
-              </div>
-            </template>
-            <template v-else>{{ formatErrorText(detailError) }}</template>
-          </div>
+          <div v-else-if="detailError && !pmDetail" class="detail-error">{{ formatErrorText(detailError) }}</div>
           <div v-else class="detail-empty">{{ t('story.selectEntryHint') }}</div>
-          <div v-if="detailError && pmDetail" class="detail-error">
-            <template v-if="stagingSaveConflicts">
-              <div class="staging-conflict-panel" role="alert" data-ui-id="pm-staging-save-conflict">
-                <strong><WarningFilled /> {{ t('story.stagingConflict.title') }}</strong>
-                <p>{{ stagingSaveConflictSummary() }}</p>
-                <p class="staging-conflict-hint">{{ t('story.stagingConflict.hint') }}</p>
-                <ul class="staging-conflict-list">
-                  <li v-for="conflict in stagingSaveConflicts" :key="conflict.relativePath">
-                    <code>{{ conflict.relativePath }}</code>
-                    <span v-for="reason in conflict.reasons" :key="reason">
-                      {{ stagingConflictReasonLabel(reason, language) }}
-                    </span>
-                  </li>
-                </ul>
-                <div class="staging-conflict-actions">
-                  <button type="button" class="secondary-button" :disabled="detailBusy || stagingBusy" @click="saveDetail">
-                    {{ t('editor.preview.stagingConflict.recheck') }}
-                  </button>
-                  <button v-if="stagingDirty" type="button" class="secondary-button" :disabled="detailBusy || stagingBusy" @click="discardProjectStaging">
-                    {{ t('story.stagingConflict.discard') }}
-                  </button>
-                </div>
-              </div>
-            </template>
-            <template v-else>{{ formatErrorText(detailError) }}</template>
-          </div>
+          <div v-if="detailError && pmDetail" class="detail-error">{{ formatErrorText(detailError) }}</div>
           <footer v-if="pmDetail">
-              <span>{{ t('story.saveStagingNote') }}</span>
               <div class="pm-detail-footer-actions">
-                <button
-                  v-if="canRevertCurrentStagedEntry"
-                  type="button"
-                  class="secondary-button"
-                  :disabled="detailBusy || stagingBusy"
-                  @click="revertCurrentStagedEntry"
-                >
-                  {{ t('story.revertStagedEntry') }}
-                </button>
-                <button
-                  v-if="stagingDirty"
-                  type="button"
-                  class="secondary-button"
-                  :disabled="detailBusy || stagingBusy"
-                  @click="discardProjectStaging"
-                >
-                  {{ t('editor.toolbar.discard') }}
-                </button>
-                <button
-                  v-if="stagingDirty"
-                  type="button"
-                  class="secondary-button staging-apply-button"
-                  :disabled="detailBusy || stagingBusy"
-                  @click="applyProjectStaging"
-                >
-                  {{ t('editor.toolbar.applyStaging') }}
-                </button>
-                <button type="button" :disabled="detailBusy || stagingBusy" @click="saveDetail">
+                <button type="button" :disabled="detailBusy" @click="saveDetail">
                   {{ detailBusy ? t('ui.saving') : t('story.saveChanges') }}
                 </button>
               </div>
@@ -1830,10 +1598,6 @@ function detailTitle(): string {
   color: var(--console-text-soft, #5a5247);
   padding: 8px 12px;
 }
-.pm-detail-footer-actions .staging-apply-button {
-  border-color: var(--console-accent, #be5630);
-  color: var(--console-accent, #be5630);
-}
 .pm-detail-footer-actions .danger { border-color: color-mix(in srgb, var(--app-danger) 35%, var(--console-border-strong,#ddd3c2)); color: var(--app-danger); }
 .detail-facts {
   display: grid;
@@ -1901,17 +1665,6 @@ function detailTitle(): string {
   text-align: center;
 }
 .detail-error{padding:12px;color:var(--app-danger);font-size:11px}
-.staging-conflict-panel{display:grid;gap:8px;padding:12px;border:1px solid rgba(239,143,120,.38);border-radius:8px;color:var(--console-text,#3d3527);background:var(--console-panel-bg,#fff)}
-.staging-conflict-panel strong{display:flex;align-items:center;gap:6px;color:var(--app-danger);font-size:12px}
-.staging-conflict-panel strong svg{width:14px;height:14px}
-.staging-conflict-panel p{margin:0;font-size:11px;line-height:1.5}
-.staging-conflict-panel .staging-conflict-hint{color:var(--console-muted,#8b7d6b)}
-.staging-conflict-list{margin:0;padding:0;list-style:none;max-height:200px;overflow:auto}
-.staging-conflict-list li{display:grid;gap:3px;padding:8px 0;border-bottom:1px solid var(--console-border,#e7dfd0)}
-.staging-conflict-list li:last-child{border-bottom:0}
-.staging-conflict-list code{font:11px/1.5 var(--app-font-mono);overflow-wrap:anywhere}
-.staging-conflict-list span{color:var(--console-muted,#8b7d6b);font-size:11px;line-height:1.45}
-.staging-conflict-actions{display:flex;flex-wrap:wrap;gap:8px}
 .read-issue-detail{display:grid;gap:6px;margin:12px;padding:12px;border:1px solid color-mix(in srgb,var(--app-danger) 35%,var(--app-border));border-radius:6px;background:color-mix(in srgb,var(--app-danger) 7%,var(--app-bg));color:var(--app-danger);font-size:11px;overflow-wrap:anywhere}
 .map-item.error,.sub-category-button.error{color:var(--app-danger)}
 

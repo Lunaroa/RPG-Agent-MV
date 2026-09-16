@@ -398,7 +398,6 @@ contextBridge.exposeInMainWorld('api', {
     createEntry: (request: unknown, project?: string) => ipcRenderer.invoke('projectManagement:createEntry', request, project),
     resizeDatabase: (request: unknown, project?: string) => ipcRenderer.invoke('projectManagement:resizeDatabase', request, project),
     resetEntry: (request: unknown, project?: string) => ipcRenderer.invoke('projectManagement:resetEntry', request, project),
-    revertEntry: (request: unknown, project?: string) => ipcRenderer.invoke('projectManagement:revertEntry', request, project),
   },
 
   playtest: {
@@ -546,16 +545,6 @@ contextBridge.exposeInMainWorld('api', {
     writeUserProfile: (content: string) => ipcRenderer.invoke('memory:writeUserProfile', { content }),
     getSettings: () => ipcRenderer.invoke('memory:getSettings'),
     setSettings: (patch: Record<string, unknown>) => ipcRenderer.invoke('memory:setSettings', patch),
-  },
-
-  staging: {
-    projectStatus: (project?: string) => ipcRenderer.invoke('staging:projectStatus', project),
-    applyProject: (project?: string, expectedOperationIds?: string[]) =>
-      ipcRenderer.invoke('staging:applyProject', project, expectedOperationIds),
-    discardProject: (project?: string) => ipcRenderer.invoke('staging:discardProject', project),
-    mapStatus: (mapId: number, project?: string) => ipcRenderer.invoke('staging:mapStatus', mapId, project),
-    applyMap: (mapId: number, project?: string) => ipcRenderer.invoke('staging:applyMap', mapId, project),
-    discardMap: (mapId: number, project?: string) => ipcRenderer.invoke('staging:discardMap', mapId, project),
   },
 
   placementQueue: {

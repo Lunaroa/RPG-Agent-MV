@@ -9,15 +9,13 @@ import { closeDatabase } from '../db/pool.ts';
 import { createDefaultRmmvDatabaseEntry } from '../rmmv/database-schema.ts';
 import { writeJson } from '../rmmv/json.ts';
 import { RPG_MAKER_MZ_ENGINE_FILES } from '../rmmv/rpg-maker-engine.ts';
-import { withTestLanguage } from '../i18n/with-test-language.ts';
 import { copyProjectAssets } from './asset-management-service.ts';
 import { invalidateProjectAssetReferenceGraphCache } from './asset-reference-graph-service.ts';
 import { listProjectAssetCategory } from './project-asset-browser-service.ts';
 import {
-  getProjectFileForRead,
-  registerDatabaseStagingOperation,
-  stageProjectFilesAtomically,
-} from './staging-service.ts';
+  resolveProjectFileForRead,
+  writeProjectFilesAtomically,
+} from './project-file-service.ts';
 
 describe('copyProjectAssets', { concurrency: false }, () => {
   let root: string;
@@ -107,40 +105,21 @@ describe('copyProjectAssets', { concurrency: false }, () => {
     assert.equal(fs.existsSync(path.join(project, 'www', 'img', 'pictures', 'Unused.png')), true);
   });
 
-  test('skips a name whose staged draft already occupies it, without touching the draft', () => {
-    stageProjectFilesAtomically(root, project, [{
+  test('skips a name already occupied by a saved project file', () => {
+    writeProjectFilesAtomically(root, project, [{
       relativePath: 'www/img/pictures/Unused_2.png',
-      content: Buffer.from('draft', 'utf8'),
+      content: Buffer.from('existing', 'utf8'),
     }]);
 
-    // The staging-aware inventory sees the draft as asset "Unused_2", so the
-    // copy must land on Unused_3 and leave the unapplied draft alone.
     const batch = copyProjectAssets(root, project, {
       targets: [{ scope: 'project', category: 'pictures', name: 'Unused' }],
     });
     assert.equal(batch.results[0]!.status, 'copied');
     assert.equal(batch.results[0]!.copiedName, 'Unused_3');
     assert.equal(fs.existsSync(path.join(project, 'www', 'img', 'pictures', 'Unused_3.png')), true);
-    assert.equal(fs.existsSync(path.join(project, 'www', 'img', 'pictures', 'Unused_2.png')), false);
-    const stagedDraft = getProjectFileForRead(root, project, 'www/img/pictures/Unused_2.png');
-    assert.ok(stagedDraft);
-    assert.equal(fs.readFileSync(stagedDraft, 'utf8'), 'draft');
-  });
-
-  test('refuses to copy when an operation reservation occupies a source variant', () => {
-    registerDatabaseStagingOperation(root, project, {
-      operationId: 'c'.repeat(32),
-      planHash: 'd'.repeat(64),
-      changes: [{ kind: 'update', group: 'Actors', id: 1 }],
-      files: ['www/img/pictures/Unused.png'],
-    });
-
-    const batch = withTestLanguage(() => copyProjectAssets(root, project, {
-      targets: [{ scope: 'project', category: 'pictures', name: 'Unused' }],
-    }));
-    assert.equal(batch.results[0]!.status, 'failed');
-    assert.ok(batch.results[0]!.error);
-    assert.equal(fs.existsSync(path.join(project, 'www', 'img', 'pictures', 'Unused_2.png')), false);
+    const existing = resolveProjectFileForRead(project, 'www/img/pictures/Unused_2.png');
+    assert.ok(existing);
+    assert.equal(fs.readFileSync(existing, 'utf8'), 'existing');
   });
 
   test('marks every pending item failed when the atomic apply fails, without partial writes', () => {

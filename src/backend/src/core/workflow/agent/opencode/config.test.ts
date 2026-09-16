@@ -36,14 +36,14 @@ test("opencode config returns dynamic fields including agent tool policy", () =>
   assert.equal(typeof config.tools, "object");
   assert.equal((config.tools as Record<string, boolean>).rmmv_RmmvReadContext, true);
   assert.equal((config.tools as Record<string, boolean>).rmmv_RmmvDatabase, true);
-  assert.equal((config.tools as Record<string, boolean>).rmmv_RmmvDatabaseApply, true);
+  assert.equal((config.tools as Record<string, boolean>).rmmv_RmmvDatabaseCommit, true);
   assert.equal((config.tools as Record<string, boolean>).rmmv_RmmvVerify, true);
   assert.equal((config.mcp as Record<string, Record<string, unknown>>).rmmv.enabled, true);
   assert.equal(config.instructions, undefined);
   assert.equal(config.skills, undefined);
   const normalPermission = config.permission as Record<string, unknown>;
   assert.equal(normalPermission.rmmv_RmmvWorkflow, "ask");
-  assert.equal(normalPermission.rmmv_RmmvDatabaseApply, "ask");
+  assert.equal(normalPermission.rmmv_RmmvDatabaseCommit, "ask");
   const bashRules = normalPermission.bash as Record<string, string>;
   assert.equal(bashRules["*"], "allow");
   assert.equal(bashRules["rm -rf *"], "deny");
@@ -94,7 +94,7 @@ test("read-only session hard-disables every mutating tool but keeps read-only on
   assert.equal(tools.rmmv_RmmvEvent, false);
   assert.equal(tools.rmmv_RmmvMemory, false);
   assert.equal(tools.rmmv_RmmvDatabase, false);
-  assert.equal(tools.rmmv_RmmvDatabaseApply, false);
+  assert.equal(tools.rmmv_RmmvDatabaseCommit, false);
   assert.equal(tools.rmmv_RmmvVerify, false);
   assert.equal(tools.edit, false);
   assert.equal(tools.write, false);
@@ -178,7 +178,7 @@ test("read-only session adds permission denies; normal session does not", () => 
   // 非 read-only 会话：工作流工具走 ask，并按命令串粒度 deny 危险 shell 命令。
   const normalPermission = normal.permission as Record<string, unknown>;
   assert.equal(normalPermission.rmmv_RmmvWorkflow, "ask");
-  assert.equal(normalPermission.rmmv_RmmvDatabaseApply, "ask");
+  assert.equal(normalPermission.rmmv_RmmvDatabaseCommit, "ask");
   const bashRules = normalPermission.bash as Record<string, string>;
   assert.equal(bashRules["*"], "allow");
   assert.equal(bashRules["rm -rf *"], "deny");

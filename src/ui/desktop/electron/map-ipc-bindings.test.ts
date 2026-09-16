@@ -4,9 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, test } from 'node:test';
 
-import { STAGING_ERROR_CODES, StagingError } from '../../../backend/src/core/desktop/staging-errors.ts';
 import { encodePng } from '../../../backend/src/core/workflow/map/map-render.ts';
-import { parseIpcStructuredError } from '../../../contract/desktop-errors.ts';
 import { registerMapIpcHandlers } from './map-ipc-bindings.ts';
 
 const WORKSPACE_PATH = path.join(os.tmpdir(), 'rpg-agent-mv-workspace');
@@ -182,82 +180,6 @@ describe('map IPC project compatibility warnings', () => {
     assert.equal(confirmedAction, 'import');
   });
 
-  test('cancels a staged write and persists suppression only after confirmation', async () => {
-    const handlers = new Map<string, (...args: any[]) => unknown>();
-    let applied = false;
-    let suppressionWrites = 0;
-    registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, desktop({
-      apply: () => {
-        applied = true;
-        return { success: true };
-      },
-    }), ipcOptions({
-      confirmProjectCompatibility: async () => ({ confirmed: false, suppressFutureWarnings: true }),
-      suppressProjectCompatibilityWarnings: () => { suppressionWrites += 1; },
-    }));
-
-    const result = await handlers.get('staging:applyProject')!({}, PROJECT_PATH, []) as Record<string, unknown>;
-
-    assert.equal(result.canceled, true);
-    assert.equal(applied, false);
-    assert.equal(suppressionWrites, 0);
-  });
-
-  test('warns when importing encrypted resources but does not repeat that warning for staged writes', async () => {
-    const handlers = new Map<string, (...args: any[]) => unknown>();
-    let confirmations = 0;
-    let applied = false;
-    registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, desktop({
-      warning: encryptionWarning(),
-      register: () => sampleProject(),
-      apply: () => { applied = true; return { success: true }; },
-    }), ipcOptions({
-      confirmProjectCompatibility: async () => {
-        confirmations += 1;
-        return { confirmed: true, suppressFutureWarnings: false };
-      },
-    }));
-
-    await handlers.get('projects:add')!({}, PROJECT_PATH);
-    await handlers.get('staging:applyProject')!({}, PROJECT_PATH, []);
-
-    assert.equal(confirmations, 1);
-    assert.equal(applied, true);
-  });
-
-  test('keeps structured map preflight code and details in the IPC error message', async () => {
-    const handlers = new Map<string, (...args: any[]) => unknown>();
-    const details = {
-      kind: 'rmmv-map-preflight',
-      transactionStarted: false,
-      sourceFilesChanged: false,
-      missingMaps: [{ mapId: 2, relativePath: 'www/data/Map002.json', reason: 'missing' }],
-    };
-    registerMapIpcHandlers(registrar(handlers), WORKSPACE_PATH, desktop({
-      warning: encryptionWarning(),
-      apply: () => {
-        throw new StagingError(
-          STAGING_ERROR_CODES.rmmvMapPreflight,
-          'backend detail',
-          details,
-        );
-      },
-    }), ipcOptions());
-
-    await assert.rejects(
-      handlers.get('staging:applyProject')!({}, PROJECT_PATH, []),
-      (error: unknown) => {
-        assert.ok(error instanceof Error);
-        assert.match(error.message, /\[STAGING_RMMV_MAP_PREFLIGHT\]/);
-        assert.deepEqual(parseIpcStructuredError(error.message), {
-          message: "[STAGING_RMMV_MAP_PREFLIGHT] backend detail",
-          code: STAGING_ERROR_CODES.rmmvMapPreflight,
-          details,
-        });
-        return true;
-      },
-    );
-  });
 });
 
 function registrar(handlers: Map<string, (...args: any[]) => unknown>) {
@@ -270,7 +192,6 @@ function registrar(handlers: Map<string, (...args: any[]) => unknown>) {
 function desktop(overrides: {
   warning?: ReturnType<typeof versionWarning>;
   register?: () => unknown;
-  apply?: () => unknown;
   thumbnail?: (...args: unknown[]) => unknown;
   overview?: (...args: unknown[]) => unknown;
   cancelThumbnailSession?: (sessionId: string) => unknown;
@@ -288,9 +209,6 @@ function desktop(overrides: {
       getProjectCompatibilityWarning: () => overrides.warning || versionWarning(),
       registerExternalProject: () => overrides.register?.(),
       listProjects: () => overrides.listProjects?.() || [],
-    },
-    staging: {
-      applyProjectStaging: () => overrides.apply?.(),
     },
     mapOverview: {
       buildMapOverviewSnapshot: (...args: unknown[]) => overrides.overview?.(...args),
@@ -314,9 +232,6 @@ function desktop(overrides: {
     },
     projectAssetBrowser: {
       invalidateProjectAssetBrowserCache() {},
-    },
-    projectManagement: {
-      preflightProjectManagedStagingApply() {},
     },
   };
 }

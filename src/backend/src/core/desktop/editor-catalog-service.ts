@@ -21,7 +21,7 @@ import { assetBucketRelativePath, dataRelativePath, inspectRmmvProject, resolveR
 import { hasStandardDualWieldTrait, standardEquipSlotTypeIds } from '../rmmv/equipment-slots.ts';
 import { projectAssetUrl } from './asset-service.ts';
 import { buildMapIndex } from './map-service.ts';
-import { getProjectFileForRead, getProjectStagingStatus } from './staging-service.ts';
+import { resolveProjectFileForRead } from './project-file-service.ts';
 
 const ASSET_BUCKETS = {
   characters: { bucket: 'characters', extensions: new Set(['.png']) },
@@ -164,7 +164,8 @@ export function buildEditorProjectCatalog(workflowRoot: string, project: string)
 }
 
 function readProjectJson(workflowRoot: string, project: string, relativePath: string, fallback: any): any {
-  const file = getProjectFileForRead(workflowRoot, project, relativePath);
+  void workflowRoot;
+  const file = resolveProjectFileForRead(project, relativePath);
   return file ? readJson(file) : fallback;
 }
 
@@ -380,12 +381,9 @@ function normalizeProjectRelativeDirectoryInput(value: string): string {
 }
 
 function projectRelativeDirectoryExists(workflowRoot: string, project: string, directory: string): boolean {
+  void workflowRoot;
   const absolute = path.join(project, ...directory.split('/'));
-  if (fs.existsSync(absolute) && fs.statSync(absolute).isDirectory()) return true;
-  const prefix = `${directory}/`;
-  return getProjectStagingStatus(workflowRoot, project).files.some((entry) => (
-    !entry.delete && entry.relativePath.startsWith(prefix)
-  ));
+  return fs.existsSync(absolute) && fs.statSync(absolute).isDirectory();
 }
 
 function listProjectAssets(
@@ -405,15 +403,6 @@ function listProjectAssets(
     for (const fileName of listed) {
       if (extensions.has(path.extname(fileName).toLowerCase())) files.set(fileName, true);
     }
-  }
-  const prefix = `${directory}/`;
-  for (const entry of getProjectStagingStatus(workflowRoot, project).files) {
-    if (!entry.relativePath.startsWith(prefix)) continue;
-    const fileName = entry.relativePath.slice(prefix.length);
-    if (!fileName || !extensions.has(path.extname(fileName).toLowerCase())) continue;
-    if (!recursive && fileName.includes('/')) continue;
-    if (entry.delete) files.delete(fileName);
-    else files.set(fileName, true);
   }
   return [...files.keys()]
     .sort((a, b) => a.localeCompare(b))
@@ -458,19 +447,6 @@ function listProjectFolders(
       ? listDirectoriesRecursively(absolute)
       : listDirectoriesInDirectory(absolute);
     for (const folder of listed) folders.add(folder.replace(/\\/g, '/'));
-  }
-  const prefix = `${directory}/`;
-  for (const entry of getProjectStagingStatus(workflowRoot, project).files) {
-    if (!entry.relativePath.startsWith(prefix)) continue;
-    const rest = entry.relativePath.slice(prefix.length);
-    if (!rest.includes('/')) continue;
-    const parts = rest.split('/');
-    const depth = options.recursive ? parts.length - 1 : 1;
-    let cursor = '';
-    for (let index = 0; index < depth; index += 1) {
-      cursor = cursor ? `${cursor}/${parts[index]}` : parts[index]!;
-      folders.add(cursor);
-    }
   }
   return [...folders].sort((left, right) => left.localeCompare(right));
 }

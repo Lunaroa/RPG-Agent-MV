@@ -4,7 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import childProcess from 'node:child_process';
 
-import { getMapFileForRead } from './staging-service.ts';
+import { resolveMapFileForRead } from './project-file-service.ts';
 import { runNwjsPlayableProbe } from '../workflow/probe/nwjs-playable-probe.ts';
 import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import {
@@ -1488,10 +1488,10 @@ function resolveMapFileForRuntime(
   mapId: number,
 ): string | null {
   try {
-    const stagedOrSource = getMapFileForRead(workflowRoot, project, mapId);
-    if (stagedOrSource) return stagedOrSource;
+    const projectFile = resolveMapFileForRead(project, mapId);
+    if (projectFile) return projectFile;
   } catch {
-    // Runtime readiness checks must also work before the staging database is bootstrapped.
+    // Runtime readiness checks must also work before the application database is bootstrapped.
   }
   return dataDir ? path.join(dataDir, `Map${String(mapId).padStart(3, '0')}.json`) : null;
 }

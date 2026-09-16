@@ -35,38 +35,18 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  test('requires a current staging-summary confirmation and launches only the project Game.exe', async () => {
+  test('launches the saved source project directly with only the project Game.exe', async () => {
     const child = new FakeChild();
     const spawnCalls: Array<{ executable: string; args: readonly string[]; options: InteractivePlaytestSpawnOptions }> = [];
-    let stagingVersion = 'draft-a';
     const service = createService(root, {
       child,
-      stagingStatus: () => stagedStatus(stagingVersion),
       spawnCalls,
     });
 
-    const first = await service.start(project, { sessionId: 'session-1' });
-    assert.equal(first.confirmationRequired, true);
-    assert.equal(first.stagingSummary?.fileCount, 1);
-    assert.equal(spawnCalls.length, 0);
-
-    stagingVersion = 'draft-b';
-    const stale = await service.start(project, {
-      sessionId: 'session-1',
-      confirmedStagingHash: first.stagingSummaryHash,
-    });
-    assert.equal(stale.confirmationRequired, true);
-    assert.notEqual(stale.stagingSummaryHash, first.stagingSummaryHash);
-    assert.equal(spawnCalls.length, 0);
-
-    const starting = service.start(project, {
-      sessionId: 'session-1',
-      confirmedStagingHash: stale.stagingSummaryHash,
-    });
+    const starting = service.start(project, { sessionId: 'session-1' });
     queueMicrotask(() => child.emitSpawn());
     const running = await starting;
     assert.equal(running.run?.status, 'running');
-    assert.equal(running.run?.stagingIncluded, false);
     assert.equal(running.run?.sourceSaveRisk, true);
     assert.equal(spawnCalls.length, 1);
     assert.equal(spawnCalls[0].executable, path.join(project, 'Game.exe'));
@@ -76,7 +56,7 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     assert.equal((spawnCalls[0].options as { shell?: unknown }).shell, false);
     assert.equal(fs.readFileSync(path.join(project, 'Game.exe'), 'utf8'), 'test runner placeholder');
 
-    const duplicate = await service.start(project, { confirmedStagingHash: stale.stagingSummaryHash });
+    const duplicate = await service.start(project);
     assert.equal(duplicate.run?.status, 'running');
     assert.match(String(duplicate.error), /already running/i);
     assert.equal(spawnCalls.length, 1);
@@ -91,7 +71,6 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     const service = createService(root, { child: new FakeChild() });
     const result = await service.start(project);
     assert.equal(result.run, undefined);
-    assert.equal(result.confirmationRequired, false);
     assert.deepEqual(result.runtimeSelectionRequired, { engine: 'rpg-maker-mv', reason: 'missing' });
   });
 
@@ -374,7 +353,7 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     assert.equal(child.killCalls, 1);
   });
 
-  test('launches Battle Test only from the isolated staged copy with the fixed MV argument', async () => {
+  test('launches Battle Test only from the isolated source copy with the fixed MV argument', async () => {
     const child = new FakeChild();
     const spawnCalls: Array<{ executable: string; args: readonly string[]; options: InteractivePlaytestSpawnOptions }> = [];
     const isolated = createBattlePreparation(root, project);
@@ -383,7 +362,7 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
       child,
       spawnCalls,
       prepareBattleTest: () => isolated,
-      verifyIsolatedSource: () => ({ sourceUnchanged: true, savesUnchanged: true, stagingUnchanged: true }),
+      verifyIsolatedSource: () => ({ sourceUnchanged: true, savesUnchanged: true }),
       cleanupIsolated: (preparation) => {
         cleanupCalls += 1;
         fs.rmSync(preparation.temporaryProject, { recursive: true, force: true });
@@ -402,7 +381,6 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     assert.equal(running.run?.mode, 'battle_test');
     assert.equal(running.run?.troopId, 3);
     assert.equal(running.run?.troopName, 'Sample Troop');
-    assert.equal(running.run?.stagingIncluded, true);
     assert.equal(running.run?.sourceSaveRisk, false);
     assert.equal(running.run?.temporaryProject, true);
     assert.deepEqual(spawnCalls[0].args, ['test&btest']);
@@ -415,7 +393,6 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     assert.equal(exited.status, 'exited');
     assert.equal(exited.sourceUnchanged, true);
     assert.equal(exited.savesUnchanged, true);
-    assert.equal(exited.stagingUnchanged, true);
     assert.equal(exited.temporaryProjectCleaned, true);
     assert.equal(cleanupCalls, 1);
     assert.equal(fs.existsSync(isolated.temporaryProject), false);
@@ -434,7 +411,7 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
       inspectProject: () => ({ engine: 'rpg-maker-mz', editable: true, missingRequired: [] }),
       resolveMZRuntime: () => ({ executable: localRuntime, projectRoot: project, engineVersion: '1.10.0' }),
       prepareBattleTest: () => isolated,
-      verifyIsolatedSource: () => ({ sourceUnchanged: true, savesUnchanged: true, stagingUnchanged: true }),
+      verifyIsolatedSource: () => ({ sourceUnchanged: true, savesUnchanged: true }),
       cleanupIsolated: (preparation) => fs.rmSync(preparation.temporaryProject, { recursive: true, force: true }),
     });
 
@@ -465,7 +442,7 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
       inspectProject: () => ({ engine: 'rpg-maker-mz', editable: true, missingRequired: [] }),
       resolveMZRuntime: () => ({ executable: localRuntime, projectRoot: project, engineVersion: '1.10.0' }),
       prepareParticlePreview: () => isolated,
-      verifyIsolatedSource: () => ({ sourceUnchanged: true, savesUnchanged: true, stagingUnchanged: true }),
+      verifyIsolatedSource: () => ({ sourceUnchanged: true, savesUnchanged: true }),
       cleanupIsolated: (preparation) => {
         cleanupCalls += 1;
         fs.rmSync(preparation.temporaryProject, { recursive: true, force: true });
@@ -484,7 +461,6 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     assert.equal(running.run?.cwd, '[isolated particle preview]');
     assert.equal(running.run?.temporaryProject, true);
     assert.equal(running.run?.sourceSaveRisk, false);
-    assert.equal(running.run?.stagingIncluded, true);
     assert.equal(spawnCalls[0].executable, localRuntime);
     assert.deepEqual(spawnCalls[0].args, [isolated.appDirectory]);
     assert.equal(spawnCalls[0].options.cwd, isolated.appDirectory);
@@ -497,7 +473,7 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     assert.equal(cleanupCalls, 1);
   });
 
-  test('launches the current UI designer scene from an isolated project without staging confirmation', async () => {
+  test('launches the current UI designer scene from an isolated project', async () => {
     const child = new FakeChild();
     const spawnCalls: Array<{ executable: string; args: readonly string[]; options: InteractivePlaytestSpawnOptions }> = [];
     const isolated = createUiDesignerPreparation(project);
@@ -505,9 +481,8 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     const service = createService(root, {
       child,
       spawnCalls,
-      stagingStatus: () => stagedStatus('unrelated-staged-draft'),
       prepareUiDesignerPreview: () => isolated,
-      verifyIsolatedSource: () => ({ sourceUnchanged: true, savesUnchanged: true, stagingUnchanged: true }),
+      verifyIsolatedSource: () => ({ sourceUnchanged: true, savesUnchanged: true }),
       cleanupIsolated: (preparation) => {
         cleanupCalls += 1;
         fs.rmSync(preparation.temporaryProject, { recursive: true, force: true });
@@ -517,7 +492,6 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
     const starting = service.start(project, { mode: 'ui_designer_scene', uiScene: uiDesignerScene() });
     queueMicrotask(() => child.emitSpawn());
     const running = await starting;
-    assert.equal(running.confirmationRequired, false);
     assert.equal(running.run?.mode, 'ui_designer_scene');
     assert.equal(running.run?.sceneName, 'Scene_Sample');
     assert.equal(running.run?.temporaryProject, true);
@@ -561,7 +535,7 @@ describe('interactive desktop playtest lifecycle', { concurrency: false }, () =>
         prepareCalls += 1;
         return isolated;
       },
-      verifyIsolatedSource: () => ({ sourceUnchanged: true, savesUnchanged: true, stagingUnchanged: true }),
+      verifyIsolatedSource: () => ({ sourceUnchanged: true, savesUnchanged: true }),
       cleanupIsolated: (preparation) => {
         if (cleanupShouldFail) throw new Error('injected isolated cleanup failure');
         fs.rmSync(preparation.temporaryProject, { recursive: true, force: true });
@@ -620,7 +594,6 @@ class FakeChild extends EventEmitter implements InteractivePlaytestChild {
 
 function createService(workflowRoot: string, options: {
   child: FakeChild;
-  stagingStatus?: () => unknown;
   spawnCalls?: Array<{ executable: string; args: readonly string[]; options: InteractivePlaytestSpawnOptions }>;
   forceKill?: InteractivePlaytestDependencies['forceKillProcessTree'];
   prepareBattleTest?: InteractivePlaytestDependencies['prepareBattleTest'];
@@ -639,7 +612,6 @@ function createService(workflowRoot: string, options: {
       options.spawnCalls?.push({ executable, args, options: spawnOptions });
       return options.child;
     },
-    getStagingStatus: options.stagingStatus || (() => ({ staged: false, files: [], operations: [] })),
     inspectProject: options.inspectProject || (() => ({ engine: 'rpg-maker-mv', editable: true, missingRequired: [] })),
     ...(options.resolveMZRuntime ? { resolveMZRuntime: options.resolveMZRuntime } : {}),
     resolveProjectRuntime: options.resolveProjectRuntime || ((sourceProject, engine) => {
@@ -702,7 +674,6 @@ function createBattlePreparation(_root: string, sourceProject: string): BattleTe
     ownership: ownershipFixture(),
     sourceFingerprint: 'source-hash',
     saveFingerprint: 'save-hash',
-    staging: { files: [{ relativePath: 'data/Troops.json', delete: false, draftHash: 'draft-hash' }], digest: 'staging-hash' },
     savesExcluded: true,
     engine: 'rpg-maker-mv',
     executable,
@@ -724,7 +695,6 @@ function createParticlePreparation(sourceProject: string): ParticleAnimationPrev
     ownership: ownershipFixture(),
     sourceFingerprint: 'source-hash',
     saveFingerprint: 'save-hash',
-    staging: { files: [], digest: 'staging-hash' },
     savesExcluded: true,
     engine: 'rpg-maker-mz',
     appDirectory,
@@ -742,7 +712,6 @@ function createUiDesignerPreparation(sourceProject: string): UiDesignerGamePrevi
     ownership: ownershipFixture(),
     sourceFingerprint: 'source-hash',
     saveFingerprint: 'save-hash',
-    staging: { files: [], digest: 'staging-hash' },
     savesExcluded: true,
     engine: 'rpg-maker-mv',
     executable,
@@ -785,20 +754,6 @@ function particleAnimation() {
     alignBottom: false,
     flashTimings: [],
     soundTimings: [],
-  };
-}
-
-function stagedStatus(draftHash: string): unknown {
-  return {
-    staged: true,
-    files: [{
-      relativePath: 'www/data/Actors.json',
-      recordedDraftHash: draftHash,
-      operationId: undefined,
-      delete: false,
-      conflict: false,
-    }],
-    operations: [],
   };
 }
 

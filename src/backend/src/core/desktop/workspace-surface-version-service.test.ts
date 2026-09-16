@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { writeJson } from '../rmmv/json.ts';
-import { writeStagedProjectJson } from './staging-service.ts';
+import { writeProjectJson } from './project-file-service.ts';
 import { validateWorkspaceSurfaceVersion } from './workspace-surface-version-service.ts';
 
 describe('workspace surface metadata versions', () => {
@@ -63,9 +63,9 @@ describe('workspace surface metadata versions', () => {
     }).unchanged, false);
   });
 
-  test('includes staged metadata without reading project JSON content', () => {
+  test('includes directly saved metadata without reading project JSON content', () => {
     const first = validateWorkspaceSurfaceVersion(root, project, { surface: 'mapOverview' });
-    writeStagedProjectJson(root, project, 'www/data/Map001.json', { width: 21, height: 15, events: [null] });
+    writeProjectJson(root, project, 'www/data/Map001.json', { width: 21, height: 15, events: [null] });
     const second = validateWorkspaceSurfaceVersion(root, project, {
       surface: 'mapOverview',
       loadedVersion: first.version,

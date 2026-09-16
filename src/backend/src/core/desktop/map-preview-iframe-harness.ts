@@ -56,7 +56,7 @@ export function writeMapPreviewIframeHarness(resourceRootInput: string, options:
  * copied project in place, this generates the tiny preview app shell (marker,
  * injected index.html and — when the engine loads plugins dynamically — an
  * injected js/main.js) into the app directory. The effective index.html and
- * js/main.js contents are provided by the caller so staged drafts win; the
+ * js/main.js contents are provided by the caller so the isolated snapshot is exact; the
  * harness script itself is written separately via writeMapPreviewIframeHarness.
  */
 export function writeMapPreviewIframeAppShell(appDirectoryInput: string, indexHtml: string, mainJs: string): void {

@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { bootstrapDatabase } from "../db/bootstrap.ts";
 import { closeDatabase } from "../db/pool.ts";
-import { writeStagedProjectJson } from "../desktop/staging-service.ts";
+import { writeProjectJson } from "../desktop/project-file-service.ts";
 import { runRmmvCommonEventReferences } from "./rmmv-handlers.ts";
 import { findCommonEventReferences } from "./common-event-references.ts";
 
@@ -177,7 +177,7 @@ describe("findCommonEventReferences", () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  test("MCP handler reports references from the effective staged map", async () => {
+  test("MCP handler reports references from the directly saved map", async () => {
     const { root, dataDir } = makeProject();
     await bootstrapDatabase(root, {
       dbPath: path.join(root, "data", "test.db"),
@@ -194,7 +194,7 @@ describe("findCommonEventReferences", () => {
       "utf8",
     );
     writeMap(dataDir, 1, [null]);
-    writeStagedProjectJson(root, root, "www/data/Map001.json", {
+    writeProjectJson(root, root, "www/data/Map001.json", {
       width: 5,
       height: 5,
       tilesetId: 1,
@@ -204,7 +204,7 @@ describe("findCommonEventReferences", () => {
       }],
     });
 
-    assert.equal(findCommonEventReferences(root, 1).referencedBy.length, 0);
+    assert.equal(findCommonEventReferences(root, 1).referencedBy.length, 1);
     const result = runRmmvCommonEventReferences({
       workflowRoot: root,
       project: root,

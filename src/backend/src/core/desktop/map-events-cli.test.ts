@@ -8,7 +8,7 @@ import { bootstrapDatabase } from "../db/bootstrap.ts";
 import { closeDatabase } from "../db/pool.ts";
 import { readJson, writeJson } from "../rmmv/json.ts";
 import { removeMapEvent, removeMapEventsBatch } from "./map-events-cli.ts";
-import { getMapFileForRead } from "./staging-service.ts";
+import { resolveMapFileForRead } from "./project-file-service.ts";
 import { initializeOriginalStoryProject } from "./story-page-sync-service.ts";
 
 interface Fixture {
@@ -34,7 +34,7 @@ describe("map-events cli helpers", { concurrency: false }, () => {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   });
 
-  test("removeMapEvent deletes an event slot from the staged map file", () => {
+  test("removeMapEvent deletes an event slot from the project map file", () => {
     writeJson(fixture.mapFile, {
       width: 2,
       height: 2,
@@ -49,10 +49,10 @@ describe("map-events cli helpers", { concurrency: false }, () => {
     const report = removeMapEvent(fixture.root, fixture.project, 1, 1) as { op: string; eventId: number };
     assert.equal(report.op, "delete");
     assert.equal(report.eventId, 1);
-    const map = readJson(getMapFileForRead(fixture.root, fixture.project, 1)) as { events: Array<unknown | null> };
+    const map = readJson(resolveMapFileForRead(fixture.project, 1)) as { events: Array<unknown | null> };
     assert.equal(map.events[1], null);
     const source = readJson(fixture.mapFile) as { events: Array<unknown | null> };
-    assert.ok(source.events[1]);
+    assert.equal(source.events[1], null);
   });
 
   test("removeMapEventsBatch reports partial failures without stopping early", () => {

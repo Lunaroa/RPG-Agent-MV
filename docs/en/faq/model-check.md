@@ -41,7 +41,7 @@ Some failures are not model failures. They may come from local state:
 - RPG Maker MV is occupying or rewriting project files.
 - The current worktree contains unreviewed changes.
 
-Recommended order: confirm the current project path, confirm provider and model configuration, save the project in RPG Maker MV, check Git status or editor staging, then ask the Agent to read project facts again.
+Recommended order: confirm the current project path, confirm provider and model configuration, save the project in RPG Maker MV, check Git status and any unsaved in-editor draft, then ask the Agent to read project facts again.
 
 Do not continue by adding temporary compatibility paths, copying the project, or bypassing configuration errors. If a path or configuration is unclear, confirm it first.
 

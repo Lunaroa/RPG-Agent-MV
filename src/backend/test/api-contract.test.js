@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, test } from 'node:test';
 
 import {
@@ -12,6 +14,10 @@ import {
   registerSessionIpcHandlers,
 } from '../../ui/desktop/electron/session-ipc-bindings.ts';
 
+const WORKFLOW_PATH = path.join(os.tmpdir(), 'api-contract-workflow');
+const PROJECT_PATH = path.join(WORKFLOW_PATH, 'projects', 'sample');
+const REMAINING_PROJECT_PATH = path.join(WORKFLOW_PATH, 'projects', 'remaining');
+
 describe('map IPC bindings', () => {
   test('registers the production map channels and preserves contract envelopes', async () => {
     const handlers = new Map();
@@ -23,7 +29,7 @@ describe('map IPC bindings', () => {
     const pickerCalls = [];
     const desktop = createDesktopMock(calls);
 
-    registerMapIpcHandlers(ipc, 'C:/workflow', desktop, {
+    registerMapIpcHandlers(ipc, WORKFLOW_PATH, desktop, {
       productLanguage: () => 'en-US',
       withProductLanguage: (_language, fn) => fn(),
       trashProjectAsset: async () => undefined,
@@ -44,6 +50,7 @@ describe('map IPC bindings', () => {
     assert.equal(MAP_IPC_CHANNELS.includes('projectAssets:browseTree'), true);
     assert.equal(MAP_IPC_CHANNELS.includes('projectAssets:browseCategory'), true);
     assert.equal(MAP_IPC_CHANNELS.includes('projectAssets:invalidateBrowseCache'), true);
+    assert.equal(MAP_IPC_CHANNELS.some((channel) => channel.startsWith('staging:')), false);
 
     assert.equal(await handlers.get('plugins:selectInstallFile')({}), null);
     assert.equal(await handlers.get('projectAssets:selectImportFile')({}, 'pictures'), null);
@@ -52,27 +59,21 @@ describe('map IPC bindings', () => {
       ['asset', 'pictures', ['png', 'jpg', 'jpeg', 'webp', 'rpgmvp']],
     ]);
 
-    const removedProjectList = await handlers.get('projects:remove')(null, '/tmp/project-fixture');
+    const removedProjectList = await handlers.get('projects:remove')(null, path.join(os.tmpdir(), 'removed-project'));
     const tree = await handlers.get('maps:tree')(null, 'projects/Project');
     const tilesets = await handlers.get('maps:tilesets')(null, 'projects/Project');
     const payload = await handlers.get('maps:get')(null, 1, 'projects/Project');
     const imported = await handlers.get('maps:importFromLibrary')(null, 'demo', 7, { name: 'Imported' }, 'projects/Project');
 
     assert.deepEqual(removedProjectList, {
-      projects: [{ path: '/tmp/workflow-fixture/remaining', name: 'Remaining', isDefault: false }],
+      projects: [{ path: REMAINING_PROJECT_PATH, name: 'Remaining', isDefault: false }],
     });
-    assert.deepEqual(tree, { project: '/tmp/workflow-fixture/projects/Project', blocks: [], maps: [] });
-    assert.deepEqual(tilesets, { project: '/tmp/workflow-fixture/projects/Project', tilesets: [] });
+    assert.deepEqual(tree, { project: PROJECT_PATH, blocks: [], maps: [] });
+    assert.deepEqual(tilesets, { project: PROJECT_PATH, tilesets: [] });
     assert.equal(payload.info.name, 'Start');
     assert.equal(payload.tileset.imageUrls[0], 'rmmv-asset://project/demo/Outside_A1.png');
     assert.deepEqual(imported, { mapId: 2 });
-    assert.deepEqual(calls.at(-1), ['import', 'C:/workflow', '/tmp/workflow-fixture/projects/Project', 'demo', { name: 'Imported', parentId: 7 }]);
-
-    await handlers.get('staging:applyProject')(null, 'projects/Project', ['db:one']);
-    assert.deepEqual(calls.slice(-2), [
-      ['preflightProjectStaging', 'C:/workflow', '/tmp/workflow-fixture/projects/Project'],
-      ['applyProjectStaging', 'C:/workflow', '/tmp/workflow-fixture/projects/Project', ['db:one']],
-    ]);
+    assert.deepEqual(calls.at(-1), ['import', WORKFLOW_PATH, PROJECT_PATH, 'demo', { name: 'Imported', parentId: 7 }]);
 
     cleanupMapIpcHandlers(ipc);
     assert.equal(handlers.size, 0);
@@ -141,7 +142,7 @@ describe('session IPC bindings', () => {
 });
 
 function createDesktopMock(calls) {
-  const project = '/tmp/workflow-fixture/projects/Project';
+  const project = PROJECT_PATH;
   return {
     project: {
       listProjects() { return []; },
@@ -149,7 +150,7 @@ function createDesktopMock(calls) {
       registerExternalProject() { return { path: project, name: 'Project', isDefault: true }; },
       removeRegisteredProject(root, target) {
         calls.push(['removeProject', root, target]);
-        return [{ path: '/tmp/workflow-fixture/remaining', name: 'Remaining', isDefault: false }];
+        return [{ path: REMAINING_PROJECT_PATH, name: 'Remaining', isDefault: false }];
       },
       initializeProjectGitBaseline() { return { ok: true }; },
       saveProjectVersion() { return { ok: true, committed: false, message: '当前没有新的改动需要保存' }; },
@@ -169,7 +170,6 @@ function createDesktopMock(calls) {
           map: { width: 1, height: 1, tilesetId: 1, data: [0], events: [null] },
           tileset: { id: 1, name: 'Outside', tilesetNames: ['Outside_A1'], flags: [], imageUrls: ['rmmv-asset://project/demo/Outside_A1.png'] },
           system: { switches: [], variables: [] },
-          staging: { staged: false },
         };
       },
       createMapDraft() { return { mapId: 2 }; },
@@ -186,24 +186,6 @@ function createDesktopMock(calls) {
       updateEvent() { return {}; },
       removeEvent() { return {}; },
       duplicateEvent() { return {}; },
-    },
-    staging: {
-      getProjectStagingStatus() { return {}; },
-      applyProjectStaging(root, resolved, options) {
-        options.validate();
-        calls.push(['applyProjectStaging', root, resolved, options.expectedOperationIds]);
-        return {};
-      },
-      discardProjectStaging() { return {}; },
-      getStagingStatus() { return {}; },
-      applyStagedMap() { return {}; },
-      discardStagedMap() { return {}; },
-    },
-    projectManagement: {
-      preflightProjectManagedStagingApply(root, resolved) {
-        calls.push(['preflightProjectStaging', root, resolved]);
-        return {};
-      },
     },
     assetManagement: {
       getAssetImportFileExtensions() { return ['png', 'jpg', 'jpeg', 'webp', 'rpgmvp']; },

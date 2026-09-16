@@ -14,7 +14,7 @@ import {
   cleanupMapPreviewIpcHandlers,
   registerMapPreviewIpcHandlers,
 } from './map-preview-ipc-bindings.js';
-import { electronText, stagingCloseButtons } from './electronLocalization.js';
+import { electronText } from './electronLocalization.js';
 import { toIpcPayload } from './ipc-serialize.js';
 import { cleanupSessionIpcHandlers, registerSessionIpcHandlers } from './session-ipc-bindings.js';
 import { cleanupProductPluginIpcHandlers, registerProductPluginIpcHandlers } from './product-plugin-ipc-bindings.ts';
@@ -71,7 +71,6 @@ const __dirname = path.dirname(__filename);
 
 let llm: any;
 let ConsoleSettingsDao: any;
-let StagingManifestDao: any;
 let MapSelectionDao: any;
 let scanProject: any;
 let resolveDataDir: any;
@@ -159,29 +158,8 @@ export function saveWorkspaceWindowState(win: BrowserWindow): void {
   });
 }
 
-function hasProjectStaging(status: unknown): boolean {
-  if (!status || typeof status !== 'object') return false;
-  const value = status as { staged?: unknown; files?: unknown; maps?: unknown };
-  return Boolean(value.staged)
-    || (Array.isArray(value.files) && value.files.length > 0)
-    || (Array.isArray(value.maps) && value.maps.length > 0);
-}
-
-function stagingErrorMessage(error: unknown): string {
+function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function stagingOperationIds(status: unknown): string[] {
-  if (!status || typeof status !== 'object') return [];
-  const operations = (status as { operations?: unknown }).operations;
-  if (!Array.isArray(operations)) return [];
-  return operations.flatMap((operation) => (
-    operation
-      && typeof operation === 'object'
-      && typeof (operation as { operationId?: unknown }).operationId === 'string'
-      ? [(operation as { operationId: string }).operationId]
-      : []
-  ));
 }
 
 async function showProjectCompatibilityWarning(
@@ -239,80 +217,6 @@ async function showProjectCompatibilityWarning(
   const confirmed = result.response === 0;
   const suppressFutureWarnings = confirmed && result.checkboxChecked;
   return { confirmed, suppressFutureWarnings };
-}
-
-export async function confirmProjectStagingBeforeClose(workflowRoot: string, win: BrowserWindow): Promise<boolean> {
-  if (!desktop || win.isDestroyed()) return true;
-  const lastProjectPath = String(getWorkspaceSettings().lastProjectPath || '').trim();
-  if (!lastProjectPath) return true;
-
-  let projectPath = '';
-  let stagingStatus: unknown;
-  try {
-    projectPath = desktop.project.resolveProjectPath(workflowRoot, lastProjectPath);
-    stagingStatus = desktop.staging.getProjectStagingStatus(workflowRoot, projectPath);
-  } catch (error) {
-    const language = currentProductLanguage();
-    await dialog.showMessageBox(win, {
-      type: 'error',
-      title: electronText(language, 'staging.checkFailed'),
-      message: electronText(language, 'staging.checkFailed'),
-      detail: stagingErrorMessage(error),
-    });
-    return false;
-  }
-
-  if (!hasProjectStaging(stagingStatus)) return true;
-
-  const language = currentProductLanguage();
-  const operationIds = stagingOperationIds(stagingStatus);
-  const operationDetail = operationIds.length
-    ? `\n\n${electronText(language, 'staging.agentOperations', { operations: operationIds.join('\n') })}`
-    : '';
-  const result = await dialog.showMessageBox(win, {
-    type: 'question',
-    title: electronText(language, 'staging.savePrompt'),
-    message: electronText(language, 'staging.savePrompt'),
-    buttons: stagingCloseButtons(language),
-    defaultId: 0,
-    cancelId: 2,
-    noLink: true,
-    detail: `${electronText(language, 'staging.closeDetail')}${operationDetail}`,
-  });
-
-  if (result.response === 2) return false;
-
-  try {
-    if (result.response === 0) {
-      const compatibilityWarning = desktop.project.getProjectCompatibilityWarning(projectPath);
-      if (compatibilityWarning?.versionMismatch) {
-        const confirmation = await showProjectCompatibilityWarning(win, compatibilityWarning, 'write');
-        if (!confirmation.confirmed) return false;
-        if (confirmation.suppressFutureWarnings) {
-          patchWorkspaceSettings({ suppressProjectCompatibilityWarnings: true });
-        }
-      }
-      await desktop.staging.applyProjectStaging(workflowRoot, projectPath, {
-        expectedOperationIds: operationIds,
-        validate: () => desktop.projectManagement.preflightProjectManagedStagingApply(workflowRoot, projectPath),
-      });
-      desktop.projectAssetBrowser.invalidateProjectAssetBrowserCache(projectPath);
-    } else if (result.response === 1) {
-      desktop.staging.discardProjectStaging(workflowRoot, projectPath);
-      desktop.projectAssetBrowser.invalidateProjectAssetBrowserCache(projectPath);
-    }
-  } catch (error) {
-    const failureKey = result.response === 0 ? 'staging.saveFailed' : 'staging.discardFailed';
-    await dialog.showMessageBox(win, {
-      type: 'error',
-      title: electronText(currentProductLanguage(), failureKey),
-      message: electronText(currentProductLanguage(), failureKey),
-      detail: stagingErrorMessage(error),
-    });
-    return false;
-  }
-
-  return true;
 }
 
 const rendererCloseGuardSenders = new Set<number>();
@@ -420,9 +324,6 @@ async function loadBackendModules(roots: AppRoots) {
   const consoleSettingsDaoModule = await import(new URL('db/dao/console-settings-dao.ts', coreUrl).href);
   ConsoleSettingsDao = consoleSettingsDaoModule.ConsoleSettingsDao;
   
-  const stagingManifestDaoModule = await import(new URL('db/dao/staging-manifest-dao.ts', coreUrl).href);
-  StagingManifestDao = stagingManifestDaoModule.StagingManifestDao;
-  
   const mapSelectionDaoModule = await import(new URL('db/dao/map-selection-dao.ts', coreUrl).href);
   MapSelectionDao = mapSelectionDaoModule.MapSelectionDao;
   
@@ -467,7 +368,6 @@ async function loadBackendModules(roots: AppRoots) {
     events: await import(new URL('desktop/event-service.ts', coreUrl).href),
     eventRegistry: await import(new URL('workflow/event/event-registry.ts', coreUrl).href),
     eventScript: await import(new URL('desktop/event-script-service.ts', coreUrl).href),
-    staging: await import(new URL('desktop/staging-service.ts', coreUrl).href),
     library: await import(new URL('desktop/library-service.ts', coreUrl).href),
     assets: await import(new URL('desktop/asset-service.ts', coreUrl).href),
     catalog: await import(new URL('desktop/editor-catalog-service.ts', coreUrl).href),
@@ -674,7 +574,7 @@ function publishInteractivePlaytestStatus(run: InteractivePlaytestRun): void {
         win.webContents.send('playtest:status', payload);
       }
     } catch (error) {
-      console.warn(`[playtest] Could not publish run ${run.runId} to a renderer: ${stagingErrorMessage(error)}`);
+      console.warn(`[playtest] Could not publish run ${run.runId} to a renderer: ${errorMessage(error)}`);
     }
   }
   if (!run.sessionId || !agentSessionRuntime) return;
@@ -691,7 +591,7 @@ function publishInteractivePlaytestStatus(run: InteractivePlaytestRun): void {
       console.warn(`[playtest] Could not publish run ${run.runId} to session ${run.sessionId}: ${pushed?.reason || 'unknown error'}`);
     }
   } catch (error) {
-    console.warn(`[playtest] Could not persist run ${run.runId} in session ${run.sessionId}: ${stagingErrorMessage(error)}`);
+    console.warn(`[playtest] Could not persist run ${run.runId} in session ${run.sessionId}: ${errorMessage(error)}`);
   }
 }
 
@@ -815,7 +715,7 @@ function requireMapPreviewService(): any {
 }
 
 export async function shutdownInteractivePlaytest(): Promise<InteractivePlaytestResult> {
-  if (!interactivePlaytestService) return { confirmationRequired: false };
+  if (!interactivePlaytestService) return {};
   const result = await interactivePlaytestService.shutdown() as InteractivePlaytestResult;
   if (result.run?.status === 'stop_failed') {
     throw new Error(result.run.error || 'Game runtime process-tree cleanup failed.');
@@ -862,11 +762,6 @@ interface MapPayload {
   mapInfo: MapInfo | undefined;
   map: Record<string, unknown> | null;
   tilesets: { id: number; name: string }[];
-}
-
-interface StagingStatus {
-  hasStaging: boolean;
-  maps: { mapId: number; hasChanges: boolean }[];
 }
 
 let workflowRoot: string = '';
@@ -1189,109 +1084,6 @@ async function duplicateEvent(projectPath: string, mapId: number, eventId: numbe
 }
 
 /**
- * 获取项目暂存状态
- */
-function getProjectStagingStatus(root: string, projectPath: string): StagingStatus {
-  try {
-    const projectId = path.relative(root, projectPath) || 'default';
-    const manifests = StagingManifestDao.listByProject(projectId);
-
-    return {
-      hasStaging: manifests.length > 0,
-      maps: manifests.map(m => ({
-        mapId: (m.manifest.mapId as number) || 0,
-        hasChanges: true
-      }))
-    };
-  } catch (error) {
-    return { hasStaging: false, maps: [] };
-  }
-}
-
-/**
- * 获取地图暂存状态
- */
-function getStagingStatus(root: string, projectPath: string, mapId: number): { hasChanges: boolean } {
-  try {
-    const projectId = path.relative(root, projectPath) || 'default';
-    const manifests = StagingManifestDao.listByProject(projectId);
-    const hasChanges = manifests.some(m => (m.manifest.mapId as number) === mapId);
-
-    return { hasChanges };
-  } catch (error) {
-    return { hasChanges: false };
-  }
-}
-
-/**
- * 应用项目暂存
- */
-async function applyProjectStaging(root: string, projectPath: string): Promise<Record<string, unknown>> {
-  try {
-    const projectId = path.relative(root, projectPath) || 'default';
-    StagingManifestDao.deleteByProject(projectId);
-    return { success: true, message: 'Staging applied' };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { success: false, error: message };
-  }
-}
-
-/**
- * 应用地图暂存
- */
-async function applyStagedMap(root: string, projectPath: string, mapId: number): Promise<Record<string, unknown>> {
-  try {
-    const projectId = path.relative(root, projectPath) || 'default';
-    const manifests = StagingManifestDao.listByProject(projectId);
-    const mapManifests = manifests.filter(m => (m.manifest.mapId as number) === mapId);
-
-    for (const manifest of mapManifests) {
-      StagingManifestDao.delete(manifest.id);
-    }
-
-    return { success: true, mapId };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { success: false, error: message };
-  }
-}
-
-/**
- * 丢弃项目暂存
- */
-function discardProjectStaging(root: string, projectPath: string): Record<string, unknown> {
-  try {
-    const projectId = path.relative(root, projectPath) || 'default';
-    StagingManifestDao.deleteByProject(projectId);
-    return { success: true, message: 'Staging discarded' };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { success: false, error: message };
-  }
-}
-
-/**
- * 丢弃地图暂存
- */
-async function discardStagedMap(root: string, projectPath: string, mapId: number): Promise<Record<string, unknown>> {
-  try {
-    const projectId = path.relative(root, projectPath) || 'default';
-    const manifests = StagingManifestDao.listByProject(projectId);
-    const mapManifests = manifests.filter(m => (m.manifest.mapId as number) === mapId);
-
-    for (const manifest of mapManifests) {
-      StagingManifestDao.delete(manifest.id);
-    }
-
-    return { success: true, mapId };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { success: false, error: message };
-  }
-}
-
-/**
  * 列出地图库
  */
 async function listMapLibrary(root: string): Promise<Record<string, unknown>> {
@@ -1456,7 +1248,7 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
         message: electronText(currentProductLanguage(), 'mapImageExport.overwriteMessage', { fileName }),
         buttons: [
           electronText(currentProductLanguage(), 'mapImageExport.overwrite'),
-          electronText(currentProductLanguage(), 'staging.cancel'),
+          electronText(currentProductLanguage(), 'common.cancel'),
         ],
         defaultId: 1,
         cancelId: 1,

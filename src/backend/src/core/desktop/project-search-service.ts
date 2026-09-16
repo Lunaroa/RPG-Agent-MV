@@ -24,7 +24,7 @@ import { listAssetAnnotations } from './asset-annotation-service.ts';
 import { buildMapIndex, listEditorMapNotes } from './map-service.ts';
 import { extractDefaultPluginHeaderBody } from './plugin-header-metadata.ts';
 import { lunaRpgDirPath, readProjectConfig } from './project-config-service.ts';
-import { getMapFileForRead, getProjectFileForRead } from './staging-service.ts';
+import { resolveMapFileForRead, resolveProjectFileForRead } from './project-file-service.ts';
 
 const SEARCH_INDEX_FILE = 'search-index.json';
 const SEARCH_INDEX_VERSION = 1;
@@ -165,7 +165,7 @@ function collectCommandText(list: unknown): string[] {
 }
 
 function readProjectJson(workflowRoot: string, project: string, relativePath: string): unknown {
-  const file = getProjectFileForRead(workflowRoot, project, relativePath);
+  const file = resolveProjectFileForRead(project, relativePath);
   if (!file || !fs.existsSync(file)) return null;
   return readJson(file);
 }
@@ -247,7 +247,7 @@ export function buildGlobalSearchDocuments(
   const mapIndex = buildMapIndex(workflowRoot, project);
   for (const mapInfo of mapIndex.maps) {
     const editorNote = editorNotes[String(mapInfo.id)]?.note || '';
-    const mapFile = getMapFileForRead(workflowRoot, project, mapInfo.id);
+    const mapFile = resolveMapFileForRead(project, mapInfo.id);
     const map = mapInfo.mapFileExists && mapFile && fs.existsSync(mapFile)
       ? readJson(mapFile) as Record<string, unknown>
       : null;
@@ -374,7 +374,7 @@ export function buildGlobalSearchDocuments(
 
   // --- pluginParam: configured plugins.js rows (description + parameter values) ---
   const pluginsJsRelative = resourceRelativePath(layout, 'js/plugins.js');
-  const pluginsJsFile = getProjectFileForRead(workflowRoot, project, pluginsJsRelative);
+  const pluginsJsFile = resolveProjectFileForRead(project, pluginsJsRelative);
   if (pluginsJsFile && fs.existsSync(pluginsJsFile)) {
     const raw = fs.readFileSync(pluginsJsFile, 'utf8').replace(/^\uFEFF/, '');
     const start = raw.indexOf('[');

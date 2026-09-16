@@ -11,7 +11,6 @@ import { readJson, writeJson } from '../rmmv/json.ts';
 import { resolveAssetRequest } from './asset-service.ts';
 import { buildMapIndex, buildMapPayload, updateMapPropertiesDraft } from './map-service.ts';
 import { mapProjectParallaxImageMissing } from './mapServiceLocalization.ts';
-import { applyProjectStaging, getMapFileForRead } from './staging-service.ts';
 
 describe('map parallax preview payload', { concurrency: false }, () => {
   let root: string;
@@ -87,20 +86,15 @@ describe('map parallax preview payload', { concurrency: false }, () => {
     assert.deepEqual(index.maps.map((map) => [map.id, map.mapFileExists]), [[1, true], [2, false]]);
   });
 
-  test('preserves multiline notes and complete encounter regions through staging and apply', () => {
+  test('preserves multiline notes and complete encounter regions through direct save', () => {
     writeMap({ parallaxName: '', parallaxShow: false });
     const note = 'First line\nSecond line\nThird line';
     const encounterList = [{ troopId: 2, weight: 7, regionSet: [1, 2, 3, 4] }];
 
     updateMapPropertiesDraft(root, project, 1, { name: 'Sample Map', note, encounterList });
-    const stagedMap = readJson(getMapFileForRead(root, project, 1)) as any;
-    assert.equal(stagedMap.note, note);
-    assert.deepEqual(stagedMap.encounterList, encounterList);
-
-    assert.equal(applyProjectStaging(root, project).applied, true);
-    const appliedMap = readJson(mapFile) as any;
-    assert.equal(appliedMap.note, note);
-    assert.deepEqual(appliedMap.encounterList, encounterList);
+    const savedMap = readJson(mapFile) as any;
+    assert.equal(savedMap.note, note);
+    assert.deepEqual(savedMap.encounterList, encounterList);
   });
 
   function writeMap(overrides: Record<string, unknown>): void {

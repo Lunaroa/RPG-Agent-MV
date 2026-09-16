@@ -10,7 +10,7 @@ import { withProductLanguage } from "../i18n/request-language.ts";
 import { readJson, writeJson } from "../rmmv/json.ts";
 import { RPG_MAKER_MZ_ENGINE_FILES } from "../rmmv/rpg-maker-engine.ts";
 import { buildMapIndex, moveMapDraft, searchProjectEvents } from "./map-service.ts";
-import { getProjectFileForRead, writeStagedProjectJson } from "./staging-service.ts";
+import { writeProjectJson } from "./project-file-service.ts";
 
 describe("MZ map ordering and event search", { concurrency: false }, () => {
   let root: string;
@@ -60,20 +60,18 @@ describe("MZ map ordering and event search", { concurrency: false }, () => {
     assert.throws(() => moveMapDraft(root, project, 2, 3, "inside"), /cycle/);
 
     const source = readJson(path.join(project, "data", "MapInfos.json")) as Array<{ parentId: number } | null>;
-    assert.equal(source[1]?.parentId, 0);
-    const staged = readJson(getProjectFileForRead(root, project, "data/MapInfos.json")!) as Array<{ parentId: number } | null>;
-    assert.equal(staged[1]?.parentId, 2);
+    assert.equal(source[1]?.parentId, 2);
   });
 
-  test("finds names, notes, command text and ids in staged maps", () => {
-    const stagedMap = readJson(path.join(project, "data", "Map002.json")) as Record<string, unknown>;
-    const events = stagedMap.events as Array<Record<string, unknown> | null>;
+  test("finds names, notes, command text and ids in directly saved maps", () => {
+    const savedMap = readJson(path.join(project, "data", "Map002.json")) as Record<string, unknown>;
+    const events = savedMap.events as Array<Record<string, unknown> | null>;
     const pages = events[2]!.pages as Array<Record<string, unknown>>;
     pages[0].list = [
       { code: 357, indent: 0, parameters: ["SamplePlugin", "openPanel", "Open Panel", { label: "Staged marker" }] },
       { code: 0, indent: 0, parameters: [] },
     ];
-    writeStagedProjectJson(root, project, "data/Map002.json", stagedMap);
+    writeProjectJson(root, project, "data/Map002.json", savedMap);
 
     const command = searchProjectEvents(root, project, "staged marker");
     assert.deepEqual(command.hits.map((hit) => [hit.mapId, hit.eventId, hit.pageIndex, hit.commandIndex, hit.matchKind]), [
@@ -82,7 +80,7 @@ describe("MZ map ordering and event search", { concurrency: false }, () => {
     assert.equal(searchProjectEvents(root, project, "Greeter").hits.some((hit) => hit.matchKind === "name"), true);
     assert.equal(searchProjectEvents(root, project, "sample note").hits.some((hit) => hit.matchKind === "note"), true);
     assert.equal(searchProjectEvents(root, project, "#2").hits.some((hit) => hit.mapId === 2 && hit.eventId === 2 && hit.matchKind === "id"), true);
-    assert.doesNotMatch(JSON.stringify(readJson(path.join(project, "data", "Map002.json"))), /Staged marker/);
+    assert.match(JSON.stringify(readJson(path.join(project, "data", "Map002.json"))), /Staged marker/);
   });
 
   test("scopes event search to one map and rejects invalid map ids", () => {

@@ -38,12 +38,12 @@ export async function runRmmvVerify(input: RmmvHandlerInput): Promise<RmmvHandle
   });
 
   const detail = result.status === 'verified'
-    ? 'Isolated staged-project playtest verified all required evidence.'
+    ? 'Isolated project playtest verified all required evidence.'
     : result.status === 'blocked'
-      ? `Isolated staged-project playtest was blocked: ${result.blockers.join(' ') || result.error || 'preflight failed.'}`
+      ? `Isolated project playtest was blocked: ${result.blockers.join(' ') || result.error || 'preflight failed.'}`
       : result.status === 'review'
-        ? `Isolated staged-project playtest needs review: ${result.review.join(' ') || result.error || 'strict evidence was incomplete.'}`
-        : `Isolated staged-project playtest failed: ${result.error || 'strict evidence did not pass.'}`;
+        ? `Isolated project playtest needs review: ${result.review.join(' ') || result.error || 'strict evidence was incomplete.'}`
+        : `Isolated project playtest failed: ${result.error || 'strict evidence did not pass.'}`;
 
   return {
     summary: detail,

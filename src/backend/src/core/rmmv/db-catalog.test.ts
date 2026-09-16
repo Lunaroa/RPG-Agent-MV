@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { bootstrapDatabase } from "../db/bootstrap.ts";
 import { closeDatabase } from "../db/pool.ts";
-import { getProjectFileForRead, writeStagedProjectJson } from "../desktop/staging-service.ts";
+import { resolveProjectFileForRead, writeProjectJson } from "../desktop/project-file-service.ts";
 import { buildRmmvDbCatalog } from "./db-catalog.ts";
 import { dispatchRmmvTool } from "./rmmv-tool-dispatch.ts";
 
@@ -121,13 +121,13 @@ describe("buildRmmvDbCatalog", () => {
 });
 
 describe("RmmvReadContext database reads", { concurrency: false }, () => {
-  test("paginates staged name matches with per-table page info", async () => {
-    const { workflowRoot, project } = await makeStagedProject();
+  test("paginates directly saved name matches with per-table page info", async () => {
+    const { workflowRoot, project } = await makeDirectSaveProject();
     try {
-      writeStagedProjectJson(workflowRoot, project, "www/data/Items.json", [
+      writeProjectJson(workflowRoot, project, "www/data/Items.json", [
         null,
-        { id: 1, name: "Staged Potion", iconIndex: 1, price: 10 },
-        { id: 2, name: "STAGED POTION Plus", iconIndex: 2, price: 20 },
+        { id: 1, name: "Saved Potion", iconIndex: 1, price: 10 },
+        { id: 2, name: "SAVED POTION Plus", iconIndex: 2, price: 20 },
         { id: 3, name: "Antidote", iconIndex: 3, price: 30 },
         { id: 4, name: "", iconIndex: 4, price: 40 },
         { id: 12, name: "Elixir", iconIndex: 5, price: 50 },
@@ -137,7 +137,7 @@ describe("RmmvReadContext database reads", { concurrency: false }, () => {
         workflowRoot,
         project,
         tables: ["items"],
-        query: "staged potion",
+        query: "saved potion",
         offset: 0,
         limit: 1,
         includeUnnamed: false,
@@ -156,7 +156,7 @@ describe("RmmvReadContext database reads", { concurrency: false }, () => {
         workflowRoot,
         project,
         tables: ["items"],
-        query: "STAGED POTION",
+        query: "SAVED POTION",
         offset: 1,
         limit: 1,
         includeUnnamed: false,
@@ -171,9 +171,9 @@ describe("RmmvReadContext database reads", { concurrency: false }, () => {
   });
 
   test("filters by decimal id and keeps total independent of includeUnnamed", async () => {
-    const { workflowRoot, project } = await makeStagedProject();
+    const { workflowRoot, project } = await makeDirectSaveProject();
     try {
-      writeStagedProjectJson(workflowRoot, project, "www/data/Items.json", [
+      writeProjectJson(workflowRoot, project, "www/data/Items.json", [
         null,
         { id: 1, name: "Potion" },
         { id: 2, name: "Hi-Potion" },
@@ -222,8 +222,8 @@ describe("RmmvReadContext database reads", { concurrency: false }, () => {
     }
   });
 
-  test("dbEntry returns the complete staged record and hashes the effective file", async () => {
-    const { workflowRoot, project } = await makeStagedProject();
+  test("dbEntry returns the complete saved record and hashes the project file", async () => {
+    const { workflowRoot, project } = await makeDirectSaveProject();
     try {
       const skill = {
         id: 1,
@@ -233,7 +233,7 @@ describe("RmmvReadContext database reads", { concurrency: false }, () => {
         traits: [{ code: 13, dataId: 2, value: 0.75 }],
         pluginPayload: { nested: ["keep", { enabled: true }] },
       };
-      writeStagedProjectJson(workflowRoot, project, "www/data/Skills.json", [null, skill]);
+      writeProjectJson(workflowRoot, project, "www/data/Skills.json", [null, skill]);
 
       const result = await dispatchRmmvTool("db-entry", {
         workflowRoot,
@@ -242,7 +242,7 @@ describe("RmmvReadContext database reads", { concurrency: false }, () => {
         id: 1,
       });
       const entry = result.data as any;
-      const effectiveFile = getProjectFileForRead(workflowRoot, project, "www/data/Skills.json");
+      const effectiveFile = resolveProjectFileForRead(project, "www/data/Skills.json");
       assert.ok(effectiveFile);
       const expectedHash = crypto.createHash("sha256").update(fs.readFileSync(effectiveFile)).digest("hex");
 
@@ -251,7 +251,6 @@ describe("RmmvReadContext database reads", { concurrency: false }, () => {
       assert.equal(entry.group, "Skills");
       assert.equal(entry.id, 1);
       assert.equal(entry.relativePath, "www/data/Skills.json");
-      assert.equal(entry.staged, true);
       assert.equal(entry.contentHash, expectedHash);
       assert.equal(entry.schema.key, "skills");
       assert.equal(entry.schema.maxEntries, 2000);
@@ -262,11 +261,11 @@ describe("RmmvReadContext database reads", { concurrency: false }, () => {
   });
 
   for (const table of ["system", "types", "terms"] as const) {
-    test(`dbEntry ${table} returns its staged logical document`, async () => {
-      const { workflowRoot, project } = await makeStagedProject();
+    test(`dbEntry ${table} returns its saved logical document`, async () => {
+      const { workflowRoot, project } = await makeDirectSaveProject();
       try {
         const system = {
-          gameTitle: "Staged Schema",
+          gameTitle: "Saved Schema",
           switches: ["", "Door"],
           variables: ["", "Progress"],
           elements: ["", "Physical", "Fire"],
@@ -286,7 +285,7 @@ describe("RmmvReadContext database reads", { concurrency: false }, () => {
             customNested: { values: [1, { label: "keep" }] },
           },
         };
-        writeStagedProjectJson(workflowRoot, project, "www/data/System.json", system);
+        writeProjectJson(workflowRoot, project, "www/data/System.json", system);
 
         const result = await dispatchRmmvTool("db-entry", {
           workflowRoot,
@@ -295,7 +294,6 @@ describe("RmmvReadContext database reads", { concurrency: false }, () => {
           id: 0,
         });
 
-        assert.equal((result.data as any).staged, true);
         const expected = table === "system"
           ? system
           : table === "types"
@@ -316,9 +314,9 @@ describe("RmmvReadContext database reads", { concurrency: false }, () => {
   }
 
   test("dbEntry enforces document ids and returns valid empty array slots", async () => {
-    const { workflowRoot, project } = await makeStagedProject();
+    const { workflowRoot, project } = await makeDirectSaveProject();
     try {
-      writeStagedProjectJson(workflowRoot, project, "www/data/Items.json", [
+      writeProjectJson(workflowRoot, project, "www/data/Items.json", [
         null,
         { id: 1, name: "Potion" },
         null,
@@ -366,7 +364,7 @@ describe("RmmvReadContext database reads", { concurrency: false }, () => {
   });
 });
 
-async function makeStagedProject(): Promise<{ workflowRoot: string; project: string }> {
+async function makeDirectSaveProject(): Promise<{ workflowRoot: string; project: string }> {
   const workflowRoot = tmpDir("db-read-context-");
   const project = makeProject(path.join(workflowRoot, "projects", "sample"));
   fs.mkdirSync(path.join(workflowRoot, "data"), { recursive: true });

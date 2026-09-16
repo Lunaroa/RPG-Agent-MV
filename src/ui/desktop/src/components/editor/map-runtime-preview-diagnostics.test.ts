@@ -9,7 +9,7 @@ test('keeps preview diagnostics collapsed until the user requests details', () =
   assert.match(previewSource, /const detailsOpen = ref\(false\)/);
   assert.match(previewSource, /v-if="diagnostic && detailsOpen"/);
   assert.match(previewSource, /detailsOpen \? t\('editor\.preview\.hideDetails'\) : t\('editor\.preview\.showDetails'\)/);
-  assert.match(previewSource, /watch\(\(\) => \[props\.error, props\.diagnostic, props\.preflightFailure\]/);
+  assert.match(previewSource, /watch\(\(\) => \[props\.error, props\.diagnostic\]/);
 });
 
 test('shows structured fields and copies only the prepared diagnostic payload', () => {
@@ -34,23 +34,4 @@ test('publishes preview failures into the workbench console', () => {
   assert.match(editorSource, /publishPreviewFailureToWorkbench\(diagnostic, previewError\.value\)/);
   assert.match(editorSource, /previewConsoleOpen\.value = true/);
   assert.match(editorSource, /source: 'exception'/);
-});
-
-test('shows structured staging conflicts without replacing a warm preview', () => {
-  assert.match(previewSource, /data-ui-id="map-preview-staging-conflict"/);
-  assert.match(previewSource, /preflightFailure\.conflicts/);
-  assert.match(previewSource, /stagingConflictReasonLabel\(reason\)/);
-  assert.match(previewSource, /'staging-conflict-warm': hasDisplayablePreview/);
-  assert.match(previewSource, /v-show="!error && Boolean\(iframeUrl\)"/);
-  assert.match(editorSource, /handlePreviewPreflightFailure\(result, intent\)/);
-  assert.match(editorSource, /result\.session\?\.iframeUrl[\s\S]{0,120}\['running', 'suspended'\]/);
-  assert.match(editorSource, /if \(!keepExistingPreview\) await stopPreviewSession\(\)/);
-  assert.doesNotMatch(previewSource, /Error invoking remote method|StagingError/);
-});
-
-test('returns to map editing without automatically applying or discarding staging', () => {
-  assert.match(editorSource, /async function resolvePreviewStagingConflict\(\) \{[\s\S]{0,120}mode\.value = 'map'/);
-  assert.match(editorSource, /resolvePreviewStagingConflict\(\)[\s\S]{0,180}refreshStagingStatus\(\)/);
-  assert.doesNotMatch(editorSource, /resolvePreviewStagingConflict\(\)[\s\S]{0,240}(applyStaging|discardStaging)\(\)/);
-  assert.match(editorSource, /if \(stagingConflict\.value\) \{[\s\S]{0,140}conflictApplyDisabled/);
 });

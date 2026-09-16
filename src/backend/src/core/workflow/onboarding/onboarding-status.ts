@@ -208,7 +208,7 @@ export function aggregateOnboardingStatus(input: OnboardingInput): OnboardingSta
     recommendedActions.push({
       type: "declare-story-project",
       label: "Enable controlled event editing",
-      scope: "Event editing is not enabled yet. Placement can ask to enable it; keeping it disabled still allows staging first.",
+      scope: "Event editing is not enabled yet. Placement can ask to enable it; keeping it disabled still allows a pending-event draft first.",
       command: "Enable event editing in project management and choose whether to create a Git save point first",
     });
   }
@@ -384,7 +384,7 @@ export function renderOnboardingMarkdown(report: OnboardingStatusReport): string
   if (report.storyProject.initialized) {
     lines.push("- Enabled: **event editing**");
   } else {
-    lines.push("- **Not enabled** - placement can ask to enable it; keeping it disabled still allows staging first, but direct existing-event edits require it.");
+    lines.push("- **Not enabled** - placement can ask to enable it; keeping it disabled still allows pending-event drafts, but direct existing-event edits require it.");
   }
   lines.push(`- Draft contracts awaiting placement: ${report.awaitPlacement.count}`);
   lines.push("");

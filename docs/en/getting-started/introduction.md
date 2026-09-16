@@ -17,7 +17,7 @@ RPG Agent MV currently focuses on:
 
 The main desktop experience is organized around:
 
-- **Editor**: inspect maps and events, handle placeable events, and review staged changes.
+- **Editor**: inspect maps and events, handle placeable events, and review directly saved results.
 - **Console**: inspect assets, project management, run logs, and settings.
 - **Agent panel**: submit natural-language requests, answer ASK confirmations, review event previews, and inspect task output.
 

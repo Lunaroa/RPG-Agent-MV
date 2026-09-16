@@ -1856,7 +1856,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       return;
     }
     options.busy.value = true;
-    options.setStatus(t('mapcanvas.status.stagingPaint'), 'busy');
+    options.setStatus(t('mapcanvas.status.savingPaint'), 'busy');
     try {
       const report = await options.postTiles(edits);
       if (report.changes?.length) {
@@ -1866,9 +1866,9 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
         syncStackLengths();
       }
       await options.reloadMap();
-      options.setStatus(t('mapcanvas.status.stagedCells', { count: report.changedCells }), 'saved');
+      options.setStatus(t('mapcanvas.status.savedCells', { count: report.changedCells }), 'saved');
     } catch (error) {
-      options.setStatus(t('mapcanvas.status.stageFailed', { message: (error as Error).message }), 'error');
+      options.setStatus(t('mapcanvas.status.saveFailed', { message: (error as Error).message }), 'error');
       if (map && rollback) {
         map.data = rollback;
         renderMap();
@@ -1885,7 +1885,7 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     const index = extraLayerSelectionIndex(options.layer.value);
     if (index == null) return;
     options.busy.value = true;
-    options.setStatus(t('mapcanvas.status.stagingPaint'), 'busy');
+    options.setStatus(t('mapcanvas.status.savingPaint'), 'busy');
     try {
       const size = map.width * map.height;
       const changes: TileChange[] = [];
@@ -1908,11 +1908,11 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
         redoStack = [];
         syncStackLengths();
         await options.saveExtraTileLayers();
-        options.setStatus(t('mapcanvas.status.stagedCells', { count: changes.length }), 'saved');
+        options.setStatus(t('mapcanvas.status.savedCells', { count: changes.length }), 'saved');
       }
       renderMap();
     } catch (error) {
-      options.setStatus(t('mapcanvas.status.stageFailed', { message: (error as Error).message }), 'error');
+      options.setStatus(t('mapcanvas.status.saveFailed', { message: (error as Error).message }), 'error');
       if (snapshot) {
         for (let cell = 0; cell < snapshot.length; cell += 1) tiles[cell] = snapshot[cell];
       }

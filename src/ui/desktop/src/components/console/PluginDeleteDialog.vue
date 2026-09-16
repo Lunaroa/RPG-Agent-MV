@@ -38,7 +38,6 @@ const { t } = useI18n();
         <strong>{{ t('plugins.deleteFileAndConfig') }}</strong>
         <span>{{ t('plugins.deleteFileAndConfigDescription', { path: pluginPath }) }}</span>
       </div>
-      <p class="staging-note">{{ t('plugins.deleteStagingNotice') }}</p>
     </div>
     <template #footer>
       <el-button :disabled="busy" @click="$emit('close')">
@@ -82,9 +81,5 @@ const { t } = useI18n();
 }
 .delete-choice.destructive strong {
   color: var(--app-danger);
-}
-.staging-note {
-  color: var(--console-text-muted, #9a8e7e);
-  font-size: 11px;
 }
 </style>

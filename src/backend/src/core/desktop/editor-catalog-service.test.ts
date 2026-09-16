@@ -7,7 +7,7 @@ import { describe, test } from 'node:test';
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { buildEditorProjectCatalog, listProjectRelativeDirectoryAssets } from './editor-catalog-service.ts';
-import { writeStagedProjectBuffer } from './staging-service.ts';
+import { writeProjectBuffer } from './project-file-service.ts';
 
 describe('editor catalog service', () => {
   test('reads flat data layout without hardcoded www/data paths', async () => {
@@ -16,7 +16,7 @@ describe('editor catalog service', () => {
     try {
       await bootstrapDatabase(root, { importLegacyJson: false });
       writeFlatProject(project);
-      writeStagedImages(root, project);
+      writeAddedImages(root, project);
 
       const catalog = buildEditorProjectCatalog(root, project);
 
@@ -66,6 +66,7 @@ describe('editor catalog service', () => {
         id: 1,
         name: 'Outside',
         tilesetNames: ['Outside_A1', '', '', '', '', 'Outside_A5', '', '', ''],
+        extendedTilesetSheets: [],
       });
       assertIncludes(catalog.assets.characters.map((asset) => asset.fileName), 'Hero.png');
       assertIncludes(catalog.assets.faces.map((asset) => asset.fileName), 'HeroFace.png');
@@ -82,15 +83,15 @@ describe('editor catalog service', () => {
       assertIncludes(catalog.assets.titles1.map((asset) => asset.fileName), 'Book.png');
       assertIncludes(catalog.assets.titles2.map((asset) => asset.fileName), 'Sword.png');
       assert.equal(catalog.assets.bgm[0].fileName, 'Theme.ogg');
-      assertIncludes(catalog.assets.characters.map((asset) => asset.fileName), 'StagedHero.png');
-      assertIncludes(catalog.assets.faces.map((asset) => asset.fileName), 'StagedFace.png');
-      assertIncludes(catalog.assets.svActors.map((asset) => asset.fileName), 'StagedSvActor.png');
-      assertIncludes(catalog.assets.enemies.map((asset) => asset.fileName), 'StagedEnemy.png');
-      assertIncludes(catalog.assets.svEnemies.map((asset) => asset.fileName), 'StagedSvEnemy.png');
-      assertIncludes(catalog.assets.tilesets.map((asset) => asset.fileName), 'StagedTileset.png');
-      assertIncludes(catalog.assets.system.map((asset) => asset.fileName), 'StagedSystem.png');
-      assertIncludes(catalog.assets.titles1.map((asset) => asset.fileName), 'StagedTitle1.png');
-      assertIncludes(catalog.assets.titles2.map((asset) => asset.fileName), 'StagedTitle2.png');
+      assertIncludes(catalog.assets.characters.map((asset) => asset.fileName), 'AddedHero.png');
+      assertIncludes(catalog.assets.faces.map((asset) => asset.fileName), 'AddedFace.png');
+      assertIncludes(catalog.assets.svActors.map((asset) => asset.fileName), 'AddedSvActor.png');
+      assertIncludes(catalog.assets.enemies.map((asset) => asset.fileName), 'AddedEnemy.png');
+      assertIncludes(catalog.assets.svEnemies.map((asset) => asset.fileName), 'AddedSvEnemy.png');
+      assertIncludes(catalog.assets.tilesets.map((asset) => asset.fileName), 'AddedTileset.png');
+      assertIncludes(catalog.assets.system.map((asset) => asset.fileName), 'AddedSystem.png');
+      assertIncludes(catalog.assets.titles1.map((asset) => asset.fileName), 'AddedTitle1.png');
+      assertIncludes(catalog.assets.titles2.map((asset) => asset.fileName), 'AddedTitle2.png');
     } finally {
       closeDatabase();
       fs.rmSync(root, { recursive: true, force: true });
@@ -105,15 +106,15 @@ describe('editor catalog service', () => {
       fs.mkdirSync(path.join(project, 'img', 'map', 'nested'), { recursive: true });
       fs.writeFileSync(path.join(project, 'img', 'map', 'foo.png'), 'png', 'utf8');
       fs.writeFileSync(path.join(project, 'img', 'map', 'nested', 'deep.png'), 'png', 'utf8');
-      writeStagedProjectBuffer(root, project, 'img/map/staged-bar.png', Buffer.from('png', 'utf8'));
-      writeStagedProjectBuffer(root, project, 'img/map/nested/staged-deep.png', Buffer.from('png', 'utf8'));
+      writeProjectBuffer(root, project, 'img/map/added-bar.png', Buffer.from('png', 'utf8'));
+      writeProjectBuffer(root, project, 'img/map/nested/added-deep.png', Buffer.from('png', 'utf8'));
 
       const mvListed = listProjectRelativeDirectoryAssets(root, project, 'img/map', { recursive: false });
       assert.equal(mvListed.ok, true);
       if (!mvListed.ok) return;
       assert.equal(mvListed.directory, 'img/map');
       assertIncludes(mvListed.assets.map((asset) => asset.fileName), 'foo.png');
-      assertIncludes(mvListed.assets.map((asset) => asset.fileName), 'staged-bar.png');
+      assertIncludes(mvListed.assets.map((asset) => asset.fileName), 'added-bar.png');
       assert.equal(mvListed.assets.find((asset) => asset.fileName === 'foo.png')?.name, 'foo');
       assert.equal(mvListed.assets.some((asset) => asset.fileName.includes('/')), false);
       assertIncludes(mvListed.folders, 'nested');
@@ -123,7 +124,7 @@ describe('editor catalog service', () => {
       assert.equal(mzListed.ok, true);
       if (!mzListed.ok) return;
       assertIncludes(mzListed.assets.map((asset) => asset.fileName), 'nested/deep.png');
-      assertIncludes(mzListed.assets.map((asset) => asset.fileName), 'nested/staged-deep.png');
+      assertIncludes(mzListed.assets.map((asset) => asset.fileName), 'nested/added-deep.png');
       assert.equal(
         mzListed.assets.find((asset) => asset.fileName === 'nested/deep.png')?.name,
         'nested/deep',
@@ -244,19 +245,19 @@ function writeFlatProject(project: string): void {
   fs.writeFileSync(path.join(project, 'audio', 'bgm', 'Theme.ogg'), 'ogg', 'utf8');
 }
 
-function writeStagedImages(root: string, project: string): void {
+function writeAddedImages(root: string, project: string): void {
   for (const [relativePath, content] of [
-    ['img/characters/StagedHero.png', 'character'],
-    ['img/faces/StagedFace.png', 'face'],
-    ['img/sv_actors/StagedSvActor.png', 'sv actor'],
-    ['img/enemies/StagedEnemy.png', 'enemy'],
-    ['img/sv_enemies/StagedSvEnemy.png', 'sv enemy'],
-    ['img/tilesets/StagedTileset.png', 'tileset'],
-    ['img/system/StagedSystem.png', 'system'],
-    ['img/titles1/StagedTitle1.png', 'title1'],
-    ['img/titles2/StagedTitle2.png', 'title2'],
+    ['img/characters/AddedHero.png', 'character'],
+    ['img/faces/AddedFace.png', 'face'],
+    ['img/sv_actors/AddedSvActor.png', 'sv actor'],
+    ['img/enemies/AddedEnemy.png', 'enemy'],
+    ['img/sv_enemies/AddedSvEnemy.png', 'sv enemy'],
+    ['img/tilesets/AddedTileset.png', 'tileset'],
+    ['img/system/AddedSystem.png', 'system'],
+    ['img/titles1/AddedTitle1.png', 'title1'],
+    ['img/titles2/AddedTitle2.png', 'title2'],
   ] as const) {
-    writeStagedProjectBuffer(root, project, relativePath, Buffer.from(content, 'utf8'));
+    writeProjectBuffer(root, project, relativePath, Buffer.from(content, 'utf8'));
   }
 }
 

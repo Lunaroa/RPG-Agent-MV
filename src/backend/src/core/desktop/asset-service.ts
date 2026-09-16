@@ -4,7 +4,7 @@ import path from 'node:path';
 import { chatImageExtension, isChatImageMime } from '../../../../contract/chat-image-attachments.ts';
 import { assertProjectAssetThumbnailSizeBucket } from '../../../../contract/project-asset-thumbnails.ts';
 import { findMapLibraryScreenshot } from './library-service.ts';
-import { getProjectFileForRead, isInside } from './staging-service.ts';
+import { isInside, resolveProjectFileForRead } from './project-file-service.ts';
 
 export function projectAssetUrl(project: string, relativePath: string): string {
   const token = Buffer.from(path.resolve(project), 'utf8').toString('base64url');
@@ -94,7 +94,7 @@ export function resolveProjectEffectThumbnailRequest(
 }
 
 /**
- * Resolve the effective `.efkefc` for an effect name (staged drafts win) so the
+ * Resolve the project `.efkefc` for an effect name so the
  * generator and the protocol handler compute the same content-addressed cache path.
  */
 export function resolveProjectEffectThumbnailSource(
@@ -175,9 +175,8 @@ function assertReadableProjectAsset(
   if (!isInside(projectsRoot, project) && !isRegisteredProject(workflowRoot, project)) {
     throw new Error('Project asset is outside the workspace projects directory and not in the project registry.');
   }
-  const filePath = getProjectFileForRead(workflowRoot, project, relative);
-  const stagingRoot = path.join(path.resolve(workflowRoot), 'runtime', 'agent-console-staging');
-  if (!filePath || (!isInside(project, filePath) && !isInside(stagingRoot, filePath))) {
+  const filePath = resolveProjectFileForRead(project, relative);
+  if (!filePath || !isInside(project, filePath)) {
     throw new Error('Project asset path is outside allowed roots.');
   }
   if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) throw new Error('Project asset not found.');

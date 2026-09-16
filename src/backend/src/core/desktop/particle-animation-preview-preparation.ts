@@ -7,10 +7,10 @@ import type { RpgMakerEngine } from '../rmmv/rpg-maker-engine.ts';
 import {
   cleanupIsolatedProject,
   type IsolatedProjectPreparation,
-  prepareIsolatedStagedProject,
+  prepareIsolatedProject,
 } from './isolated-project-preparation.ts';
 import { RPG_MAKER_MZ_PROJECT_RUNTIME_COPY_EXCLUSIONS } from './rpg-maker-mz-runtime.ts';
-import { getProjectFileForRead } from './staging-service.ts';
+import { resolveProjectFileForRead } from './project-file-service.ts';
 import type { IsolatedProjectOwnershipChallenge } from './isolated-project-attestation.ts';
 import {
   attestOwnedIsolatedProject,
@@ -40,10 +40,16 @@ export interface ParticleAnimationPreviewAppPreparation {
 }
 
 export interface ParticleAnimationPreviewPreparationDependencies {
-  prepareIsolated: typeof prepareIsolatedStagedProject;
-  getEffectiveFile: typeof getProjectFileForRead;
+  prepareIsolated: typeof prepareIsolatedProject;
+  getEffectiveFile: ProjectFileResolver;
   ownershipChallenge: IsolatedProjectOwnershipChallenge;
 }
+
+type ProjectFileResolver = (workflowRoot: string, project: string, relativePath: string) => string | null;
+
+const resolveProjectFile: ProjectFileResolver = (_workflowRoot, project, relativePath) => (
+  resolveProjectFileForRead(project, relativePath)
+);
 
 export class ParticleAnimationPreviewPreparationError extends Error {}
 
@@ -140,8 +146,8 @@ export function prepareParticleAnimationPreview(
 
   const autoplay = options.autoplay !== false;
   const animation = validatePreviewAnimation(animationInput, manifest.screenWidth, manifest.screenHeight, { requireEffect: autoplay });
-  const prepareIsolated = dependencies.prepareIsolated || prepareIsolatedStagedProject;
-  const getEffectiveFile = dependencies.getEffectiveFile || getProjectFileForRead;
+  const prepareIsolated = dependencies.prepareIsolated || prepareIsolatedProject;
+  const getEffectiveFile = dependencies.getEffectiveFile || resolveProjectFile;
   const isolated = prepareIsolated(workflowRoot, project, {
     temporaryPrefix: 'rpg-agent-mz-particle-preview-',
     excludeRelativePaths: COPY_EXCLUSIONS,
@@ -226,8 +232,8 @@ export function prepareParticleAnimationPreview(
  * In-panel preview variant: builds only the tiny generated app (index.html plus two
  * scripts) and serves every game asset directly from the project through the preview
  * protocol's pass-through prefixes. No project fingerprint and no project copy, so
- * preparing stays cheap on multi-gigabyte projects; staged drafts of the referenced
- * assets are overlaid into the app directory, which wins over the pass-through root.
+ * preparing stays cheap on multi-gigabyte projects. Referenced assets are validated
+ * in place and served through the pass-through root.
  */
 export function prepareParticleAnimationPreviewApp(
   workflowRoot: string,
@@ -249,7 +255,7 @@ export function prepareParticleAnimationPreviewApp(
   const loop = !capturing && options.loop === true;
   const requireEffect = autoplay || armed;
   const animation = validatePreviewAnimation(animationInput, manifest.screenWidth, manifest.screenHeight, { requireEffect });
-  const getEffectiveFile = dependencies.getEffectiveFile || getProjectFileForRead;
+  const getEffectiveFile = dependencies.getEffectiveFile || resolveProjectFile;
   const ownershipChallenge = createOwnedEmptyIsolatedProject(project, {
     temporaryPrefix: 'rpg-agent-mz-particle-preview-app-',
   });
@@ -277,7 +283,7 @@ export function prepareParticleAnimationPreviewApp(
       }
     }
 
-    // Plain backdrops never play, so the effect and sound assets are only overlaid
+    // Plain backdrops never play, so effect and sound assets are only resolved
     // when the scene will play (autoplay) or is armed to play on demand.
     if (requireEffect) {
       ownedAppWrite(() => overlayEffectiveAsset(
@@ -438,7 +444,7 @@ export function validatePreviewAnimation(
 function copyEffectiveAsset(
   workflowRoot: string,
   project: string,
-  getEffectiveFile: typeof getProjectFileForRead,
+  getEffectiveFile: ProjectFileResolver,
   relativeWithoutExtension: string,
   extensions: readonly string[],
   appDirectory: string,
@@ -462,14 +468,13 @@ function copyRequiredFile(source: string, target: string, label: string): void {
 
 /**
  * Serve-direct variant of copyEffectiveAsset: the asset stays in the project and is
- * read through the pass-through root; only a staged draft (whose effective path
- * differs from the project file) is copied into the app directory so it wins.
+ * read through the pass-through root.
  */
 function overlayEffectiveAsset(
   workflowRoot: string,
   project: string,
   resourceRoot: string,
-  getEffectiveFile: typeof getProjectFileForRead,
+  getEffectiveFile: ProjectFileResolver,
   relativeWithoutExtension: string,
   extensions: readonly string[],
   appDirectory: string,
@@ -489,14 +494,14 @@ function overlayEffectiveAsset(
 
 /**
  * Serve-direct variant of copyEditorBattlebacks: resolves the same System.json
- * defaults (with the stock Grassland fallback) but only overlays staged drafts;
- * untouched images are read straight from the project.
+ * defaults (with the stock Grassland fallback); images are read straight from
+ * the project.
  */
 function resolveEditorBattlebacks(
   workflowRoot: string,
   project: string,
   resourceRoot: string,
-  getEffectiveFile: typeof getProjectFileForRead,
+  getEffectiveFile: ProjectFileResolver,
   appDirectory: string,
 ): { battleback1: string; battleback2: string } {
   const result = { battleback1: '', battleback2: '' };
@@ -535,14 +540,14 @@ function resolveEditorBattlebacks(
  * Resolve the project's first enemy battler image so the interactive preview shows a
  * real monster as the effect's target (matching the editor) instead of the dummy
  * circle. Follows the project's front/side view to pick img/enemies or img/sv_enemies;
- * only staged drafts are overlaid, untouched images stream from the pass-through root.
+ * images stream from the pass-through root.
  * Returns '' when no usable enemy image exists (the runtime then draws the dummy target).
  */
 function resolveDefaultEnemyBattler(
   workflowRoot: string,
   project: string,
   resourceRoot: string,
-  getEffectiveFile: typeof getProjectFileForRead,
+  getEffectiveFile: ProjectFileResolver,
   appDirectory: string,
 ): string {
   const folder = readOptSideView(workflowRoot, project, getEffectiveFile) ? 'sv_enemies' : 'enemies';
@@ -579,7 +584,7 @@ function resolveDefaultEnemyBattler(
 function readOptSideView(
   workflowRoot: string,
   project: string,
-  getEffectiveFile: typeof getProjectFileForRead,
+  getEffectiveFile: ProjectFileResolver,
 ): boolean {
   const systemPath = getEffectiveFile(workflowRoot, project, 'data/System.json');
   if (!systemPath || !isFile(systemPath)) return false;
@@ -598,7 +603,7 @@ function readOptSideView(
 function copyEditorBattlebacks(
   workflowRoot: string,
   project: string,
-  getEffectiveFile: typeof getProjectFileForRead,
+  getEffectiveFile: ProjectFileResolver,
   appDirectory: string,
 ): { battleback1: string; battleback2: string } {
   const result = { battleback1: '', battleback2: '' };

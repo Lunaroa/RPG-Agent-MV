@@ -3,15 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
-  applyStagedOperation,
-  discardStagedOperation,
-  getProjectFileForRead,
-  getProjectStagingStatus,
   projectHash,
-  stageDatabaseStagingOperationDrafts,
-  type StagingOperation,
-} from "../desktop/staging-service.ts";
-import { STAGING_ERROR_CODES, StagingError } from "../desktop/staging-errors.ts";
+  resolveProjectFileForRead,
+  writeProjectFilesAtomically,
+} from "../desktop/project-file-service.ts";
 import { applyRmmvDatabasePatch, type RmmvDatabaseFieldDiff, type RmmvJsonPatchOperation } from "./database-patch.ts";
 import { readEffectiveRmmvDatabaseTable } from "./database-read.ts";
 import {
@@ -111,7 +106,7 @@ export interface RmmvDatabaseChangeRequest {
   changes: readonly RmmvDatabaseChange[];
 }
 
-export interface RmmvDatabaseStageRequest extends RmmvDatabaseChangeRequest {
+export interface RmmvDatabaseCommitRequest extends RmmvDatabaseChangeRequest {
   planHash: string;
   sessionId?: string;
 }
@@ -162,14 +157,6 @@ interface LoadedProjectInputs {
   inputHashes: RmmvDatabaseInputHash[];
   engine: RpgMakerEngine;
   mapReadStates: LoadedMapReadState[];
-}
-
-interface UnreadableMapApplyBlocker {
-  mapId: number;
-  relativePath: string;
-  reason: "missing" | "invalid";
-  error?: string;
-  relationSources: string[];
 }
 
 const MISSING_EFFECTIVE_HASH = "<missing-rmmv-map>";
@@ -237,25 +224,6 @@ export function validateEffectiveRmmvDatabaseState(
   return validateRmmvDatabaseSnapshot(loaded.snapshot, { maps: loaded.maps, engine: loaded.engine });
 }
 
-export function validateEffectiveRmmvDatabaseStagingTransition(
-  workflowRoot: string,
-  projectRoot: string,
-): RmmvDatabaseSemanticValidationResult {
-  const project = path.resolve(projectRoot);
-  const status = getProjectStagingStatus(workflowRoot, project);
-  const sourceOnlyRelativePaths = new Set(status.files.map((file) => file.relativePath));
-  // Missing map files are reported as unreadable map states, not thrown errors;
-  // apply-time safety stays enforced by preflightRmmvDatabaseProjectApply.
-  const before = loadProjectInputs(workflowRoot, project, { sourceOnlyRelativePaths, allowUnreadableMaps: true });
-  const after = loadProjectInputs(workflowRoot, project, { allowUnreadableMaps: true });
-  return validateRmmvDatabaseTransition(before.snapshot, after.snapshot, {
-    beforeMaps: before.maps,
-    maps: after.maps,
-    engine: after.engine,
-    excludeUnchangedWarnings: true,
-  });
-}
-
 export function captureEffectiveRmmvDatabaseValidationState(
   workflowRoot: string,
   project: string,
@@ -282,267 +250,42 @@ export function validateEffectiveRmmvDatabaseTransition(
   });
 }
 
-export function preflightRmmvDatabaseProjectApply(
-  workflowRoot: string,
-  projectRoot: string,
-): RmmvDatabaseSemanticValidationResult {
-  const project = path.resolve(projectRoot);
-  const status = getProjectStagingStatus(workflowRoot, project);
-  if (status.conflict) throw new Error("Database staging conflict blocks apply.");
-  const operations = status.operations as StagingOperation[];
-  const after = loadProjectInputs(workflowRoot, project, { allowUnreadableMaps: true });
-  const sourceOnlyRelativePaths = new Set(status.files.map((file) => file.relativePath));
-  const before = loadProjectInputs(workflowRoot, project, {
-    sourceOnlyRelativePaths,
-    allowUnreadableMaps: true,
-  });
-  assertUnreadableMapApplySafe(project, status, before, after);
-  const actualHashes = new Map(after.inputHashes.map((entry) => [entry.relativePath, entry.effectiveHash]));
-
-  for (const operation of operations) {
-    const metadata = parseAndVerifyOperationMetadata(project, operation);
-    for (const output of metadata.outputs) {
-      if (actualHashes.get(output.relativePath) !== output.afterHash) {
-        throw new Error(`Database operation draft drift blocks apply: ${output.relativePath}`);
-      }
-    }
-  }
-
-  const validation = validateRmmvDatabaseTransition(before.snapshot, after.snapshot, {
-    beforeMaps: before.maps,
-    maps: after.maps,
-    engine: after.engine,
-  });
-  assertSemanticValidationOk(validation);
-  return validation;
-}
-
-function assertUnreadableMapApplySafe(
-  project: string,
-  status: ReturnType<typeof getProjectStagingStatus>,
-  before: LoadedProjectInputs,
-  after: LoadedProjectInputs,
-  touchedPaths: ReadonlySet<string> = new Set(status.files.map((file) => file.relativePath)),
-): void {
-  const stagedPaths = new Set(touchedPaths);
-  const beforeById = new Map(before.mapReadStates.map((state) => [state.mapId, state]));
-  const blockers = new Map<number, UnreadableMapApplyBlocker>();
-
-  for (const state of after.mapReadStates) {
-    if (state.readable) continue;
-    const previous = beforeById.get(state.mapId);
-    if (!previous || previous.readable || stagedPaths.has(state.relativePath)) {
-      blockers.set(state.mapId, {
-        mapId: state.mapId,
-        relativePath: state.relativePath,
-        reason: unreadableMapReason(state),
-        ...(state.error ? { error: state.error } : {}),
-        relationSources: [],
-      });
-    }
-  }
-
-  const unreadableById = new Map(
-    after.mapReadStates
-      .filter((state) => !state.readable)
-      .map((state) => [state.mapId, state]),
-  );
-  const afterValidation = validateRmmvDatabaseSnapshot(after.snapshot, {
-    maps: after.maps,
-    engine: after.engine,
-  });
-  for (const issue of afterValidation.issues) {
-    if (issue.severity !== "error" || issue.code !== "DB_REFERENCE_MISSING") continue;
-    if (issue.reference?.table !== "maps") continue;
-    const targetMapId = issue.reference.id;
-    if (!unreadableById.has(targetMapId)) continue;
-    const sourcePath = databaseIssueRelativePath(project, issue.source.table, issue.source.id);
-    if (!sourcePath || !stagedPaths.has(sourcePath)) continue;
-    const state = unreadableById.get(targetMapId)!;
-    const blocker = blockers.get(targetMapId) || {
-      mapId: targetMapId,
-      relativePath: state.relativePath,
-      reason: unreadableMapReason(state),
-      ...(state.error ? { error: state.error } : {}),
-      relationSources: [],
-    };
-    if (!blocker.relationSources.includes(sourcePath)) blocker.relationSources.push(sourcePath);
-    blockers.set(targetMapId, blocker);
-  }
-
-  if (blockers.size === 0) return;
-  const entries = [...blockers.values()].sort((left, right) => left.mapId - right.mapId);
-  const paths = entries.map((entry) => entry.relativePath).join(", ");
-  throw new StagingError(
-    STAGING_ERROR_CODES.rmmvMapPreflight,
-    `Apply was blocked before the project transaction started because these staged changes require readable RMMV map files: ${paths}. Source project files were not changed. Restore or repair the listed map files, then retry; otherwise discard the staged changes.`,
-    {
-      kind: "rmmv-map-preflight",
-      transactionStarted: false,
-      sourceFilesChanged: false,
-      missingMaps: entries,
-      stagedPaths: [...stagedPaths].sort(),
-    },
-  );
-}
-
-function unreadableMapReason(state: LoadedMapReadState): "missing" | "invalid" {
-  if (state.readable) throw new Error("Readable map state cannot be reported as unreadable.");
-  return state.reason;
-}
-
-function databaseIssueRelativePath(
-  project: string,
-  table: RmmvDatabaseSemanticValidationResult["issues"][number]["source"]["table"],
-  id?: number,
-): string | null {
-  const layout = resolveRmmvLayout(project);
-  if (table === "maps") {
-    if (!Number.isInteger(id) || Number(id) <= 0) return null;
-    return dataRelativePath(layout, `Map${String(id).padStart(3, "0")}.json`);
-  }
-  return dataRelativePath(layout, getRmmvDatabaseSchemaByKey(table).fileName);
-}
-
-export function stageRmmvDatabaseChanges(
+export function commitRmmvDatabaseChanges(
   workflowRoot: string,
   project: string,
-  request: RmmvDatabaseStageRequest,
+  request: RmmvDatabaseCommitRequest,
 ) {
   if (!/^[a-f0-9]{64}$/i.test(String(request?.planHash || ""))) {
-    throw new Error("Database stage planHash must be a SHA-256 hex digest.");
+    throw new Error("Database commit planHash must be a SHA-256 hex digest.");
   }
   const built = buildPlan(workflowRoot, project, request);
   const plan = built.publicPlan;
   if (plan.planHash !== request.planHash.toLowerCase()) {
-    throw new Error(`Database planHash is stale; run dryRun again before staging. Expected ${plan.planHash}.`);
+    throw new Error(`Database planHash is stale; run dryRun again before saving. Expected ${plan.planHash}.`);
   }
   if (!plan.validation.ok) {
     throw new Error(`Database plan has ${plan.validation.issues.filter((issue) => issue.severity === "error").length} validation error(s).`);
   }
 
-  const operationId = `db:${crypto.randomUUID()}`;
-  const operation = stageDatabaseStagingOperationDrafts(
-    workflowRoot,
-    project,
-    {
-      operationId,
-      planHash: plan.planHash,
-      ...(request.sessionId ? { sessionId: request.sessionId } : {}),
-      files: plan.files.map((file) => file.relativePath),
-      changes: {
-        version: plan.version,
-        resolvedChanges: plan.resolvedChanges,
-        inputHashes: plan.inputHashes,
-        outputHashes: plan.files.map((file) => ({ relativePath: file.relativePath, afterHash: file.afterHash })),
-      },
-    },
-    built.drafts,
-  );
+  const write = writeProjectFilesAtomically(workflowRoot, project, built.drafts.map((draft) => ({
+    relativePath: draft.relativePath,
+    content: draft.content,
+    expectedSourceHash: draft.expectedSourceHash,
+  })));
   return {
-    operationId: operation.operationId,
-    planHash: operation.planHash,
-    files: [...operation.files],
+    planHash: plan.planHash,
+    files: plan.files.map((file) => file.relativePath),
     resolvedChanges: plan.resolvedChanges,
     validation: plan.validation,
+    write,
   };
-}
-
-export function discardRmmvDatabaseChanges(workflowRoot: string, project: string, operationId: string) {
-  return discardStagedOperation(workflowRoot, project, operationId);
-}
-
-export function applyRmmvDatabaseChanges(workflowRoot: string, project: string, operationId: string) {
-  return applyStagedOperation(workflowRoot, project, operationId, {
-    validate: ({ operation }) => {
-      validateStagedOperationState(workflowRoot, project, operation);
-    },
-  });
-}
-
-function validateStagedOperationState(
-  workflowRoot: string,
-  projectRoot: string,
-  operation: { planHash: string; files: string[]; changes: unknown },
-): void {
-  const project = path.resolve(projectRoot);
-  const { inputHashes, outputs } = parseAndVerifyOperationMetadata(project, operation);
-
-  const after = loadProjectInputs(workflowRoot, project, { allowUnreadableMaps: true });
-  const actual = new Map(after.inputHashes.map((entry) => [entry.relativePath, entry.effectiveHash]));
-  const approvedInputs = new Map(inputHashes.map((entry) => [entry.relativePath, entry]));
-  for (const output of outputs) {
-    const approvedInput = approvedInputs.get(output.relativePath);
-    if (!approvedInput) {
-      throw new Error(`Database staging output is not part of the approved input set: ${output.relativePath}`);
-    }
-    if (actual.get(output.relativePath) !== output.afterHash) {
-      throw new Error(`Database operation draft drift blocks apply: ${output.relativePath}`);
-    }
-  }
-
-  const sourceOnlyRelativePaths = new Set(outputs.map((output) => output.relativePath));
-  const before = loadProjectInputs(workflowRoot, project, {
-    sourceOnlyRelativePaths,
-    allowUnreadableMaps: true,
-  });
-  assertUnreadableMapApplySafe(
-    project,
-    getProjectStagingStatus(workflowRoot, project),
-    before,
-    after,
-    sourceOnlyRelativePaths,
-  );
-  for (const output of outputs) {
-    const approvedSourceHash = approvedInputs.get(output.relativePath)!.sourceHash;
-    const currentSourceHash = before.inputHashes.find((entry) => entry.relativePath === output.relativePath)?.sourceHash;
-    if (currentSourceHash !== approvedSourceHash) {
-      throw new Error(`Database source drift blocks apply: ${output.relativePath}`);
-    }
-  }
-  const validation = validateRmmvDatabaseTransition(before.snapshot, after.snapshot, {
-    beforeMaps: before.maps,
-    maps: after.maps,
-    engine: after.engine,
-  });
-  assertSemanticValidationOk(validation);
-}
-
-function parseAndVerifyOperationMetadata(
-  project: string,
-  operation: Pick<StagingOperation, "planHash" | "files" | "changes">,
-): { inputHashes: RmmvDatabaseInputHash[]; outputs: Array<{ relativePath: string; afterHash: string }> } {
-  const metadata = requireRecord(operation.changes, "Database staging operation metadata");
-  if (metadata.version !== 1 || !Array.isArray(metadata.resolvedChanges)) {
-    throw new Error("Database staging operation metadata is invalid.");
-  }
-  const inputHashes = parseInputHashes(metadata.inputHashes);
-  const outputs = parseOutputHashes(metadata.outputHashes);
-  const outputFiles = new Set(outputs.map((output) => output.relativePath));
-  if (
-    outputFiles.size !== operation.files.length
-    || operation.files.some((relativePath) => !outputFiles.has(relativePath))
-  ) {
-    throw new Error("Database staging operation output files do not match operation ownership.");
-  }
-  const recomputedPlanHash = hash(Buffer.from(canonicalJson({
-    version: 1,
-    projectHash: projectHash(project),
-    resolvedChanges: metadata.resolvedChanges,
-    inputHashes,
-    outputs,
-  }), "utf8"));
-  if (recomputedPlanHash !== operation.planHash) {
-    throw new Error("Database staging operation planHash no longer matches its metadata.");
-  }
-  return { inputHashes, outputs };
 }
 
 function assertSemanticValidationOk(validation: RmmvDatabaseSemanticValidationResult): void {
   if (validation.ok) return;
   const errors = validation.issues.filter((issue) => issue.severity === "error");
   const detail = errors.slice(0, 5).map((issue) => `${issue.source.path}: ${issue.message}`).join("; ");
-  throw new Error(`Database staged state failed semantic revalidation (${errors.length} error(s)): ${detail}`);
+  throw new Error(`Database state failed semantic validation (${errors.length} error(s)): ${detail}`);
 }
 
 function buildPlan(
@@ -893,7 +636,7 @@ function readEffectiveJsonInput(
 } {
   const effectiveFile = sourceOnly
     ? path.resolve(project, ...relativePath.split("/"))
-    : getProjectFileForRead(workflowRoot, project, relativePath);
+    : resolveProjectFileForRead(project, relativePath);
   if (!effectiveFile) throw new RmmvJsonInputReadError("missing", `Required RMMV project file is missing: ${relativePath}`);
   let content: Buffer;
   try {
@@ -984,51 +727,6 @@ function smallestEmptySlot(records: unknown[]): number {
 function sourceFileHash(project: string, relativePath: string): string | null {
   const file = path.resolve(project, ...relativePath.split("/"));
   return fs.existsSync(file) ? hash(fs.readFileSync(file)) : null;
-}
-
-function parseInputHashes(value: unknown): RmmvDatabaseInputHash[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error("Database staging operation input hashes are missing.");
-  }
-  const result = value.map((entry, index) => {
-    const record = requireRecord(entry, `Database input hash ${index}`);
-    if (typeof record.relativePath !== "string" || !isSha256(record.effectiveHash)) {
-      throw new Error(`Database input hash ${index} is invalid.`);
-    }
-    if (record.sourceHash !== null && !isSha256(record.sourceHash)) {
-      throw new Error(`Database input source hash ${index} is invalid.`);
-    }
-    return {
-      relativePath: record.relativePath,
-      sourceHash: record.sourceHash as string | null,
-      effectiveHash: record.effectiveHash as string,
-    };
-  });
-  if (new Set(result.map((entry) => entry.relativePath)).size !== result.length) {
-    throw new Error("Database staging operation input hashes contain duplicate files.");
-  }
-  return result;
-}
-
-function parseOutputHashes(value: unknown): Array<{ relativePath: string; afterHash: string }> {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error("Database staging operation output hashes are missing.");
-  }
-  const result = value.map((entry, index) => {
-    const record = requireRecord(entry, `Database output hash ${index}`);
-    if (typeof record.relativePath !== "string" || !isSha256(record.afterHash)) {
-      throw new Error(`Database output hash ${index} is invalid.`);
-    }
-    return { relativePath: record.relativePath, afterHash: record.afterHash as string };
-  });
-  if (new Set(result.map((entry) => entry.relativePath)).size !== result.length) {
-    throw new Error("Database staging operation output hashes contain duplicate files.");
-  }
-  return result;
-}
-
-function isSha256(value: unknown): value is string {
-  return typeof value === "string" && /^[a-f0-9]{64}$/i.test(value);
 }
 
 function serializeJson(value: unknown): Buffer {

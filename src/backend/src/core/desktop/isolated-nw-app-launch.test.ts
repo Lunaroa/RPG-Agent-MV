@@ -145,14 +145,14 @@ test('keeps session profiles confined and preserves embedded and external launch
       launchStyle: 'embedded',
       evidenceExecutable: 'neutral-runtime',
     }, snapshot, sessionId, profile, 'source-project')
-    const stagedEmbedded = buildIsolatedNwLaunchCommand({
+    const isolatedEmbedded = buildIsolatedNwLaunchCommand({
       engine: 'rpg-maker-mv',
       executable: path.join(isolated, 'Game.exe'),
       runtimeRoot: isolated,
       source: 'project-local',
       launchStyle: 'embedded',
       evidenceExecutable: 'neutral-runtime',
-    }, snapshot, sessionId, profile, 'staged-project')
+    }, snapshot, sessionId, profile, 'isolated-project')
     assert.deepEqual(mv.args, [profileArgument, `--nwapp=${isolated}`, 'test'])
     assert.deepEqual(mz.args, [profileArgument, `--nwapp=${isolated}`])
     assert.deepEqual(mv.evidence.argumentRoles, ['session-profile', 'nwapp-temporary-project', 'test'])
@@ -162,8 +162,8 @@ test('keeps session profiles confined and preserves embedded and external launch
     assert.deepEqual(embedded.args, [profileArgument])
     assert.equal(embedded.evidence.checks.nwappExplicit, false)
     assert.equal(embedded.executable, path.join(isolated, 'Game.exe'))
-    assert.deepEqual(stagedEmbedded.args, [profileArgument])
-    assert.equal(stagedEmbedded.executable, path.join(isolated, 'Game.exe'))
+    assert.deepEqual(isolatedEmbedded.args, [profileArgument])
+    assert.equal(isolatedEmbedded.executable, path.join(isolated, 'Game.exe'))
     assert.equal(path.dirname(profile), isolated)
     assert.equal(fs.realpathSync.native(profile).startsWith(`${fs.realpathSync.native(isolated)}${path.sep}`), true)
     assert.equal(fs.lstatSync(profile).isDirectory(), true)
@@ -204,7 +204,7 @@ test('keeps session profiles confined and preserves embedded and external launch
         source: 'project-local',
         launchStyle: 'embedded',
         evidenceExecutable: 'neutral-runtime',
-      }, snapshot, sessionId, profile, 'staged-project'),
+      }, snapshot, sessionId, profile, 'isolated-project'),
       /escaped the isolated project/,
     )
   } finally {
@@ -219,7 +219,6 @@ function isolatedPreparation(sourceProject: string, temporaryProjectPath: string
     ...challenge,
     sourceFingerprint: 'source',
     saveFingerprint: 'save',
-    staging: { files: [], digest: 'staging' },
     savesExcluded: true,
   }
 }

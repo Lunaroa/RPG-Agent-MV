@@ -94,17 +94,6 @@
         @click="$emit('open-ulds')"
       ><Setting /></button>
     </div>
-    <div v-if="stagingDirty" class="staging-actions">
-      <button
-        type="button"
-        class="workbench-button primary"
-        data-ui-id="editor-staging-apply"
-        :disabled="busy || stagingConflicted"
-        :title="stagingConflicted ? t('editor.staging.conflictApplyDisabled') : t('editor.toolbar.applyStaging')"
-        @click="$emit('apply')"
-      >{{ t('editor.toolbar.applyStaging') }}</button>
-      <button type="button" class="workbench-button" data-ui-id="editor-staging-discard" :disabled="busy" @click="$emit('discard')">{{ t('editor.toolbar.discard') }}</button>
-    </div>
   </header>
 </template>
 
@@ -115,8 +104,8 @@ import type { EditorMode, MapLayerSelection, MapPaintMode, MapTool } from './edi
 import { extraLayerSelection, extraLayerSelectionIndex } from './editorTypes';
 import EllipseToolIcon from './EllipseToolIcon.vue';
 import { useI18n } from '../../i18n';
-const props = defineProps<{mode:EditorMode;tool:MapTool;paintMode:MapPaintMode;layer:MapLayerSelection;supportsLayerSelection:boolean;showRegions:boolean;showTileFlags:boolean;tileFlagsAvailable:boolean;showUlds:boolean;uldsAvailable:boolean;zoom:number;undoLen:number;redoLen:number;busy:boolean;stagingDirty:boolean;stagingConflicted:boolean;previewRefreshEnabled:boolean;previewExecutionEnabled:boolean;previewExecutionAvailable:boolean;extraTileLayers?:{name:string}[];extraTileLayersEnabled?:boolean}>();
-defineEmits<{'update:mode':[EditorMode];'update:layer':[MapLayerSelection];'update:showRegions':[boolean];'update:showTileFlags':[boolean];'update:showUlds':[boolean];'open-ulds':[];'update:preview-execution':[boolean];'select-tool':[MapTool];'select-tile':[];'select-shadow':[];undo:[];redo:[];'zoom-in':[];'zoom-out':[];'reset-zoom':[];apply:[];discard:[];'refresh-preview':[];'add-extra-layer':[];'remove-extra-layer':[]}>();
+const props = defineProps<{mode:EditorMode;tool:MapTool;paintMode:MapPaintMode;layer:MapLayerSelection;supportsLayerSelection:boolean;showRegions:boolean;showTileFlags:boolean;tileFlagsAvailable:boolean;showUlds:boolean;uldsAvailable:boolean;zoom:number;undoLen:number;redoLen:number;busy:boolean;previewRefreshEnabled:boolean;previewExecutionEnabled:boolean;previewExecutionAvailable:boolean;extraTileLayers?:{name:string}[];extraTileLayersEnabled?:boolean}>();
+defineEmits<{'update:mode':[EditorMode];'update:layer':[MapLayerSelection];'update:showRegions':[boolean];'update:showTileFlags':[boolean];'update:showUlds':[boolean];'open-ulds':[];'update:preview-execution':[boolean];'select-tool':[MapTool];'select-tile':[];'select-shadow':[];undo:[];redo:[];'zoom-in':[];'zoom-out':[];'reset-zoom':[];'refresh-preview':[];'add-extra-layer':[];'remove-extra-layer':[]}>();
 const { t } = useI18n();
 const tools = computed<{ id: MapTool; label: string; icon: Component }[]>(() => [
   { id: 'pencil', label: t('editor.toolbar.tool.pencil'), icon: EditPen },
@@ -145,6 +134,5 @@ const layerEntries = computed<Array<{ value: MapLayerSelection; label: string; t
 .ulds-group>button:hover:not(:disabled){border-color:var(--app-border-strong);background:var(--app-bg-sunken);color:var(--app-ink)}
 .ulds-group>button.active{border-color:var(--app-accent);background:var(--app-accent-soft);color:var(--app-accent)}
 .ulds-group>button:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}
-.staging-actions{display:flex;align-items:center;gap:4px;margin-left:4px;padding-left:8px;border-left:1px solid var(--app-border)}
 .preview-execution-toggle{height:28px;display:flex;align-items:center;gap:5px;padding:0 8px;border:1px solid var(--app-border);border-radius:4px;background:transparent;color:var(--app-ink-soft);font:inherit;font-size:11px;font-weight:600;cursor:pointer}.preview-execution-toggle :deep(svg){width:14px;height:14px}.preview-execution-toggle:hover:not(:disabled){background:var(--app-bg-sunken);color:var(--app-ink)}.preview-execution-toggle.active{border-color:var(--app-accent);background:var(--app-accent-soft);color:var(--app-accent)}.preview-execution-toggle:focus-visible{outline:2px solid var(--app-accent);outline-offset:1px}.preview-execution-toggle:disabled{opacity:.4;cursor:not-allowed}
 </style>

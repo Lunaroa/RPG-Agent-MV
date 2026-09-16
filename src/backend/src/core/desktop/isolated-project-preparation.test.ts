@@ -9,16 +9,15 @@ import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import {
   cleanupIsolatedProject,
-  prepareIsolatedStagedProject,
+  prepareIsolatedProject,
   prepareUiDesignerRendererOverlay,
   verifyIsolatedSourceState,
   type IsolatedProjectPreparation,
 } from './isolated-project-preparation.ts';
-import { deleteStagedProjectFile, writeStagedProjectJson } from './staging-service.ts';
 
 const FIXED_TIME = new Date('2026-01-02T03:04:05.678Z');
 
-describe('isolated staged project preparation (junction + hybrid fingerprint)', { concurrency: false }, () => {
+describe('isolated project preparation (junction + hybrid fingerprint)', { concurrency: false }, () => {
   let root: string;
   let project: string;
   let preparation: IsolatedProjectPreparation | null;
@@ -38,7 +37,7 @@ describe('isolated staged project preparation (junction + hybrid fingerprint)', 
   });
 
   test('junctions untouched asset trees and copies data/js physically', () => {
-    preparation = prepareIsolatedStagedProject(root, project);
+    preparation = prepareIsolatedProject(root, project);
     const temp = preparation.temporaryProject;
 
     assert.equal(fs.lstatSync(path.join(temp, 'data')).isSymbolicLink(), false);
@@ -53,24 +52,11 @@ describe('isolated staged project preparation (junction + hybrid fingerprint)', 
     assert.deepEqual(verifyIsolatedSourceState(root, preparation), {
       sourceUnchanged: true,
       savesUnchanged: true,
-      stagingUnchanged: true,
     });
   });
 
-  test('materializes directories with staged overlays so writes never cross a junction', () => {
-    writeStagedProjectJson(root, project, 'img/notes/pin.json', { staged: true });
-    preparation = prepareIsolatedStagedProject(root, project);
-    const temp = preparation.temporaryProject;
-
-    assert.equal(fs.lstatSync(path.join(temp, 'img')).isSymbolicLink(), false);
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(temp, 'img', 'notes', 'pin.json'), 'utf8')), { staged: true });
-    assert.equal(fs.existsSync(path.join(project, 'img', 'notes', 'pin.json')), false);
-    // Directories without staged files stay junctioned.
-    assert.equal(fs.lstatSync(path.join(temp, 'audio')).isSymbolicLink(), true);
-  });
-
   test('UI designer preview copies asset trees physically before running project code', () => {
-    preparation = prepareIsolatedStagedProject(root, project, { physicalCopyAllProjectDirectories: true });
+    preparation = prepareIsolatedProject(root, project, { physicalCopyAllProjectDirectories: true });
     const temp = preparation.temporaryProject;
     assert.equal(fs.lstatSync(path.join(temp, 'audio')).isSymbolicLink(), false);
     assert.equal(fs.lstatSync(path.join(temp, 'img')).isSymbolicLink(), false);
@@ -80,7 +66,6 @@ describe('isolated staged project preparation (junction + hybrid fingerprint)', 
   });
 
   test('UI designer renderer overlay does not copy source engine data or assets', () => {
-    writeStagedProjectJson(root, project, 'img/notes/staged.json', { staged: true });
     preparation = prepareUiDesignerRendererOverlay(root, project);
     const temp = preparation.temporaryProject;
 
@@ -88,13 +73,10 @@ describe('isolated staged project preparation (junction + hybrid fingerprint)', 
     assert.equal(fs.existsSync(path.join(temp, 'data')), false);
     assert.equal(fs.existsSync(path.join(temp, 'js')), false);
     assert.equal(fs.existsSync(path.join(temp, 'audio')), false);
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(temp, 'img', 'notes', 'staged.json'), 'utf8')), { staged: true });
     assert.equal(fs.existsSync(path.join(temp, 'img', 'pictures', 'Hero.png')), false);
-    assert.equal(fs.existsSync(path.join(project, 'img', 'notes', 'staged.json')), false);
     assert.deepEqual(verifyIsolatedSourceState(root, preparation), {
       sourceUnchanged: true,
       savesUnchanged: true,
-      stagingUnchanged: true,
     });
   });
 
@@ -108,7 +90,7 @@ describe('isolated staged project preparation (junction + hybrid fingerprint)', 
     const temporaryProjectPath = path.join(root, 'owned-copy-failure');
 
     assert.throws(
-      () => prepareIsolatedStagedProject(root, project, {
+      () => prepareIsolatedProject(root, project, {
         physicalCopyAllProjectDirectories: true,
         temporaryProjectPath,
       }),
@@ -119,18 +101,8 @@ describe('isolated staged project preparation (junction + hybrid fingerprint)', 
     assert.equal(fs.lstatSync(broken).isSymbolicLink(), true);
   });
 
-  test('staged deletions materialize their directory and never delete source files', () => {
-    deleteStagedProjectFile(root, project, 'audio/bgm/Theme.ogg');
-    preparation = prepareIsolatedStagedProject(root, project);
-    const temp = preparation.temporaryProject;
-
-    assert.equal(fs.lstatSync(path.join(temp, 'audio')).isSymbolicLink(), false);
-    assert.equal(fs.existsSync(path.join(temp, 'audio', 'bgm', 'Theme.ogg')), false);
-    assert.equal(fs.readFileSync(path.join(project, 'audio', 'bgm', 'Theme.ogg'), 'utf8'), 'bgm-bytes');
-  });
-
   test('cleanup removes junction links without reaching through to the source project', () => {
-    preparation = prepareIsolatedStagedProject(root, project);
+    preparation = prepareIsolatedProject(root, project);
     const temp = preparation.temporaryProject;
     cleanupIsolatedProject(preparation);
     preparation = null;
@@ -141,7 +113,7 @@ describe('isolated staged project preparation (junction + hybrid fingerprint)', 
   });
 
   test('hybrid fingerprint keeps byte evidence for data/js and metadata evidence for assets', () => {
-    preparation = prepareIsolatedStagedProject(root, project);
+    preparation = prepareIsolatedProject(root, project);
 
     // Same-size data change with a restored mtime is still detected (content hash).
     const systemPath = path.join(project, 'data', 'System.json');
@@ -168,7 +140,7 @@ describe('isolated staged project preparation (junction + hybrid fingerprint)', 
   test('applies the same physical/junction split inside the MV www layout', () => {
     const mv = path.join(root, 'projects', 'mv-sample');
     writeMVProject(mv);
-    preparation = prepareIsolatedStagedProject(root, mv);
+    preparation = prepareIsolatedProject(root, mv);
     const temp = preparation.temporaryProject;
 
     assert.equal(fs.lstatSync(path.join(temp, 'www')).isSymbolicLink(), false);

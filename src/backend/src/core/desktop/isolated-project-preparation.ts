@@ -14,30 +14,12 @@ import {
   type IsolatedProjectOwnershipChallenge,
   type IsolatedProjectAttestation,
 } from './isolated-project-attestation.ts';
-import {
-  getProjectFileForRead,
-  getProjectStagingStatus,
-  preflightStagedProjectFiles,
-} from './staging-service.ts';
-
-export interface IsolatedStagedFileSnapshot {
-  relativePath: string;
-  delete: boolean;
-  draftHash: string | null;
-}
-
-export interface IsolatedStagingSnapshot {
-  files: IsolatedStagedFileSnapshot[];
-  digest: string;
-}
-
 export interface IsolatedProjectPreparation {
   sourceProject: string;
   temporaryProject: string;
   ownership: IsolatedProjectOwnership;
   sourceFingerprint: string;
   saveFingerprint: string;
-  staging: IsolatedStagingSnapshot;
   savesExcluded: boolean;
   /** UI designer sessions serve source bytes through the read-only Electron protocol. */
   sourceAccessMode?: 'copied' | 'protocol-read-only';
@@ -71,8 +53,6 @@ export interface IsolatedMapPreviewPreparationProgress {
 export interface IsolatedProjectStateEvidence {
   sourceUnchanged: boolean;
   savesUnchanged: boolean;
-  stagingUnchanged: boolean;
-  stagingError?: string;
 }
 
 export interface IsolatedProjectPreparationOptions {
@@ -90,12 +70,11 @@ export interface IsolatedProjectPreparationOptions {
 
 export class IsolatedProjectPreparationError extends Error {}
 
-export function prepareIsolatedStagedProject(
-  workflowRootInput: string,
+export function prepareIsolatedProject(
+  _workflowRootInput: string,
   projectInput: string,
   options: IsolatedProjectPreparationOptions = {},
 ): IsolatedProjectPreparation {
-  const workflowRoot = fs.realpathSync.native(path.resolve(workflowRootInput));
   let sourceProject: string;
   try {
     sourceProject = fs.realpathSync.native(path.resolve(projectInput));
@@ -108,7 +87,6 @@ export function prepareIsolatedStagedProject(
 
   const sourceFingerprint = fingerprintProjectSource(sourceProject);
   const saveFingerprint = fingerprintSaveState(sourceProject);
-  const staging = snapshotProjectStaging(workflowRoot, sourceProject);
   const challenge = options.ownershipChallenge || createOwnedEmptyIsolatedProject(sourceProject, {
     temporaryPrefix: options.temporaryPrefix,
     ...(options.temporaryProjectPath ? { temporaryProjectPath: options.temporaryProjectPath } : {}),
@@ -126,11 +104,8 @@ export function prepareIsolatedStagedProject(
       temporaryProject,
       challenge,
       [...(options.excludeRelativePaths || []), challenge.ownership.markerRelativePath],
-      staging.files.map((entry) => entry.relativePath),
       { physicalCopyAllProjectDirectories: options.physicalCopyAllProjectDirectories === true },
     );
-    attestOwnedIsolatedProject(sourceProject, temporaryProject, challenge.ownership);
-    overlayStagedProjectFiles(workflowRoot, sourceProject, temporaryProject, challenge, staging.files);
     attestOwnedIsolatedProject(sourceProject, temporaryProject, challenge.ownership);
     const savesExcluded = candidateSavePaths(temporaryProject).every((candidate) => !fs.existsSync(candidate));
     if (!savesExcluded) throw new IsolatedProjectPreparationError('Temporary project copy still contains a save directory.');
@@ -140,7 +115,6 @@ export function prepareIsolatedStagedProject(
       ownership: { ...challenge.ownership },
       sourceFingerprint,
       saveFingerprint,
-      staging,
       savesExcluded,
     };
   } catch (error) {
@@ -152,20 +126,18 @@ export function prepareIsolatedStagedProject(
 /**
  * Creates the UI designer's sparse writable overlay. Engine/data/assets stay in
  * the source project and are served read-only by the authenticated protocol;
- * only staged drafts and generated host files are written below this owner.
+ * only generated host files are written below this owner.
  */
 export function prepareUiDesignerRendererOverlay(
-  workflowRootInput: string,
+  _workflowRootInput: string,
   projectInput: string,
   options: Pick<IsolatedProjectPreparationOptions, 'temporaryPrefix' | 'temporaryProjectPath' | 'ownershipChallenge'> = {},
 ): IsolatedProjectPreparation {
-  const workflowRoot = fs.realpathSync.native(path.resolve(workflowRootInput));
   const sourceProject = fs.realpathSync.native(path.resolve(projectInput));
   if (!isDirectory(sourceProject)) {
     throw new IsolatedProjectPreparationError(`RMMV project directory does not exist: ${sourceProject}`);
   }
   const saveFingerprint = fingerprintSaveState(sourceProject);
-  const staging = snapshotProjectStaging(workflowRoot, sourceProject);
   const challenge = options.ownershipChallenge || createOwnedEmptyIsolatedProject(sourceProject, {
     temporaryPrefix: options.temporaryPrefix,
     ...(options.temporaryProjectPath ? { temporaryProjectPath: options.temporaryProjectPath } : {}),
@@ -177,7 +149,6 @@ export function prepareUiDesignerRendererOverlay(
     { requireMarkerOnly: true },
   ).temporaryProject;
   try {
-    overlayStagedProjectFiles(workflowRoot, sourceProject, temporaryProject, challenge, staging.files);
     attestOwnedIsolatedProject(sourceProject, temporaryProject, challenge.ownership);
     return {
       sourceProject,
@@ -185,7 +156,6 @@ export function prepareUiDesignerRendererOverlay(
       ownership: { ...challenge.ownership },
       sourceFingerprint: sha256(Buffer.from('ui-designer-protocol-read-only-v1', 'utf8')),
       saveFingerprint,
-      staging,
       savesExcluded: candidateSavePaths(temporaryProject).every((candidate) => !fs.existsSync(candidate)),
       sourceAccessMode: 'protocol-read-only',
     };
@@ -196,13 +166,12 @@ export function prepareUiDesignerRendererOverlay(
 }
 
 export async function prepareIsolatedMapPreviewProject(
-  workflowRootInput: string,
+  _workflowRootInput: string,
   projectInput: string,
   challenge: IsolatedProjectOwnershipChallenge,
   options: IsolatedMapPreviewPreparationOptions = {},
 ): Promise<IsolatedMapPreviewPreparation> {
   options.onStage?.('resolve-source-project');
-  const workflowRoot = fs.realpathSync.native(path.resolve(workflowRootInput));
   let sourceProject: string;
   try {
     sourceProject = fs.realpathSync.native(path.resolve(projectInput));
@@ -219,9 +188,6 @@ export async function prepareIsolatedMapPreviewProject(
     { requireMarkerOnly: true },
   );
   const temporaryProject = attestation.temporaryProject;
-  reportMapPreviewProgress(options, { stage: 'checking-staged-changes' });
-  options.onStage?.('snapshot-staging');
-  const staging = snapshotProjectStaging(workflowRoot, sourceProject);
   options.onStage?.('fingerprint-save-state');
   const saveFingerprint = fingerprintSaveState(sourceProject);
   try {
@@ -233,20 +199,6 @@ export async function prepareIsolatedMapPreviewProject(
       [...(options.excludeRelativePaths || []), challenge.ownership.markerRelativePath],
       (progress) => reportMapPreviewProgress(options, progress),
     );
-    reportMapPreviewProgress(options, {
-      stage: 'applying-staged-changes',
-      completed: 0,
-      total: staging.files.length,
-    });
-    options.onStage?.('overlay-staged-files');
-    attestOwnedIsolatedProject(sourceProject, temporaryProject, challenge.ownership);
-    overlayStagedProjectFiles(workflowRoot, sourceProject, temporaryProject, challenge, staging.files, (completed) => {
-      reportMapPreviewProgress(options, {
-        stage: 'applying-staged-changes',
-        completed,
-        total: staging.files.length,
-      });
-    });
     attestOwnedIsolatedProject(sourceProject, temporaryProject, challenge.ownership);
     reportMapPreviewProgress(options, {
       stage: 'verifying-isolation',
@@ -263,10 +215,6 @@ export async function prepareIsolatedMapPreviewProject(
         total: copied.sourceFileCount,
       }),
     );
-    options.onStage?.('validate-staging-state');
-    if (snapshotProjectStaging(workflowRoot, sourceProject).digest !== staging.digest) {
-      throw new IsolatedProjectPreparationError('Project staging changed while preparing the isolated preview.');
-    }
     options.onStage?.('validate-save-state');
     if (fingerprintSaveState(sourceProject) !== saveFingerprint) {
       throw new IsolatedProjectPreparationError('Project save data changed while preparing the isolated preview.');
@@ -281,7 +229,6 @@ export async function prepareIsolatedMapPreviewProject(
       sourceFingerprint: copied.sourceFingerprint,
       sourceSnapshot: copied.sourceSnapshot,
       saveFingerprint,
-      staging,
       savesExcluded,
     };
   } catch (error) {
@@ -298,7 +245,7 @@ function reportMapPreviewProgress(
 }
 
 export function verifyIsolatedSourceState(
-  workflowRootInput: string,
+  _workflowRootInput: string,
   preparation: IsolatedProjectPreparation,
   expected: { sourceProject?: string; temporaryProject?: string } = {},
 ): IsolatedProjectStateEvidence {
@@ -313,25 +260,17 @@ export function verifyIsolatedSourceState(
       || fs.realpathSync.native(path.resolve(preparation.temporaryProject)) !== attestation.temporaryProject) {
       throw new Error('Isolated preparation roles do not match the expected attestation.');
     }
-  } catch (error) {
+  } catch {
     return {
       sourceUnchanged: false,
       savesUnchanged: false,
-      stagingUnchanged: false,
-      stagingError: errorMessage(error),
     };
   }
-  const workflowRoot = fs.realpathSync.native(path.resolve(workflowRootInput));
   const sourceProject = attestation.sourceProject;
   const sourceUnchanged = preparation.sourceAccessMode === 'protocol-read-only'
     || safeFingerprint(() => fingerprintProjectSource(sourceProject)) === preparation.sourceFingerprint;
   const savesUnchanged = safeFingerprint(() => fingerprintSaveState(sourceProject)) === preparation.saveFingerprint;
-  try {
-    const stagingUnchanged = snapshotProjectStaging(workflowRoot, sourceProject).digest === preparation.staging.digest;
-    return { sourceUnchanged, savesUnchanged, stagingUnchanged };
-  } catch (error) {
-    return { sourceUnchanged, savesUnchanged, stagingUnchanged: false, stagingError: errorMessage(error) };
-  }
+  return { sourceUnchanged, savesUnchanged };
 }
 
 export function cleanupIsolatedProject(
@@ -341,89 +280,10 @@ export function cleanupIsolatedProject(
   cleanupOwnedIsolatedProject(preparation, expected);
 }
 
-export function snapshotProjectStaging(workflowRoot: string, project: string): IsolatedStagingSnapshot {
-  const status = getProjectStagingStatus(workflowRoot, project) as {
-    files?: Array<Record<string, unknown>>;
-    operations?: unknown[];
-    maps?: number[];
-  };
-  const relativePaths = (status.files || []).map((entry) => String(entry.relativePath || '')).filter(Boolean);
-  const preflight = relativePaths.length
-    ? preflightStagedProjectFiles(workflowRoot, project, relativePaths) as Array<Record<string, unknown>>
-    : [];
-  const files = preflight.map((entry) => ({
-    relativePath: String(entry.relativePath || ''),
-    delete: Boolean(entry.delete),
-    draftHash: typeof entry.draftHash === 'string' ? entry.draftHash : null,
-  })).sort((left, right) => left.relativePath.localeCompare(right.relativePath));
-  const digestPayload = {
-    files: preflight.map((entry) => ({
-      relativePath: entry.relativePath,
-      delete: Boolean(entry.delete),
-      baseHash: entry.baseHash ?? null,
-      sourceHash: entry.sourceHash ?? null,
-      draftHash: entry.draftHash ?? null,
-      recordedDraftHash: entry.recordedDraftHash ?? null,
-      operationId: entry.operationId ?? null,
-      conflictReasons: entry.conflictReasons ?? [],
-    })).sort((left, right) => String(left.relativePath).localeCompare(String(right.relativePath))),
-    operations: Array.isArray(status.operations) ? status.operations : [],
-    maps: Array.isArray(status.maps) ? [...status.maps].sort((left, right) => left - right) : [],
-  };
-  return { files, digest: sha256(Buffer.from(JSON.stringify(digestPayload), 'utf8')) };
-}
-
-export function emptyIsolatedStagingSnapshot(): IsolatedStagingSnapshot {
-  return { files: [], digest: sha256(Buffer.from(JSON.stringify({ files: [], operations: [], maps: [] }), 'utf8')) };
-}
-
-function overlayStagedProjectFiles(
-  workflowRoot: string,
-  sourceProject: string,
-  temporaryProject: string,
-  challenge: IsolatedProjectOwnershipChallenge,
-  files: IsolatedStagedFileSnapshot[],
-  onProgress?: (completed: number) => void,
-): void {
-  let completed = 0;
-  for (const entry of files) {
-    attestOwnedIsolatedProject(sourceProject, temporaryProject, challenge.ownership);
-    const target = confinedProjectPath(temporaryProject, entry.relativePath);
-    if (entry.delete) {
-      fs.rmSync(target, { force: true });
-      completed += 1;
-      onProgress?.(completed);
-      continue;
-    }
-    const draft = getProjectFileForRead(workflowRoot, sourceProject, entry.relativePath);
-    if (!draft || !isFile(draft)) throw new IsolatedProjectPreparationError(`Staged draft is missing: ${entry.relativePath}`);
-    const before = fs.lstatSync(draft);
-    const body = fs.readFileSync(draft);
-    const after = fs.lstatSync(draft);
-    if (before.size !== after.size || before.mtimeMs !== after.mtimeMs
-      || !entry.draftHash || sha256(body) !== entry.draftHash) {
-      throw new IsolatedProjectPreparationError(`Staged draft hash changed while preparing isolated project: ${entry.relativePath}`);
-    }
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    const temporary = `${target}.rpg-agent-${crypto.randomUUID()}.tmp`;
-    try {
-      fs.writeFileSync(temporary, body, { flag: 'wx' });
-      fs.chmodSync(temporary, after.mode);
-      fs.utimesSync(temporary, after.atime, after.mtime);
-      fs.renameSync(temporary, target);
-    } finally {
-      attestOwnedIsolatedProject(sourceProject, temporaryProject, challenge.ownership);
-      if (fs.existsSync(temporary)) fs.rmSync(temporary, { force: true });
-    }
-    completed += 1;
-    onProgress?.(completed);
-  }
-}
-
 /**
  * Directory trees that always stay physical copies in the isolated project:
- * they are small, the product writes into them (battle test System.json, staged
- * overlays), and they carry byte-level isolation evidence.
+ * they are small, the product writes into them (for example battle-test
+ * System.json), and they carry byte-level isolation evidence.
  */
 const PHYSICAL_COPY_DIRECTORIES = new Set(['data', 'js']);
 
@@ -431,21 +291,18 @@ const PHYSICAL_COPY_DIRECTORIES = new Set(['data', 'js']);
  * Builds the isolated project without copying multi-gigabyte asset trees: root
  * files plus the data/js trees are copied physically, while every other
  * untouched directory (audio, img, effects, fonts, ...) becomes a Windows
- * directory junction pointing at the source. Directories that receive staged
- * overlays or contain nested exclusions are materialized as physical copies so
- * overlay writes and deletions never reach the source project through a link.
+ * directory junction pointing at the source. Directories that contain nested
+ * exclusions are materialized as physical copies.
  */
 function copyProjectExcludingSaves(
   sourceProject: string,
   temporaryProject: string,
   challenge: IsolatedProjectOwnershipChallenge,
   excludedRelativePaths: readonly string[],
-  stagedRelativePaths: readonly string[] = [],
   options: { physicalCopyAllProjectDirectories?: boolean } = {},
 ): void {
   const source = fs.realpathSync.native(path.resolve(sourceProject));
   const exclusions = excludedRelativePaths.map((relative) => normalizeRelative(relative).toLowerCase());
-  const staged = stagedRelativePaths.map((relative) => normalizeRelative(relative).toLowerCase());
   const excluded = (lower: string) => (
     exclusions.some((candidate) => lower === candidate || lower.startsWith(`${candidate}/`))
       || lower === '.git'
@@ -457,7 +314,6 @@ function copyProjectExcludingSaves(
   );
   const requiresMaterialization = (lower: string) => (
     exclusions.some((candidate) => candidate.startsWith(`${lower}/`))
-      || staged.some((candidate) => candidate === lower || candidate.startsWith(`${lower}/`))
   );
   const copySubtree = (relative: string): void => {
     attestOwnedIsolatedProject(source, temporaryProject, challenge.ownership);
@@ -897,20 +753,6 @@ function candidateSavePaths(project: string): string[] {
   return [path.join(project, 'save'), path.join(project, 'www', 'save')];
 }
 
-function confinedProjectPath(project: string, relativePath: string): string {
-  const normalized = normalizeRelative(relativePath);
-  if (!normalized || normalized.startsWith('../') || path.isAbsolute(relativePath)) {
-    throw new IsolatedProjectPreparationError(`Unsafe staged project path: ${relativePath}`);
-  }
-  const root = path.resolve(project);
-  const target = path.resolve(root, normalized);
-  const relative = path.relative(root, target);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw new IsolatedProjectPreparationError(`Unsafe staged project path: ${relativePath}`);
-  }
-  return target;
-}
-
 function normalizeRelative(value: string): string {
   return value.replace(/\\/g, '/').replace(/^\.\//, '');
 }
@@ -923,14 +765,6 @@ function sha256(value: Buffer): string {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
 
-function isFile(filePath: string): boolean {
-  return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
-}
-
 function isDirectory(directory: string): boolean {
   return fs.existsSync(directory) && fs.statSync(directory).isDirectory();
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

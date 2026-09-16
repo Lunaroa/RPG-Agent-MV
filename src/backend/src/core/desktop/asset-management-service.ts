@@ -100,19 +100,12 @@ import {
   type ProjectAssetReferenceGraphBuildDependencies,
 } from './asset-reference-graph-service.ts';
 import {
-  applyProjectFilesAtomically,
-  findProjectStagingPathConflict,
-  getProjectFileForRead,
-  getProjectStagingStatus,
   isInside,
-  stageProjectFilesAtomically,
-  type StagedProjectFileMutation,
-} from './staging-service.ts';
-import {
-  stagingChangedDuringAssetDelete,
-  stagingOperationReservationBlocksAssetMutation,
-  stagingUnappliedDraftBlocksAssetMutation,
-} from './stagingServiceLocalization.ts';
+  readProjectFileVersion,
+  resolveProjectFileForRead,
+  writeProjectFilesAtomically,
+  type ProjectFileMutation,
+} from './project-file-service.ts';
 
 interface AssetTarget {
   scope: ManagedAssetScope;
@@ -160,7 +153,6 @@ export function getAssetDetail(workflowRoot: string, project: string, target: As
     relativePath: resolved.relativePath,
     url: projectAssetUrl(project, resolved.relativePath),
     size: fs.statSync(resolved.absolute).size,
-    staged: isAssetStaged(workflowRoot, project, resolved.relativePath),
     references: findProjectAssetReferences(workflowRoot, project, resolved.category, name),
   };
 }
@@ -172,7 +164,7 @@ export function getAssetImportFileExtensions(categoryValue: string): string[] {
   return definition.extensions.map((extension) => extension.replace(/^\./, ''));
 }
 
-export function buildStagedAwareAssetInventory(workflowRoot: string, project: string) {
+export function buildProjectAssetInventory(workflowRoot: string, project: string) {
   const inventory = buildAssetInventory(project);
   const graph = buildAssetReferenceGraph(workflowRoot, project);
   for (const category of INVENTORY_AUDIO_CATEGORIES) {
@@ -193,39 +185,13 @@ export function buildStagedAwareAssetInventory(workflowRoot: string, project: st
   return refreshAssetInventorySummary(inventory);
 }
 
-function buildReadOnlyStagedAwareAssetInventory(
+function buildReadOnlyProjectAssetInventory(
   workflowRoot: string,
   project: string,
   options: { tolerateAnimationReadFailure?: boolean } = {},
 ) {
-  const inventory = buildAssetInventory(project, options);
-  const stagedFiles = getProjectStagingStatus(workflowRoot, project).files;
-  for (const category of INVENTORY_AUDIO_CATEGORIES) {
-    inventory.audio[category] = effectiveInventoryBucketFromStaging(
-      workflowRoot,
-      project,
-      category,
-      inventory.audio[category],
-      stagedFiles,
-    );
-  }
-  for (const [bucket, category] of Object.entries(INVENTORY_IMAGE_CATEGORIES)) {
-    inventory.images[bucket] = effectiveInventoryBucketFromStaging(
-      workflowRoot,
-      project,
-      category as RmmvAssetCategory,
-      inventory.images[bucket],
-      stagedFiles,
-    );
-  }
-  inventory.effects = effectiveInventoryBucketFromStaging(
-    workflowRoot,
-    project,
-    'effects',
-    inventory.effects,
-    stagedFiles,
-  );
-  return refreshAssetInventorySummary(inventory);
+  void workflowRoot;
+  return refreshAssetInventorySummary(buildAssetInventory(project, options));
 }
 
 function refreshAssetInventorySummary(inventory: ReturnType<typeof buildAssetInventory>) {
@@ -260,10 +226,10 @@ function refreshAssetInventorySummary(inventory: ReturnType<typeof buildAssetInv
 export function buildProjectManagementAssetInventory(
   workflowRoot: string,
   project: string,
-): { assets: ReturnType<typeof buildStagedAwareAssetInventory> | null; readIssues: ProjectReadIssue[] } {
+): { assets: ReturnType<typeof buildProjectAssetInventory> | null; readIssues: ProjectReadIssue[] } {
   try {
     return {
-      assets: buildReadOnlyStagedAwareAssetInventory(workflowRoot, project, { tolerateAnimationReadFailure: true }),
+      assets: buildReadOnlyProjectAssetInventory(workflowRoot, project, { tolerateAnimationReadFailure: true }),
       readIssues: [],
     };
   } catch (error) {
@@ -368,7 +334,7 @@ export function replaceMissingAssetReference(
   if (update.updatedReferences !== references.length) {
     throw new Error(assetManagementReplacementUnsupported());
   }
-  stageProjectFilesAtomically(workflowRoot, project, update.mutations);
+  writeProjectFilesAtomically(workflowRoot, project, withProjectMutationBaselines(project, update.mutations));
   invalidateProjectAssetBrowserCache(project);
   return {
     category: request.category,
@@ -427,7 +393,7 @@ export function importLocalAssetFiles(
     sourceFile: string;
     targetName: string;
     targetRelative: string;
-    mutations: StagedProjectFileMutation[];
+    mutations: ProjectFileMutation[];
   }> = [];
   const claimedNames = new Set<string>();
 
@@ -470,7 +436,7 @@ export function importLocalAssetFiles(
   if (pending.length) {
     try {
       const mutations = pending.flatMap((item) => item.mutations);
-      applyProjectFilesAtomically(workflowRoot, project, mutations);
+      writeProjectFilesAtomically(workflowRoot, project, withProjectMutationBaselines(project, mutations));
       invalidateProjectAssetBrowserCache(project);
       for (const item of results) {
         if (item.status !== 'imported' || !item.relativePath) continue;
@@ -505,7 +471,7 @@ type PreparedImportItem =
     sourceFile: string;
     targetName: string;
     targetRelative: string;
-    mutations: StagedProjectFileMutation[];
+    mutations: ProjectFileMutation[];
   }
   | {
     status: 'skipped' | 'failed';
@@ -640,34 +606,7 @@ function prepareImportLocalAssetItem(
     };
   }
 
-  const candidateRelativePaths = [
-    targetRelative,
-    ...(occupied[0] && occupied[0].relativePath !== targetRelative ? [occupied[0].relativePath] : []),
-  ];
-  const stagedConflict = findProjectStagingPathConflict(workflowRoot, project, candidateRelativePaths);
-  if (stagedConflict?.kind === 'draft') {
-    return {
-      status: 'failed',
-      sourceFile,
-      targetName,
-      relativePath: targetRelative,
-      error: stagingUnappliedDraftBlocksAssetMutation(stagedConflict.relativePath),
-    };
-  }
-  if (stagedConflict?.kind === 'operation') {
-    return {
-      status: 'failed',
-      sourceFile,
-      targetName,
-      relativePath: targetRelative,
-      error: stagingOperationReservationBlocksAssetMutation(
-        stagedConflict.relativePath,
-        stagedConflict.operationId,
-      ),
-    };
-  }
-
-  const mutations: StagedProjectFileMutation[] = [{
+  const mutations: ProjectFileMutation[] = [{
     relativePath: targetRelative,
     content: fs.readFileSync(sourceFile),
   }];
@@ -725,7 +664,7 @@ export function renameAsset(
     };
   });
   for (const pair of renamePairs) {
-    if (getProjectFileForRead(workflowRoot, project, pair.nextRelative)) {
+    if (resolveProjectFileForRead(project, pair.nextRelative)) {
       throw new Error(assetManagementTargetNameExists());
     }
   }
@@ -742,14 +681,14 @@ export function renameAsset(
     throw new Error(assetManagementReplacementUnsupported());
   }
 
-  const mutations: StagedProjectFileMutation[] = [
+  const mutations: ProjectFileMutation[] = [
     ...renamePairs.flatMap((pair) => ([
       { relativePath: pair.nextRelative, content: fs.readFileSync(pair.sourceAbsolute) },
       { relativePath: pair.beforeRelative, delete: true as const },
     ])),
     ...update.mutations,
   ];
-  applyProjectFilesAtomically(workflowRoot, project, mutations);
+  writeProjectFilesAtomically(workflowRoot, project, withProjectMutationBaselines(project, mutations));
 
   const nextGraph = applyProjectAssetReferenceGraphRename(
     graph,
@@ -1007,36 +946,9 @@ export async function deleteProjectAssets(
   const graph = getProjectAssetReferenceGraph(workflowRoot, project);
   const results: ProjectAssetDeleteItemResult[] = [];
   const deletedLogical: Array<{ category: RmmvAssetCategory; name: string }> = [];
-  const allDeletedRelativePaths: string[] = [];
 
   for (const target of targets) {
     const category = requireAssetCategory(target.category);
-    const earlyRelativePaths = target.relativePath ? [normalizeRelative(target.relativePath)] : [];
-    if (earlyRelativePaths.length) {
-      const earlyConflict = findProjectStagingPathConflict(workflowRoot, project, earlyRelativePaths);
-      if (earlyConflict?.kind === 'draft') {
-        results.push({
-          target: { category, name: String(target.name || ''), relativePath: target.relativePath || null },
-          status: 'failed',
-          references: [],
-          error: stagingUnappliedDraftBlocksAssetMutation(earlyConflict.relativePath),
-        });
-        continue;
-      }
-      if (earlyConflict?.kind === 'operation') {
-        results.push({
-          target: { category, name: String(target.name || ''), relativePath: target.relativePath || null },
-          status: 'failed',
-          references: [],
-          error: stagingOperationReservationBlocksAssetMutation(
-            earlyConflict.relativePath,
-            earlyConflict.operationId,
-          ),
-        });
-        continue;
-      }
-    }
-
     let name: string;
     try {
       name = target.name?.trim()
@@ -1060,33 +972,6 @@ export async function deleteProjectAssets(
     const safety = checkAssetDeleteSafetyAgainstGraph(graph, { category, name, relativePath: target.relativePath });
     const mappedReferences = safety.references.map(mapGraphReference);
     const variants = findLogicalAssetVariants(graph, category, name, target.relativePath);
-    const candidateRelativePaths = [
-      ...variants.map((variant) => variant.relativePath),
-      ...(target.relativePath ? [normalizeRelative(target.relativePath)] : []),
-    ];
-    const stagedConflict = findProjectStagingPathConflict(workflowRoot, project, candidateRelativePaths);
-    if (stagedConflict?.kind === 'draft') {
-      results.push({
-        target: safety.target,
-        status: 'failed',
-        references: mappedReferences,
-        error: stagingUnappliedDraftBlocksAssetMutation(stagedConflict.relativePath),
-      });
-      continue;
-    }
-    if (stagedConflict?.kind === 'operation') {
-      results.push({
-        target: safety.target,
-        status: 'failed',
-        references: mappedReferences,
-        error: stagingOperationReservationBlocksAssetMutation(
-          stagedConflict.relativePath,
-          stagedConflict.operationId,
-        ),
-      });
-      continue;
-    }
-
     if (!force && safety.references.length) {
       results.push({
         target: safety.target,
@@ -1132,8 +1017,6 @@ export async function deleteProjectAssets(
       }
     }
 
-    allDeletedRelativePaths.push(...deletedRelativePaths);
-
     if (failedParts.length) {
       results.push({
         target: safety.target,
@@ -1155,15 +1038,6 @@ export async function deleteProjectAssets(
       deletedRelativePaths,
     });
     deletedLogical.push({ category, name });
-  }
-
-  if (allDeletedRelativePaths.length) {
-    const raced = findProjectStagingPathConflict(workflowRoot, project, allDeletedRelativePaths);
-    if (raced) {
-      invalidateProjectAssetReferenceGraphCache(project);
-      invalidateProjectAssetListingCache(project);
-      throw new Error(stagingChangedDuringAssetDelete(allDeletedRelativePaths));
-    }
   }
 
   let nextGraph = graph;
@@ -1241,7 +1115,7 @@ export function copyProjectAssets(
     result: ProjectAssetCopyItemResult;
     category: RmmvAssetCategory;
     copiedRelativePaths: string[];
-    mutations: StagedProjectFileMutation[];
+    mutations: ProjectFileMutation[];
   }> = [];
   const claimedNames = new Set<string>();
 
@@ -1291,23 +1165,7 @@ export function copyProjectAssets(
       continue;
     }
 
-    const stagedConflict = findProjectStagingPathConflict(workflowRoot, project, [
-      ...variants.map((variant) => variant.relativePath),
-      ...copiedRelativePaths,
-    ]);
-    if (stagedConflict?.kind === 'draft') {
-      failWith(stagingUnappliedDraftBlocksAssetMutation(stagedConflict.relativePath), name);
-      continue;
-    }
-    if (stagedConflict?.kind === 'operation') {
-      failWith(
-        stagingOperationReservationBlocksAssetMutation(stagedConflict.relativePath, stagedConflict.operationId),
-        name,
-      );
-      continue;
-    }
-
-    const mutations: StagedProjectFileMutation[] = [];
+    const mutations: ProjectFileMutation[] = [];
     let readError: string | null = null;
     for (let index = 0; index < variants.length; index += 1) {
       const variant = variants[index]!;
@@ -1338,7 +1196,8 @@ export function copyProjectAssets(
 
   if (pending.length) {
     try {
-      applyProjectFilesAtomically(workflowRoot, project, pending.flatMap((item) => item.mutations));
+      const mutations = pending.flatMap((item) => item.mutations);
+      writeProjectFilesAtomically(workflowRoot, project, withProjectMutationBaselines(project, mutations));
       invalidateProjectAssetBrowserCache(project);
       invalidateProjectAssetReferenceGraphCache(project);
       for (const item of pending) {
@@ -1434,7 +1293,7 @@ export function moveProjectAssets(
   const pending: Array<{
     result: ProjectAssetMoveItemResult;
     movedRelativePaths: string[];
-    mutations: StagedProjectFileMutation[];
+    mutations: ProjectFileMutation[];
   }> = [];
   const claimedNames = new Set<string>();
 
@@ -1500,23 +1359,7 @@ export function moveProjectAssets(
       continue;
     }
 
-    const stagedConflict = findProjectStagingPathConflict(workflowRoot, project, [
-      ...variants.map((variant) => variant.relativePath),
-      ...movedRelativePaths,
-    ]);
-    if (stagedConflict?.kind === 'draft') {
-      failWith(stagingUnappliedDraftBlocksAssetMutation(stagedConflict.relativePath), name);
-      continue;
-    }
-    if (stagedConflict?.kind === 'operation') {
-      failWith(
-        stagingOperationReservationBlocksAssetMutation(stagedConflict.relativePath, stagedConflict.operationId),
-        name,
-      );
-      continue;
-    }
-
-    const mutations: StagedProjectFileMutation[] = [];
+    const mutations: ProjectFileMutation[] = [];
     let readError: string | null = null;
     for (let index = 0; index < variants.length; index += 1) {
       const variant = variants[index]!;
@@ -1551,7 +1394,8 @@ export function moveProjectAssets(
 
   if (pending.length) {
     try {
-      applyProjectFilesAtomically(workflowRoot, project, pending.flatMap((item) => item.mutations));
+      const mutations = pending.flatMap((item) => item.mutations);
+      writeProjectFilesAtomically(workflowRoot, project, withProjectMutationBaselines(project, mutations));
       invalidateProjectAssetBrowserCache(project);
       invalidateProjectAssetReferenceGraphCache(project);
       invalidateProjectAssetListingCache(project);
@@ -1588,9 +1432,8 @@ function resolveAssetPath(workflowRoot: string, project: string, target: AssetTa
   const root = path.resolve(project);
   const sourceAbsolute = path.resolve(root, ...relativePath.split('/'));
   assertInside(root, sourceAbsolute);
-  const absolute = getProjectFileForRead(workflowRoot, project, relativePath) || sourceAbsolute;
-  const stagingRoot = path.join(path.resolve(workflowRoot), 'runtime', 'agent-console-staging');
-  if (!isInside(root, absolute) && !isInside(stagingRoot, absolute)) throw new Error(assetManagementPathOutOfBounds());
+  const absolute = resolveProjectFileForRead(project, relativePath) || sourceAbsolute;
+  if (!isInside(root, absolute)) throw new Error(assetManagementPathOutOfBounds());
   return { absolute, relativePath, category };
 }
 
@@ -1598,9 +1441,15 @@ function defaultRelative(workflowRoot: string, project: string, category: string
   return projectAssetRelativeDirectory(workflowRoot, project, category);
 }
 
-function isAssetStaged(workflowRoot: string, project: string, relativePath: string): boolean {
-  return getProjectStagingStatus(workflowRoot, project).files
-    .some((entry) => entry.relativePath === relativePath && !entry.delete);
+function withProjectMutationBaselines(
+  project: string,
+  mutations: readonly ProjectFileMutation[],
+): ProjectFileMutation[] {
+  return mutations.map((mutation) => ({
+    ...mutation,
+    expectedSourceHash: mutation.expectedSourceHash
+      ?? readProjectFileVersion(project, mutation.relativePath).sha256,
+  }));
 }
 
 function findProjectAssetReferences(workflowRoot: string, project: string, category: string, assetName: string): ManagedAssetRef[] {
@@ -1623,39 +1472,6 @@ function effectiveInventoryBucketFromGraph(assets: RmmvProjectAsset[], category:
   };
 }
 
-function effectiveInventoryBucketFromStaging(
-  workflowRoot: string,
-  project: string,
-  category: RmmvAssetCategory,
-  source: { dir: string; exists: boolean; files: string[] },
-  stagedFiles: Array<{ relativePath: string; delete?: boolean }>,
-) {
-  const definition = RMMV_ASSET_CATEGORIES.find((item) => item.id === category);
-  if (!definition) throw new Error(unsupportedAssetCategory(category));
-  const relativeDir = projectAssetRelativeDirectory(workflowRoot, project, category);
-  const relativePrefix = `${relativeDir}/`;
-  const extensions = new Set(definition.extensions.map((extension) => extension.toLowerCase()));
-  const effectiveFiles = new Set(source.files);
-  for (const staged of stagedFiles) {
-    const normalized = staged.relativePath.replace(/\\/g, '/');
-    if (!normalized.startsWith(relativePrefix)) continue;
-    const fileName = normalized.slice(relativePrefix.length);
-    if (!fileName || !extensions.has(path.extname(fileName).toLowerCase())) continue;
-    if (staged.delete) effectiveFiles.delete(fileName);
-    else effectiveFiles.add(fileName);
-  }
-  const files = [...effectiveFiles].sort((left, right) => left.localeCompare(right));
-  const names = [...new Set(files.map((fileName) => fileName.slice(0, -path.extname(fileName).length)))]
-    .sort((left, right) => left.localeCompare(right));
-  return {
-    dir: source.dir,
-    exists: source.exists || files.length > 0,
-    count: names.length,
-    names,
-    files,
-  };
-}
-
 function mapGraphAsset(asset: RmmvProjectAsset): ProjectAssetReferenceGraphAsset {
   return {
     category: asset.category,
@@ -1663,7 +1479,6 @@ function mapGraphAsset(asset: RmmvProjectAsset): ProjectAssetReferenceGraphAsset
     fileName: asset.fileName,
     relativePath: asset.relativePath,
     size: asset.size,
-    staged: asset.staged,
   };
 }
 
@@ -1703,17 +1518,17 @@ function prepareProjectAssetReferenceMutations(
   before: string,
   after: string,
   references: RmmvAssetReference[],
-): { mutations: StagedProjectFileMutation[]; updatedReferences: number; updatedFiles: string[] } {
+): { mutations: ProjectFileMutation[]; updatedReferences: number; updatedFiles: string[] } {
   const refsByFile = new Map<string, RmmvAssetReference[]>();
   let updatedReferences = 0;
-  const mutations: StagedProjectFileMutation[] = [];
+  const mutations: ProjectFileMutation[] = [];
   for (const reference of references) {
     const list = refsByFile.get(reference.file) || [];
     list.push(reference);
     refsByFile.set(reference.file, list);
   }
   for (const [relative, refs] of [...refsByFile.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-    const file = getProjectFileForRead(workflowRoot, project, relative);
+    const file = resolveProjectFileForRead(project, relative);
     if (!file) throw new Error(assetManagementReplacementUnsupported());
     if (/(?:^|\/)js\/plugins\.js$/i.test(relative)) {
       const raw = fs.readFileSync(file, 'utf8');

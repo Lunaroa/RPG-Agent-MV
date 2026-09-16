@@ -5,12 +5,12 @@
  * Started by opencode via stdio transport.
  *
  * Legacy RmmvTest remains removed. RmmvVerify runs one strict, isolated
- * staged-project probe in a bounded worker process.
+ * copied-project probe in a bounded worker process.
  *
  * Action naming conventions:
  *   - RmmvReadContext:  project, asset, plugin, and map facts
- *   - RmmvDatabase:     validate, dry-run, stage, or discard controlled database changes
- *   - RmmvDatabaseApply: apply one approved staged database operation by operationId
+ *   - RmmvDatabase:     validate or dry-run controlled database changes
+ *   - RmmvDatabaseCommit: commit one exact dry-run plan after native approval
  *   - RmmvVerify:       run a strict isolated playtest probe for the main Agent
  *   - RmmvMap:          current map-editor write operations
  *   - RmmvEvent:        "registry.list" | "registry.validate" | "registry.scaffold" |
@@ -131,8 +131,6 @@ const ACTION_TO_COMMAND: Record<string, string> = {
   "pluginInventory": "plugin-inventory",
   "mapData": "map-editor",
   "tilesets": "map-editor",
-  "projectStaging": "map-editor",
-  "mapStaging": "map-editor",
   "dbCatalog": "db-catalog",
   "dbEntry": "db-entry",
   "stateSlots": "state-slots",
@@ -140,8 +138,7 @@ const ACTION_TO_COMMAND: Record<string, string> = {
   // RmmvDatabase
   "validate": "database-changes",
   "dryRun": "database-changes",
-  "stage": "database-changes",
-  "discard": "database-changes",
+  "commit": "database-changes",
   // RmmvVerify
   "playtest.probe": "verify",
   // RmmvMap
@@ -150,10 +147,6 @@ const ACTION_TO_COMMAND: Record<string, string> = {
   "duplicate": "map-editor",
   "remove": "map-editor",
   "paint": "map-editor",
-  "applyMap": "map-editor",
-  "discardMap": "map-editor",
-  "applyProject": "map-editor",
-  "discardProject": "map-editor",
   // Deprecated (simplified workflow 2026-06):
   // RmmvTest actions (playability, runtime) → unreliable in RMMV environment
 };
@@ -282,14 +275,14 @@ const RMMV_MCP_TOOLS: RmmvMcpToolSpec[] = [
   {
     name: "RmmvReadContext",
     description:
-      "Read project facts without mutating the project: eventContext, mapIndex, assetInventory, pluginInventory, mapData, tilesets, projectStaging, mapStaging, paginated dbCatalog, full dbEntry records, stateSlots, and commonEventReferences.",
+      "Read project facts without mutating the project: eventContext, mapIndex, assetInventory, pluginInventory, mapData, tilesets, paginated dbCatalog, full dbEntry records, stateSlots, and commonEventReferences.",
     inputSchema: {
       action: z.enum([
-        "eventContext", "mapIndex", "assetInventory", "pluginInventory", "mapData", "tilesets", "projectStaging", "mapStaging",
+        "eventContext", "mapIndex", "assetInventory", "pluginInventory", "mapData", "tilesets",
         "dbCatalog", "dbEntry", "stateSlots", "commonEventReferences",
       ]),
       project: z.string().optional().describe("RMMV project root. Defaults to the MCP process cwd."),
-      mapId: z.number().int().optional().describe("eventContext/mapData/mapStaging: map id."),
+      mapId: z.number().int().optional().describe("eventContext/mapData: map id."),
       eventId: z.number().int().optional().describe("eventContext: event id."),
       tables: z.array(z.enum(RMMV_DATABASE_TABLES)).optional().describe(
         "dbCatalog: tables to read. One or more of: actors, classes, skills, items, weapons, armors, enemies, troops, states, animations, tilesets, commonEvents, system, types, terms.",
@@ -310,25 +303,24 @@ const RMMV_MCP_TOOLS: RmmvMcpToolSpec[] = [
   {
     name: "RmmvDatabase",
     description:
-      "Main-agent-only controlled database preparation. validate and dryRun never write; stage writes operation-owned drafts only; discard removes exactly one operation draft. Source project files are never applied by this tool.",
+      "Main-agent-only controlled database planning. validate and dryRun never write. Pass the exact dryRun changes and planHash to RmmvDatabaseCommit after review.",
     inputSchema: {
-      action: z.enum(["validate", "dryRun", "stage", "discard"]),
+      action: z.enum(["validate", "dryRun"]),
       project: z.string().optional().describe("RMMV project root. Defaults to the MCP process cwd."),
-      changes: z.array(databaseChange).min(1).optional().describe("Required for validate, dryRun, and stage."),
-      planHash: z.string().regex(/^[a-f0-9]{64}$/i).optional().describe("stage: exact planHash returned by the current dryRun."),
-      operationId: z.string().optional().describe("discard: operation id to discard."),
-      sessionId: z.string().optional().describe("stage: originating main-agent session id."),
+      changes: z.array(databaseChange).min(1).optional().describe("Required for validate and dryRun."),
     },
     readOnly: false,
     destructive: true,
   },
   {
-    name: "RmmvDatabaseApply",
+    name: "RmmvDatabaseCommit",
     description:
-      "Apply exactly one previously staged database operation after native user approval. Accepts only operationId (plus project routing); rechecks source/draft hashes, plan metadata, input drift, and all semantic rules before an atomic source write.",
+      "Save exactly one reviewed database dry-run plan directly to the source project after native user approval. Rebuilds the plan, checks its exact planHash and source fingerprints, validates semantics, then commits all files atomically.",
     inputSchema: {
       project: z.string().optional().describe("RMMV project root. Defaults to the MCP process cwd."),
-      operationId: z.string().min(1).describe("The staged database operation id shown on the approval card."),
+      changes: z.array(databaseChange).min(1).describe("The exact database change array used for dryRun."),
+      planHash: z.string().regex(/^[a-f0-9]{64}$/i).describe("The exact planHash returned by the current dryRun."),
+      sessionId: z.string().optional().describe("Originating main-agent session id for diagnostics."),
     },
     readOnly: false,
     destructive: true,
@@ -336,7 +328,7 @@ const RMMV_MCP_TOOLS: RmmvMcpToolSpec[] = [
   {
     name: "RmmvVerify",
     description:
-      "Main-agent-only strict playtest probe. Copies the source project without saves, overlays all current staging, optionally changes only the copied start position, and runs the validated MV/MZ game runtime in a hidden bounded worker. Returns verified only when screen, exact map/coordinates, runtime readiness, event idle, JavaScript-error absence, source/save/staging stability, process exit, and temporary cleanup are all proven.",
+      "Main-agent-only strict playtest probe. Copies the source project without saves, optionally changes only the copied start position, and runs the validated MV/MZ game runtime in a hidden bounded worker. Returns verified only when screen, exact map/coordinates, runtime readiness, event idle, JavaScript-error absence, source/save stability, process exit, and temporary cleanup are all proven.",
     inputSchema: {
       action: z.literal("playtest.probe"),
       project: z.string().optional().describe("RMMV project root. Defaults to the MCP process cwd."),
@@ -350,11 +342,10 @@ const RMMV_MCP_TOOLS: RmmvMcpToolSpec[] = [
   {
     name: "RmmvMap",
     description:
-      "Operate the current map editor backend: create/update/duplicate/remove maps, paint validated tile edits, and explicitly apply or discard staging. Only exposes features already present in the desktop map editor.",
+      "Operate the current map editor backend: create/update/duplicate/remove maps and paint validated tile edits with atomic project writes. Only exposes features already present in the desktop map editor.",
     inputSchema: {
       action: z.enum([
         "create", "updateProperties", "duplicate", "remove", "paint",
-        "applyMap", "discardMap", "applyProject", "discardProject",
       ]),
       project: z.string().optional().describe("RMMV project root. Defaults to the MCP process cwd."),
       mapId: z.number().int().positive().optional().describe("Target map id."),
@@ -527,8 +518,8 @@ async function main(): Promise<void> {
       const diagnosticId = randomUUID();
       const startedAt = Date.now();
       const args = (input as Record<string, unknown>) || {};
-      const rawAction = spec.name === "RmmvDatabaseApply" ? "apply" : String(args.action ?? "");
-      const command = spec.name === "RmmvDatabaseApply" ? "database-apply" : ACTION_TO_COMMAND[rawAction];
+      const rawAction = spec.name === "RmmvDatabaseCommit" ? "commit" : String(args.action ?? "");
+      const command = ACTION_TO_COMMAND[rawAction];
       if (!command) {
         return {
           content: [{ type: "text" as const, text: JSON.stringify({ ok: false, error: `Unknown action: ${rawAction}` }) }],

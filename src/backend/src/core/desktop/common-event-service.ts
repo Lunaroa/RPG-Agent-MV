@@ -24,7 +24,11 @@ import {
   commonEventSwitchRequired,
   commonEventsJsonMustBeArray,
 } from './commonEventServiceLocalization.ts';
-import { getProjectFileForRead, writeStagedProjectJson } from './staging-service.ts';
+import {
+  readProjectJson as readProjectJsonFile,
+  resolveProjectFileForRead,
+  writeProjectJson,
+} from './project-file-service.ts';
 
 interface RmmvCommonEvent {
   id: number;
@@ -50,7 +54,7 @@ export interface CommonEventListResult {
 
 export interface CommonEventMutationResult {
   entry: ProjectManagedEntry;
-  staging: unknown;
+  write: unknown;
 }
 
 export interface CommonEventUsageReference {
@@ -109,7 +113,7 @@ export function createCommonEvent(
   request: { id?: number; name?: string; trigger?: number; switchId?: number; list?: unknown[] },
 ): CommonEventMutationResult {
   const relativePath = dataRelativePath(project, COMMON_EVENT_FILE);
-  const commonEvents = readCommonEvents(workflowRoot, project);
+  const { commonEvents, sourceHash } = readCommonEventsForWrite(project);
   const id = request.id === undefined ? nextCommonEventId(commonEvents) : validId(request.id);
   assertCommonEventIdWithinLimit(id);
   if (isCommonEventRecord(commonEvents[id])) throw new Error(commonEventAlreadyExists(id));
@@ -123,8 +127,8 @@ export function createCommonEvent(
   });
   validateCommonEventCommandList(project, next.list);
   commonEvents[id] = next;
-  const staging = writeStagedProjectJson(workflowRoot, project, relativePath, commonEvents);
-  return { entry: getCommonEvent(workflowRoot, project, { id }), staging };
+  const write = writeProjectJson(workflowRoot, project, relativePath, commonEvents, sourceHash);
+  return { entry: getCommonEvent(workflowRoot, project, { id }), write };
 }
 
 export function updateCommonEvent(
@@ -134,7 +138,7 @@ export function updateCommonEvent(
 ): CommonEventMutationResult {
   const id = validId(request.id);
   const relativePath = dataRelativePath(project, COMMON_EVENT_FILE);
-  const commonEvents = readCommonEvents(workflowRoot, project);
+  const { commonEvents, sourceHash } = readCommonEventsForWrite(project);
   const current = commonEvents[id];
   if (!isCommonEventRecord(current)) throw new Error(commonEventMissing(id));
   if (!request.value || typeof request.value !== 'object' || Array.isArray(request.value)) {
@@ -153,8 +157,8 @@ export function updateCommonEvent(
     throw new Error(`${commonEventInvalidData()}: ${details}`);
   }
   commonEvents[id] = next;
-  const staging = writeStagedProjectJson(workflowRoot, project, relativePath, commonEvents);
-  return { entry: getCommonEvent(workflowRoot, project, { id }), staging };
+  const write = writeProjectJson(workflowRoot, project, relativePath, commonEvents, sourceHash);
+  return { entry: getCommonEvent(workflowRoot, project, { id }), write };
 }
 
 export function renameCommonEvent(
@@ -203,7 +207,7 @@ export function duplicateCommonEvent(
   request: { id: number; targetId?: number; name?: string },
 ): CommonEventMutationResult {
   const source = getCommonEvent(workflowRoot, project, request).value as RmmvCommonEvent;
-  const commonEvents = readCommonEvents(workflowRoot, project);
+  const { commonEvents, sourceHash } = readCommonEventsForWrite(project);
   const targetId = request.targetId === undefined ? nextCommonEventId(commonEvents) : validId(request.targetId);
   assertCommonEventIdWithinLimit(targetId);
   if (isCommonEventRecord(commonEvents[targetId])) throw new Error(commonEventAlreadyExists(targetId));
@@ -216,18 +220,18 @@ export function duplicateCommonEvent(
   validateCommonEventCommandList(project, next.list);
   commonEvents[targetId] = next;
   const relativePath = dataRelativePath(project, COMMON_EVENT_FILE);
-  const staging = writeStagedProjectJson(workflowRoot, project, relativePath, commonEvents);
-  return { entry: getCommonEvent(workflowRoot, project, { id: targetId }), staging };
+  const write = writeProjectJson(workflowRoot, project, relativePath, commonEvents, sourceHash);
+  return { entry: getCommonEvent(workflowRoot, project, { id: targetId }), write };
 }
 
 export function deleteCommonEvent(
   workflowRoot: string,
   project: string,
   request: { id: number; force?: boolean },
-): { deleted: true; id: number; relativePath: string; staging: unknown } {
+): { deleted: true; id: number; relativePath: string; write: unknown } {
   const id = validId(request.id);
   const relativePath = dataRelativePath(project, COMMON_EVENT_FILE);
-  const commonEvents = readCommonEvents(workflowRoot, project);
+  const { commonEvents, sourceHash } = readCommonEventsForWrite(project);
   if (!isCommonEventRecord(commonEvents[id])) throw new Error(commonEventMissing(id));
   const references = findCommonEventUsages(workflowRoot, project, id);
   if (references.length && request.force !== true) {
@@ -235,8 +239,8 @@ export function deleteCommonEvent(
     throw new Error(commonEventReferenced(id, detail));
   }
   commonEvents[id] = null;
-  const staging = writeStagedProjectJson(workflowRoot, project, relativePath, commonEvents);
-  return { deleted: true, id, relativePath, staging };
+  const write = writeProjectJson(workflowRoot, project, relativePath, commonEvents, sourceHash);
+  return { deleted: true, id, relativePath, write };
 }
 
 export function findCommonEventUsages(
@@ -351,9 +355,19 @@ function readCommonEvents(workflowRoot: string, project: string): unknown[] {
 }
 
 function readProjectJson(workflowRoot: string, project: string, relativePath: string, fallback: unknown): unknown {
-  const file = getProjectFileForRead(workflowRoot, project, relativePath);
+  void workflowRoot;
+  const file = resolveProjectFileForRead(project, relativePath);
   if (!file) return fallback;
   return readJson(file);
+}
+
+function readCommonEventsForWrite(project: string): { commonEvents: unknown[]; sourceHash: string | null } {
+  const relativePath = dataRelativePath(project, COMMON_EVENT_FILE);
+  const file = resolveProjectFileForRead(project, relativePath);
+  if (!file) return { commonEvents: [], sourceHash: null };
+  const read = readProjectJsonFile<unknown>(project, relativePath);
+  if (!Array.isArray(read.value)) throw new Error(commonEventsJsonMustBeArray());
+  return { commonEvents: clone(read.value), sourceHash: read.file.version.sha256 };
 }
 
 function dataRelativePath(project: string, fileName: string): string {

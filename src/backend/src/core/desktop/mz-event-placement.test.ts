@@ -12,9 +12,8 @@ import { RPG_MAKER_MZ_ENGINE_FILES } from "../rmmv/rpg-maker-engine.ts";
 import { createEvent, duplicateEvent, removeEvent, updateEvent } from "./event-service.ts";
 import { createPlacementEvent } from "./event-placement-service.ts";
 import { postMapTiles } from "./map-service.ts";
-import { getMapFileForRead } from "./staging-service.ts";
 
-describe("MZ event placement staging", { concurrency: false }, () => {
+describe("MZ event placement direct save", { concurrency: false }, () => {
   let workflowRoot: string;
   let project: string;
 
@@ -33,7 +32,7 @@ describe("MZ event placement staging", { concurrency: false }, () => {
     fs.rmSync(workflowRoot, { recursive: true, force: true });
   });
 
-  test("compiles MZ parameters into the draft without touching the source map", () => {
+  test("compiles MZ parameters and writes the source map directly", () => {
     const report = createPlacementEvent(workflowRoot, project, 1, {
       name: "Sample Event",
       x: 1,
@@ -46,26 +45,20 @@ describe("MZ event placement staging", { concurrency: false }, () => {
 
     assert.equal(report.usedContractPatch, true);
     const sourceMap = readJson(path.join(project, "data", "Map001.json")) as { events: unknown[] };
-    assert.deepEqual(sourceMap.events, [null]);
-
-    const stagedMapFile = getMapFileForRead(workflowRoot, project, 1)!;
-    const stagedMap = readJson(stagedMapFile) as {
+    const savedMap = sourceMap as {
       events: Array<{ pages?: Array<{ list?: Array<{ code: number; parameters: unknown[] }> }> } | null>;
     };
-    const showText = stagedMap.events
+    const showText = savedMap.events
       .filter(Boolean)
       .flatMap((event) => event?.pages ?? [])
       .flatMap((page) => page.list ?? [])
       .find((command) => command.code === 101);
     assert.deepEqual(showText?.parameters, ["", 0, 0, 2, "Guide"]);
 
-    const draftRoot = path.dirname(path.dirname(stagedMapFile));
-    assert.equal(fs.existsSync(path.join(draftRoot, "game.rmmzproject")), true);
-    assert.equal(fs.existsSync(path.join(draftRoot, "js", "rmmz_core.js")), true);
-    assert.equal(fs.existsSync(path.join(draftRoot, "data", "Map002.json")), true);
+    assert.deepEqual((readJson(path.join(project, "data", "Map002.json")) as { events: unknown[] }).events, [null]);
   });
 
-  test("edits MZ events with MZ command shapes in the staged data directory", () => {
+  test("edits MZ events with MZ command shapes directly in the project", () => {
     const created = createEvent(workflowRoot, project, 1, {
       name: "Plugin Event",
       x: 0,
@@ -90,7 +83,9 @@ describe("MZ event placement staging", { concurrency: false }, () => {
     assert.equal(updated.event?.name, "Updated Plugin Event");
     assert.equal(duplicated.event?.pages[0].list[2].code, 357);
     assert.equal(removed.event, null);
-    assert.deepEqual((readJson(path.join(project, "data", "Map001.json")) as { events: unknown[] }).events, [null]);
+    const savedEvents = (readJson(path.join(project, "data", "Map001.json")) as { events: Array<{ name?: string } | null> }).events;
+    assert.equal(savedEvents[created.eventId]?.name, "Updated Plugin Event");
+    assert.equal(savedEvents[duplicated.eventId], null);
 
     assert.throws(
       () => createEvent(workflowRoot, project, 1, {
@@ -106,7 +101,7 @@ describe("MZ event placement staging", { concurrency: false }, () => {
     );
   });
 
-  test("uses official MZ automatic and manual map layers without touching source", () => {
+  test("uses official MZ automatic and manual map layers with direct save", () => {
     postMapTiles(workflowRoot, project, 1, [{ kind: "tile", x: 0, y: 0, layer: "auto", tileId: 1 }]);
     postMapTiles(workflowRoot, project, 1, [{ kind: "tile", x: 0, y: 0, layer: "auto", tileId: 2 }]);
     const third = postMapTiles(workflowRoot, project, 1, [{ kind: "tile", x: 0, y: 0, layer: "auto", tileId: 3 }]);
@@ -123,18 +118,17 @@ describe("MZ event placement staging", { concurrency: false }, () => {
       preserveAutotileShape: true,
     }]);
 
-    const staged = readJson(getMapFileForRead(workflowRoot, project, 1)!) as { data: number[] };
+    const saved = readJson(path.join(project, "data", "Map001.json")) as { data: number[] };
     const layerSize = 4;
-    assert.equal(staged.data[2 * layerSize], 2);
-    assert.equal(staged.data[3 * layerSize], 3);
-    assert.equal(staged.data[1], preservedShape);
-    assert.ok(staged.data[layerSize + 3] >= 2048 + 20 * 48);
-    assert.equal(staged.data[3 * layerSize + 2], 7);
+    assert.equal(saved.data[2 * layerSize], 2);
+    assert.equal(saved.data[3 * layerSize], 3);
+    assert.equal(saved.data[1], preservedShape);
+    assert.ok(saved.data[layerSize + 3] >= 2048 + 20 * 48);
+    assert.equal(saved.data[3 * layerSize + 2], 7);
     assert.deepEqual(new Set(third.changes.map((change) => typeof change.layer)), new Set(["number"]));
-    assert.equal((readJson(path.join(project, "data", "Map001.json")) as { data: number[] }).data.every((value) => value === 0), true);
   });
 
-  test("provides complete multi-map context for MV abstract event placement", () => {
+  test("uses complete multi-map context while saving an MV abstract event", () => {
     const mvProject = path.join(workflowRoot, "projects", "sample-mv");
     writeMVProject(mvProject);
 
@@ -149,10 +143,9 @@ describe("MZ event placement staging", { concurrency: false }, () => {
     }) as { usedContractPatch?: boolean };
 
     assert.equal(report.usedContractPatch, true);
-    assert.deepEqual((readJson(path.join(mvProject, "www", "data", "Map001.json")) as { events: unknown[] }).events, [null]);
-    const stagedMapFile = getMapFileForRead(workflowRoot, mvProject, 1)!;
-    const draftRoot = path.dirname(path.dirname(path.dirname(stagedMapFile)));
-    assert.equal(fs.existsSync(path.join(draftRoot, "www", "data", "Map002.json")), true);
+    const saved = readJson(path.join(mvProject, "www", "data", "Map001.json")) as { events: Array<unknown | null> };
+    assert.ok(saved.events[1]);
+    assert.deepEqual((readJson(path.join(mvProject, "www", "data", "Map002.json")) as { events: unknown[] }).events, [null]);
   });
 
   test("preserves unchanged legacy MV commands but rejects new invalid command shapes", () => {
@@ -189,7 +182,7 @@ describe("MZ event placement staging", { concurrency: false }, () => {
       }),
       /parameters.*4/,
     );
-    assert.equal((readJson(path.join(mvProject, "www", "data", "Map001.json")) as any).events[1].name, "Legacy Event");
+    assert.equal((readJson(path.join(mvProject, "www", "data", "Map001.json")) as any).events[1].name, "Updated Legacy Event");
   });
 });
 

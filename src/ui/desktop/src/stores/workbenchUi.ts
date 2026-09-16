@@ -29,7 +29,6 @@ export const useWorkbenchUiStore = defineStore('workbenchUi', () => {
   const sbZoom = ref(100);
   const sbHideZoom = ref(false);
   const sbContextText = ref('');
-  const sbStagingDirty = ref(false);
   const sbPlacementActive = ref(false);
   const sbPlacementHint = ref('');
   const sbStatusText = ref('');
@@ -128,7 +127,6 @@ export const useWorkbenchUiStore = defineStore('workbenchUi', () => {
     sbZoom.value = 100;
     sbHideZoom.value = false;
     sbContextText.value = '';
-    sbStagingDirty.value = false;
     sbPlacementActive.value = false;
     sbPlacementHint.value = '';
     sbStatusText.value = '';
@@ -170,7 +168,6 @@ export const useWorkbenchUiStore = defineStore('workbenchUi', () => {
     sbZoom,
     sbHideZoom,
     sbContextText,
-    sbStagingDirty,
     sbPlacementActive,
     sbPlacementHint,
     sbStatusText,

@@ -14,9 +14,9 @@ It can draft and register a pending event, but it must not guess final coordinat
 
 No. Product UI language and game content language are separate. Dialogue, event text, names, and asset labels stay as they are unless you explicitly request translation.
 
-## Should I apply every generated change?
+## Should I keep every generated change?
 
-No. Review staged changes first. Apply only the changes you understand and want in the source project.
+No. Review the actual saved result and Git diff. If a change is wrong, stop further writes and recover it with editor undo, Git version history, or a project backup.
 
 ## What should I do when the model fails?
 

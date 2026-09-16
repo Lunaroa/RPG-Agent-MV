@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { getProjectFileForRead } from "../desktop/staging-service.ts";
+import { resolveProjectFileForRead } from "../desktop/project-file-service.ts";
 import {
   getRmmvDatabaseSchemaByKey,
   type RmmvDatabaseTableKey,
@@ -13,7 +13,6 @@ import { dataRelativePath, resolveRmmvLayout } from "./rmmv-layout.ts";
 export interface EffectiveRmmvDatabaseTable {
   schema: RmmvDatabaseTableSchema;
   relativePath: string;
-  staged: boolean;
   contentHash: string;
   value: unknown;
 }
@@ -26,7 +25,7 @@ export function readEffectiveRmmvDatabaseTable(
   const project = path.resolve(projectRoot);
   const schema = getRmmvDatabaseSchemaByKey(table);
   const relativePath = dataRelativePath(resolveRmmvLayout(project), schema.fileName);
-  const effectiveFile = getProjectFileForRead(workflowRoot, project, relativePath);
+  const effectiveFile = resolveProjectFileForRead(project, relativePath);
   if (!effectiveFile) return null;
 
   const content = fs.readFileSync(effectiveFile);
@@ -41,7 +40,6 @@ export function readEffectiveRmmvDatabaseTable(
   return {
     schema,
     relativePath,
-    staged: path.resolve(effectiveFile) !== path.resolve(project, relativePath),
     contentHash: crypto.createHash("sha256").update(content).digest("hex"),
     value,
   };

@@ -30,13 +30,14 @@ test('fresh database directly uses the current story schema and query indexes', 
     migrate();
     assert.equal(
       (db.prepare('SELECT MAX(version) AS version FROM migrations').get() as { version: number }).version,
-      13,
+      14,
     );
     assert.equal(tableExists(db, 'story_tasks'), false);
     assert.equal(tableExists(db, 'story_task_contracts'), false);
     assert.equal(tableExists(db, 'story_outline'), true);
     assert.equal(tableExists(db, 'story_outline_meta'), false);
     assert.equal(tableExists(db, 'story_outline_scenes'), false);
+    assert.equal(tableExists(db, 'staging_manifests'), false);
 
     const indexes = (db.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'",
@@ -47,7 +48,6 @@ test('fresh database directly uses the current story schema and query indexes', 
 
     for (const [sql, args] of [
       ['SELECT * FROM map_selections WHERE project_id = ? ORDER BY created_at DESC, id DESC LIMIT 1', ['P']],
-      ['SELECT * FROM staging_manifests WHERE project_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1', ['P']],
       ['SELECT * FROM event_contracts WHERE project_id = ? ORDER BY rid', ['P']],
       ['SELECT * FROM event_contracts WHERE status = ? ORDER BY rid', ['draft']],
       ['SELECT * FROM story_event_anchors WHERE project_id = ? ORDER BY map_id, event_id, anchor_id', ['P']],

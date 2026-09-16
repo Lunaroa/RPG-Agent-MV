@@ -31,7 +31,7 @@ test("RMMV MCP stdio exposes editor tools with truthful annotations", async () =
 
     assert.deepEqual([...tools.keys()].sort(), [
       "RmmvDatabase",
-      "RmmvDatabaseApply",
+      "RmmvDatabaseCommit",
       "RmmvEvent",
       "RmmvMap",
       "RmmvMemory",
@@ -46,8 +46,8 @@ test("RMMV MCP stdio exposes editor tools with truthful annotations", async () =
     assert.equal(tools.get("RmmvMap")?.annotations?.destructiveHint, true);
     assert.equal(tools.get("RmmvEvent")?.annotations?.readOnlyHint, false);
     assert.equal(tools.get("RmmvDatabase")?.annotations?.readOnlyHint, false);
-    assert.equal(tools.get("RmmvDatabaseApply")?.annotations?.readOnlyHint, false);
-    assert.equal(tools.get("RmmvDatabaseApply")?.annotations?.destructiveHint, true);
+    assert.equal(tools.get("RmmvDatabaseCommit")?.annotations?.readOnlyHint, false);
+    assert.equal(tools.get("RmmvDatabaseCommit")?.annotations?.destructiveHint, true);
     assert.equal(tools.get("RmmvVerify")?.annotations?.readOnlyHint, false);
     assert.equal(tools.get("RmmvVerify")?.annotations?.destructiveHint, false);
     const verifySchema = JSON.stringify(tools.get("RmmvVerify")?.inputSchema || {});
@@ -55,11 +55,11 @@ test("RMMV MCP stdio exposes editor tools with truthful annotations", async () =
     assert.match(verifySchema, /timeoutSeconds/);
     const databaseSchema = JSON.stringify(tools.get("RmmvDatabase")?.inputSchema || {});
     assert.match(databaseSchema, /dryRun/);
-    assert.match(databaseSchema, /planHash/);
+    assert.doesNotMatch(databaseSchema, /stage|commit|planHash/);
     assert.match(databaseSchema, /type\.removeTail/);
-    const applySchema = tools.get("RmmvDatabaseApply")?.inputSchema as { properties?: Record<string, unknown> };
-    assert.deepEqual(Object.keys(applySchema.properties || {}).sort(), ["operationId", "project"]);
-    assert.doesNotMatch(JSON.stringify(applySchema), /planHash|changes|action/);
+    const commitSchema = tools.get("RmmvDatabaseCommit")?.inputSchema as { properties?: Record<string, unknown> };
+    assert.deepEqual(Object.keys(commitSchema.properties || {}).sort(), ["changes", "planHash", "project", "sessionId"]);
+    assert.doesNotMatch(JSON.stringify(commitSchema), /operationId|action/);
     // 工作流发起工具：本身标记会写（readOnlyHint:false，确保只读子 agent 拿不到、不套娃），
     // schema 收 AI 现写的脚本而非预设名。
     assert.equal(tools.get("RmmvWorkflow")?.annotations?.readOnlyHint, false);
@@ -147,22 +147,12 @@ test("RMMV MCP stdio exposes editor tools with truthful annotations", async () =
       },
     }));
     assert.equal(painted.data.changedCells, 1);
-    const stagedMapData = parseToolJson(await client.callTool({
+    const savedMapData = parseToolJson(await client.callTool({
       name: "RmmvReadContext",
       arguments: { action: "mapData", project, mapId: 1 },
     }));
-    assert.equal(stagedMapData.data.map.data[8], 7);
-    assert.equal((readJson(path.join(project, "www", "data", "Map001.json")) as any).data[8], 0);
-
-    await client.callTool({
-      name: "RmmvMap",
-      arguments: { action: "discardProject", project },
-    });
-    const discardedMapData = parseToolJson(await client.callTool({
-      name: "RmmvReadContext",
-      arguments: { action: "mapData", project, mapId: 1 },
-    }));
-    assert.equal(discardedMapData.data.map.data[8], 0);
+    assert.equal(savedMapData.data.map.data[8], 7);
+    assert.equal((readJson(path.join(project, "www", "data", "Map001.json")) as any).data[8], 7);
 
     const patchWithoutSpec = await client.callTool({
       name: "RmmvEvent",
@@ -294,7 +284,7 @@ test("RmmvReadContext exposes paginated database catalog and entry reads as read
   }
 });
 
-test("RmmvDatabase stages plans while RmmvDatabaseApply accepts only an operation id", async () => {
+test("RmmvDatabaseCommit saves only the exact reviewed dry-run plan", async () => {
   const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rmmv-mcp-db-write-"));
   const project = createDatabaseProjectFixture(workflowRoot);
   const client = new Client({ name: "rmmv-mcp-test", version: "1.0.0" });
@@ -324,18 +314,12 @@ test("RmmvDatabase stages plans while RmmvDatabaseApply accepts only an operatio
     assert.match(dryRun.data.planHash, /^[a-f0-9]{64}$/);
     assert.equal((readJson(path.join(project, "www", "data", "Items.json")) as any[])[1].name, "Item");
 
-    const staged = parseToolJson(await client.callTool({
-      name: "RmmvDatabase",
-      arguments: { action: "stage", project, changes, planHash: dryRun.data.planHash, sessionId: "session-example" },
+    const committed = parseToolJson(await client.callTool({
+      name: "RmmvDatabaseCommit",
+      arguments: { project, changes, planHash: dryRun.data.planHash, sessionId: "session-example" },
     }));
-    assert.match(staged.data.operationId, /^db:/);
-    assert.equal((readJson(path.join(project, "www", "data", "Items.json")) as any[])[1].name, "Item");
-
-    const applied = parseToolJson(await client.callTool({
-      name: "RmmvDatabaseApply",
-      arguments: { project, operationId: staged.data.operationId },
-    }));
-    assert.equal(applied.data.applied, true);
+    assert.equal(committed.data.planHash, dryRun.data.planHash);
+    assert.deepEqual(committed.data.files, ["www/data/Items.json"]);
     assert.equal((readJson(path.join(project, "www", "data", "Items.json")) as any[])[1].name, "Updated Item");
   } finally {
     await client.close();

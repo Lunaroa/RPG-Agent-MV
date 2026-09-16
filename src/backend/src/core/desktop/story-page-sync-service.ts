@@ -24,7 +24,7 @@ import { readJson, writeMapJson } from '../rmmv/json.ts';
 import { applyPatchToProject } from '../rmmv/patcher.ts';
 import { resolveDataDir } from '../rmmv/project-scanner.ts';
 import { initializeProjectGitBaseline } from './project-service.ts';
-import { getMapFileForRead } from './staging-service.ts';
+import { resolveMapFileForRead } from './project-file-service.ts';
 import {
   storyBaselineEventDeleted,
   storyBaselineEventShellModified,
@@ -266,7 +266,7 @@ export function inspectStoryEventForEditor(
   eventId: number,
 ): StoryEventOverview | null {
   return inspectStoryEvent(project, mapId, eventId, {
-    mapFile: getMapFileForRead(workflowRoot, project, mapId),
+    mapFile: resolveMapFileForRead(project, mapId),
   });
 }
 

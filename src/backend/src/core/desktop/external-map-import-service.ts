@@ -25,11 +25,11 @@ import { readJson } from '../rmmv/json.ts';
 import { inspectRmmvProject, resourceRelativePath } from '../rmmv/rmmv-layout.ts';
 import { validateRmmvProjectDirectory } from './project-service.ts';
 import {
-  getProjectFileForRead,
-  getProjectStagingStatus,
-  writeStagedProjectBuffer,
-  writeStagedProjectJson,
-} from './staging-service.ts';
+  readProjectFile,
+  resolveProjectFileForRead,
+  type ProjectFileMutation,
+  writeProjectFilesAtomically,
+} from './project-file-service.ts';
 import {
   collectMapAssetReferences,
   collectMapTilesetImageNames,
@@ -77,6 +77,7 @@ interface InternalScan {
   srcTilesets: unknown[];
   srcMapInfos: unknown[];
   targetMapInfos: unknown[];
+  targetMapInfosHash: string | null;
   idMap: Map<number, number>;
   srcLayout: ProjectLayout;
   tgtLayout: ProjectLayout;
@@ -88,6 +89,7 @@ interface InternalScan {
     displayName: string;
     tilesetId: number;
     events: unknown[];
+    sourceHash: string;
   };
 }
 
@@ -136,10 +138,23 @@ function readJsonArray(file: string): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-function readTargetJsonArray(workflowRoot: string, project: string, layout: ProjectLayout, fileName: string): unknown[] {
+function readTargetJsonArray(project: string, layout: ProjectLayout, fileName: string): {
+  value: unknown[];
+  sourceHash: string | null;
+} {
   const relative = dataRelative(layout, project, fileName);
-  const file = getProjectFileForRead(workflowRoot, project, relative) || path.join(layout.dataDir, fileName);
-  return readJsonArray(file);
+  const file = resolveProjectFileForRead(project, relative);
+  if (!file) return { value: [], sourceHash: null };
+  const source = readProjectFile(project, relative);
+  const parsed = JSON.parse(source.content.toString('utf8').replace(/^\uFEFF/, '')) as unknown;
+  return {
+    value: Array.isArray(parsed) ? parsed : [],
+    sourceHash: source.version.sha256,
+  };
+}
+
+function jsonBuffer(value: unknown): Buffer {
+  return Buffer.from(`${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
 function nextFreeIndex(entries: unknown[]): number {
@@ -297,13 +312,13 @@ function buildScan(
     let targetExt = '';
     for (const ext of definition.extensions) {
       const relative = assetRelative(tgtLayout, category, name, ext);
-      if (getProjectFileForRead(workflowRoot, project, relative)) {
+      if (resolveProjectFileForRead(project, relative)) {
         targetRel = relative;
         targetExt = ext;
         break;
       }
     }
-    const targetAbs = targetRel ? getProjectFileForRead(workflowRoot, project, targetRel) : null;
+    const targetAbs = targetRel ? resolveProjectFileForRead(project, targetRel) : null;
     const targetHash = targetAbs ? sha256(fs.readFileSync(targetAbs)) : null;
     const writeExt = sourceExt || targetExt || definition.extensions[0];
     let status: ExternalMapResourceStatus;
@@ -394,7 +409,8 @@ function buildScan(
     }
   }
 
-  const targetMapInfos = readTargetJsonArray(workflowRoot, project, tgtLayout, 'MapInfos.json');
+  const targetMapInfosSource = readTargetJsonArray(project, tgtLayout, 'MapInfos.json');
+  const targetMapInfos = targetMapInfosSource.value;
   const idMap = new Map<number, number>();
   let replaceTarget: InternalScan['replaceTarget'];
   if (replace) {
@@ -402,8 +418,12 @@ function buildScan(
     // fields we must preserve from it.
     const [sourceMapId] = sourceMapIds;
     idMap.set(sourceMapId, replace.targetMapId);
-    const targetFile = getProjectFileForRead(workflowRoot, project, mapRelative(tgtLayout, project, replace.targetMapId));
-    const targetMap = targetFile ? readJson(targetFile) : null;
+    const targetRelativePath = mapRelative(tgtLayout, project, replace.targetMapId);
+    const targetFile = resolveProjectFileForRead(project, targetRelativePath);
+    const targetMapSource = targetFile ? readProjectFile(project, targetRelativePath) : null;
+    const targetMap = targetMapSource
+      ? JSON.parse(targetMapSource.content.toString('utf8').replace(/^\uFEFF/, '')) as unknown
+      : null;
     if (!isRecord(targetMap)) throw new Error(externalReplaceTargetMapMissing(replace.targetMapId, language));
     const targetEvents = Array.isArray(targetMap.events) ? targetMap.events : [];
     replaceTarget = {
@@ -412,6 +432,7 @@ function buildScan(
       displayName: typeof targetMap.displayName === 'string' ? targetMap.displayName : '',
       tilesetId: Number(targetMap.tilesetId) || 0,
       events: targetEvents,
+      sourceHash: targetMapSource!.version.sha256!,
     };
     // Keeping the target's events while the source map is smaller can leave events
     // outside the new bounds. Warn only; never auto-remove or move them.
@@ -461,6 +482,7 @@ function buildScan(
     srcTilesets,
     srcMapInfos,
     targetMapInfos,
+    targetMapInfosHash: targetMapInfosSource.sourceHash,
     idMap,
     srcLayout,
     tgtLayout,
@@ -596,25 +618,27 @@ function rewriteMapReferences(map: Record<string, unknown>, renames: Map<string,
   }
 }
 
-interface StagedResourcesAndTilesets {
+interface PreparedResourcesAndTilesets {
   renames: Map<string, string>;
   finalNameByKey: Map<string, string>;
   targetTilesetIdBySource: Map<number, number>;
   tilesetsOut: unknown[];
+  tilesetsSourceHash: string | null;
+  mutations: ProjectFileMutation[];
 }
 
 /**
- * Shared staging step for both import and replace: resolves tileset actions,
- * copies resource buffers into staging (renaming `add` collisions with the
- * `_2`/`_3` convention) and materializes tileset configs. Returns the rename
- * map plus the source→target tileset id remapping so the caller can rewrite the
- * map bodies it writes.
+ * Shared preparation step for both import and replace: resolves tileset
+ * actions, prepares resource writes (renaming `add` collisions with the
+ * `_2`/`_3` convention), and materializes tileset configs. The caller commits
+ * the returned mutations together with map and database writes as one atomic
+ * project transaction.
  *
  * `ignoreTilesetFallback` is only supplied in replace mode: an `ignore` tileset
  * then reuses the target map's existing tilesetId instead of requiring a
  * selection (import mode still requires an explicit target for ignore).
  */
-function stageResourcesAndTilesets(
+function prepareResourcesAndTilesets(
   workflowRoot: string,
   project: string,
   scan: InternalScan,
@@ -622,11 +646,13 @@ function stageResourcesAndTilesets(
   tilesets: ExternalMapTilesetResolution[] | undefined,
   language?: ProductLanguage | null,
   ignoreTilesetFallback?: number,
-): StagedResourcesAndTilesets {
+): PreparedResourcesAndTilesets {
   const resourceActionByKey = new Map((resources || []).map((entry) => [entry.key, entry.action]));
   const tilesetResolutionBySource = new Map((tilesets || []).map((entry) => [entry.sourceTilesetId, entry]));
   const targetGraph = getProjectAssetReferenceGraph(workflowRoot, project);
-  const tilesetsOut = readTargetJsonArray(workflowRoot, project, scan.tgtLayout, 'Tilesets.json').slice();
+  const tilesetsSource = readTargetJsonArray(project, scan.tgtLayout, 'Tilesets.json');
+  const tilesetsOut = tilesetsSource.value.slice();
+  const mutations: ProjectFileMutation[] = [];
 
   // Resolve tileset actions first: image rows depend on their owning tileset.
   const tilesetActionBySource = new Map<number, ExternalMapResourceAction>();
@@ -683,7 +709,11 @@ function stageResourcesAndTilesets(
       const relative = action === 'overwrite'
         ? row.targetRelativePath
         : assetRelative(scan.tgtLayout, row.category, finalName, row.sourceExt);
-      writeStagedProjectBuffer(workflowRoot, project, relative, buffer);
+      mutations.push({
+        relativePath: relative,
+        content: buffer,
+        expectedSourceHash: action === 'overwrite' ? row.targetHash : null,
+      });
     }
   }
 
@@ -708,7 +738,14 @@ function stageResourcesAndTilesets(
     }
   }
 
-  return { renames, finalNameByKey, targetTilesetIdBySource, tilesetsOut };
+  return {
+    renames,
+    finalNameByKey,
+    targetTilesetIdBySource,
+    tilesetsOut,
+    tilesetsSourceHash: tilesetsSource.sourceHash,
+    mutations,
+  };
 }
 
 export function applyExternalMapImport(
@@ -729,7 +766,7 @@ export function applyExternalMapImport(
     language,
   );
   const warnings = [...scan.warnings];
-  const { renames, targetTilesetIdBySource, tilesetsOut } = stageResourcesAndTilesets(
+  const prepared = prepareResourcesAndTilesets(
     workflowRoot,
     project,
     scan,
@@ -737,6 +774,7 @@ export function applyExternalMapImport(
     tilesets,
     language,
   );
+  const { renames, targetTilesetIdBySource, tilesetsOut } = prepared;
 
   // Write maps + MapInfos.
   const mapInfosOut = scan.targetMapInfos.slice();
@@ -749,7 +787,11 @@ export function applyExternalMapImport(
     if (targetTilesetIdBySource.has(sourceTilesetId)) map.tilesetId = targetTilesetIdBySource.get(sourceTilesetId);
     if (!options.includeEvents) map.events = [null];
     rewriteMapReferences(map, renames, includeEventCommands);
-    writeStagedProjectJson(workflowRoot, project, mapRelative(scan.tgtLayout, project, newMapId), map);
+    prepared.mutations.push({
+      relativePath: mapRelative(scan.tgtLayout, project, newMapId),
+      content: jsonBuffer(map),
+      expectedSourceHash: null,
+    });
     const sourceInfo = isRecord(scan.srcMapInfos[sourceMapId]) ? (scan.srcMapInfos[sourceMapId] as Record<string, unknown>) : {};
     const parentId = resolveParentId(sourceMapId, scan.srcMapInfos, scan.idMap, anchorParentId);
     mapInfosOut[newMapId] = {
@@ -764,10 +806,21 @@ export function applyExternalMapImport(
     mapIds.push(newMapId);
   }
 
-  writeStagedProjectJson(workflowRoot, project, dataRelative(scan.tgtLayout, project, 'MapInfos.json'), mapInfosOut);
-  writeStagedProjectJson(workflowRoot, project, dataRelative(scan.tgtLayout, project, 'Tilesets.json'), tilesetsOut);
+  prepared.mutations.push(
+    {
+      relativePath: dataRelative(scan.tgtLayout, project, 'MapInfos.json'),
+      content: jsonBuffer(mapInfosOut),
+      expectedSourceHash: scan.targetMapInfosHash,
+    },
+    {
+      relativePath: dataRelative(scan.tgtLayout, project, 'Tilesets.json'),
+      content: jsonBuffer(tilesetsOut),
+      expectedSourceHash: prepared.tilesetsSourceHash,
+    },
+  );
+  const write = writeProjectFilesAtomically(workflowRoot, project, prepared.mutations);
 
-  return { mapIds, warnings, staging: getProjectStagingStatus(workflowRoot, project) };
+  return { mapIds, warnings, write };
 }
 
 export function scanExternalMapReplace(
@@ -815,7 +868,7 @@ export function applyExternalMapReplace(
   const target = scan.replaceTarget;
   if (!target) throw new Error(externalReplaceTargetMapMissing(targetMapId, language));
   const warnings = [...scan.warnings];
-  const { renames, targetTilesetIdBySource, tilesetsOut } = stageResourcesAndTilesets(
+  const prepared = prepareResourcesAndTilesets(
     workflowRoot,
     project,
     scan,
@@ -824,6 +877,7 @@ export function applyExternalMapReplace(
     language,
     target.tilesetId,
   );
+  const { renames, targetTilesetIdBySource, tilesetsOut } = prepared;
 
   // Build the replacement body from the source map, then restore the fields the
   // target must keep. MapInfos is left untouched so id/name/tree position stay.
@@ -835,8 +889,19 @@ export function applyExternalMapReplace(
   const includeEventCommands = options.overwriteEvents && options.validateEventResources;
   rewriteMapReferences(map, renames, includeEventCommands);
 
-  writeStagedProjectJson(workflowRoot, project, mapRelative(scan.tgtLayout, project, targetMapId), map);
-  writeStagedProjectJson(workflowRoot, project, dataRelative(scan.tgtLayout, project, 'Tilesets.json'), tilesetsOut);
+  prepared.mutations.push(
+    {
+      relativePath: mapRelative(scan.tgtLayout, project, targetMapId),
+      content: jsonBuffer(map),
+      expectedSourceHash: target.sourceHash,
+    },
+    {
+      relativePath: dataRelative(scan.tgtLayout, project, 'Tilesets.json'),
+      content: jsonBuffer(tilesetsOut),
+      expectedSourceHash: prepared.tilesetsSourceHash,
+    },
+  );
+  const write = writeProjectFilesAtomically(workflowRoot, project, prepared.mutations);
 
-  return { mapIds: [targetMapId], warnings, staging: getProjectStagingStatus(workflowRoot, project) };
+  return { mapIds: [targetMapId], warnings, write };
 }

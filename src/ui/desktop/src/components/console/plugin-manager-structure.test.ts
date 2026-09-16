@@ -137,7 +137,6 @@ describe('plugin manager structure', () => {
     assert.match(deleteDialogSource, /plugins\.deleteFileAndConfig/);
     assert.match(deleteDialogSource, /removeConfigOnlyDescription/);
     assert.match(deleteDialogSource, /deleteFileAndConfigDescription/);
-    assert.match(deleteDialogSource, /deleteStagingNotice/);
     assert.equal((deleteDialogSource.match(/<el-button/g) || []).length, 3);
     assert.match(deleteDialogSource, /<el-button type="danger" :disabled="busy" @click="\$emit\('deleteFile'\)">/);
     assert.doesNotMatch(deleteDialogSource, /<button|button\.danger/);
@@ -145,7 +144,7 @@ describe('plugin manager structure', () => {
     assert.match(paneSource, /class="danger-action"/);
   });
 
-  test('renders metadata and help as plain text and stages source changes', () => {
+  test('renders metadata and help as plain text and saves source changes directly', () => {
     assert.match(paneSource, /<el-descriptions :column="1" size="small" border>/);
     assert.match(paneSource, /<el-descriptions-item/);
     assert.match(paneSource, /selectedHeader\.target/);
@@ -168,7 +167,7 @@ describe('plugin manager structure', () => {
     );
     assert.match(paneSource, /\.help-panel pre \{[\s\S]+background: color-mix\(/);
     assert.match(paneSource, /\.help-panel pre \{[\s\S]+font-variant-ligatures: none/);
-    assert.match(paneSource, /plugins\.stagingSourceUntouched/);
+    assert.doesNotMatch(paneSource, /stagingSourceUntouched|stagingPending|applyProjectStaging/);
     assert.doesNotMatch(paneSource, /v-html|marked\(/);
   });
 

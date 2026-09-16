@@ -30,7 +30,6 @@ interface InteractivePlaytestServiceLike {
     options: {
       mode: InteractivePlaytestMode;
       sessionId?: string;
-      confirmedStagingHash?: string;
       troopId?: number;
       battlers?: InteractiveBattleTestBattler[];
       battleback1Name?: string;
@@ -75,29 +74,21 @@ export function registerInteractivePlaytestIpcHandlers(
     const project = dependencies.resolveProject(requestedProject);
     const requestedSessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
     const sessionId = dependencies.resolveSession(project, requestedSessionId);
-    const confirmedStagingHash = typeof body.confirmedStagingHash === 'string'
-      ? body.confirmedStagingHash.trim()
-      : undefined;
     const options: Parameters<InteractivePlaytestServiceLike['start']>[1] = {
       mode,
       ...(sessionId ? { sessionId } : {}),
     };
-    if (mode === 'project') {
-      if (confirmedStagingHash) options.confirmedStagingHash = confirmedStagingHash;
-    } else if (mode === 'battle_test') {
-      if (confirmedStagingHash) throw new Error('battle_test does not accept confirmedStagingHash.');
+    if (mode === 'battle_test') {
       options.troopId = positiveInteger(body.troopId, 'battle_test troopId');
       options.battlers = parseBattlers(body.battlers);
       options.battleback1Name = stringField(body.battleback1Name, 'battleback1Name');
       options.battleback2Name = stringField(body.battleback2Name, 'battleback2Name');
     } else if (mode === 'particle_preview') {
-      if (confirmedStagingHash) throw new Error('particle_preview does not accept confirmedStagingHash.');
       if (!body.animationPreview || typeof body.animationPreview !== 'object' || Array.isArray(body.animationPreview)) {
         throw new Error('particle_preview animationPreview must be an object.');
       }
       options.animationPreview = body.animationPreview as unknown as InteractiveParticleAnimationPreview;
-    } else {
-      if (confirmedStagingHash) throw new Error('ui_designer_scene does not accept confirmedStagingHash.');
+    } else if (mode === 'ui_designer_scene') {
       if (!body.uiScene || typeof body.uiScene !== 'object' || Array.isArray(body.uiScene)) {
         throw new Error('ui_designer_scene uiScene must be an object.');
       }
@@ -143,7 +134,6 @@ const START_FIELDS = new Set([
   'project',
   'mode',
   'sessionId',
-  'confirmedStagingHash',
   'troopId',
   'battlers',
   'battleback1Name',
@@ -160,9 +150,6 @@ function assertKnownStartFields(body: Record<string, unknown>): void {
 function assertModeFields(body: Record<string, unknown>, mode: InteractivePlaytestMode): void {
   const present = (field: string) => body[field] !== undefined;
   const battleFields = ['troopId', 'battlers', 'battleback1Name', 'battleback2Name'];
-  if (mode !== 'project' && present('confirmedStagingHash')) {
-    throw new Error(`${mode} does not accept confirmedStagingHash.`);
-  }
   if (mode !== 'battle_test') {
     const invalid = battleFields.filter(present);
     if (invalid.length) throw new Error(`${mode} does not accept Battle Test field(s): ${invalid.join(', ')}.`);

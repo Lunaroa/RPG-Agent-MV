@@ -13,7 +13,7 @@ import {
   checkProjectAssetDeleteSafety,
 } from './asset-management-service.ts';
 import { buildProjectManagementScan } from './project-management-service.ts';
-import { stageProjectFilesAtomically } from './staging-service.ts';
+import { writeProjectFilesAtomically } from './project-file-service.ts';
 
 describe('project management resilient reads', { concurrency: false }, () => {
   let workflowRoot: string;
@@ -113,14 +113,14 @@ describe('project management resilient reads', { concurrency: false }, () => {
     assertSafeIssuePayloads(systemFailure.readIssues, project);
   });
 
-  test('keeps read-only assets staged-aware while strict mutation safety still rejects malformed maps', () => {
+  test('keeps read-only assets current after atomic writes while strict mutation safety rejects malformed maps', () => {
     createProjectFixture(project, 3, 1);
     const dataDir = path.join(project, 'www', 'data');
     const characterDir = path.join(project, 'www', 'img', 'characters');
     fs.mkdirSync(characterDir, { recursive: true });
     fs.writeFileSync(path.join(characterDir, 'Before.png'), 'before', 'utf8');
     fs.writeFileSync(path.join(dataDir, 'Map002.json'), '{ invalid', 'utf8');
-    stageProjectFilesAtomically(workflowRoot, project, [
+    writeProjectFilesAtomically(workflowRoot, project, [
       { relativePath: 'www/img/characters/Before.png', delete: true },
       { relativePath: 'www/img/characters/After.png', content: Buffer.from('after', 'utf8') },
     ]);

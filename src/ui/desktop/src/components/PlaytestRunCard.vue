@@ -9,7 +9,6 @@
     <div class="playtest-details">
       <span v-if="projectName && !isParticlePreview">{{ projectName }}</span>
       <span v-if="isBattleTest && troopName">{{ troopName }}</span>
-      <span v-if="isBattleTest">{{ t('playtest.card.stagedFiles', { count: stagedFileCount }) }}</span>
       <span v-if="isParticlePreview && effectName">{{ effectName }}</span>
       <span v-if="pid">PID {{ pid }}</span>
       <span v-if="duration">{{ duration }}</span>
@@ -54,7 +53,6 @@ const isBattleTest = computed(() => props.run.mode === 'battle_test')
 const isParticlePreview = computed(() => props.run.mode === 'particle_preview')
 const troopName = computed(() => String(props.run.troopName || '').trim())
 const effectName = computed(() => String(props.run.effectName || '').trim())
-const stagedFileCount = computed(() => Number(props.run.stagedFileCount || 0))
 const pid = computed(() => Number(props.run.pid) || 0)
 const exitCode = computed(() => props.run.exitCode === null || props.run.exitCode === undefined
   ? null

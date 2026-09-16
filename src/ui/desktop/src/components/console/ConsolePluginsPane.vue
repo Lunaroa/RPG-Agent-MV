@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router';
 import { Plus, Refresh } from '@element-plus/icons-vue';
 import { ElMessageBox } from 'element-plus';
 import {
-  maps as mapsApi,
   plugins as pluginApi,
   pluginTranslation as pluginTranslationApi,
   projectAssets,
@@ -28,7 +27,6 @@ import { useProjectStore } from '../../stores/project';
 import { useWorkbenchUiStore } from '../../stores/workbenchUi';
 import { useWorkspaceStore } from '../../stores/workspace';
 import { formatUserFacingErrorMessage } from '../../utils/user-facing-error';
-import { parseProjectStagingSummary } from '../../utils/projectStaging';
 import {
   clampPluginListWidth,
   DEFAULT_PLUGIN_LIST_WIDTH,
@@ -79,7 +77,6 @@ const loadFailed = ref(false);
 const busyKey = ref('');
 const error = ref('');
 const actionMessage = ref('');
-const stagingDirty = ref(false);
 const parameterDialogOpen = ref(false);
 const parameterDialogPluginIndex = ref<number | null>(null);
 const parameterDialogError = ref('');
@@ -431,7 +428,6 @@ onBeforeUnmount(() => {
   stopResize();
   workbenchUi.sbContextText = '';
   workbenchUi.sbHideZoom = false;
-  workbenchUi.sbStagingDirty = false;
 });
 
 function resetState(): void {
@@ -444,7 +440,6 @@ function resetState(): void {
   actionMessage.value = '';
   loadFailed.value = false;
   busyKey.value = '';
-  stagingDirty.value = false;
   parameterDialogOpen.value = false;
   parameterDialogPluginIndex.value = null;
   parameterDialogError.value = '';
@@ -481,7 +476,6 @@ async function loadPlugins(): Promise<void> {
     ]);
     applyConfig(nextConfig);
     editorCatalog.value = catalog;
-    await refreshStagingStatus();
   } catch (loadError) {
     config.value = null;
     loadFailed.value = true;
@@ -519,7 +513,6 @@ async function runAction(
   actionMessage.value = '';
   try {
     applyConfig(await action());
-    await refreshStagingStatus();
     actionMessage.value = message;
     return true;
   } catch (actionError) {
@@ -527,21 +520,6 @@ async function runAction(
     return false;
   } finally {
     busyKey.value = '';
-  }
-}
-
-async function refreshStagingStatus(): Promise<void> {
-  if (!projectStore.currentProject) {
-    stagingDirty.value = false;
-    workbenchUi.sbStagingDirty = false;
-    return;
-  }
-  try {
-    const status = await mapsApi.projectStaging(projectStore.currentProject) as { staged?: boolean };
-    stagingDirty.value = Boolean(status?.staged);
-    workbenchUi.sbStagingDirty = stagingDirty.value;
-  } catch {
-    /* Staging status does not block plugin configuration reads. */
   }
 }
 
@@ -737,7 +715,7 @@ async function togglePlugin(plugin: ManagedPluginEntry, enabled: boolean): Promi
 }
 
 async function addExistingFile(file: ManagedPluginFile): Promise<void> {
-  if (!projectStore.currentProject || file.deleted) return;
+  if (!projectStore.currentProject) return;
   selectedKey.value = configuredKey(file.name);
   await runAction(
     `add:${file.name}`,
@@ -747,7 +725,7 @@ async function addExistingFile(file: ManagedPluginFile): Promise<void> {
 }
 
 function pluginExistsInProject(name: string): boolean {
-  return pluginFiles.value.some((file) => file.name === name && file.exists && !file.deleted);
+  return pluginFiles.value.some((file) => file.name === name && file.exists);
 }
 
 async function installPlugin(): Promise<void> {
@@ -806,7 +784,6 @@ async function installPlugin(): Promise<void> {
       selectedKey.value = first ? configuredKey(first.name) : selectedKey.value;
       applyConfig(result.configuration);
       actionMessage.value = t('plugins.installDirectorySuccess', { count: result.installed.length });
-      await refreshStagingStatus();
       return;
     }
 
@@ -850,7 +827,6 @@ async function installPluginFromAbsolutePath(sourceFile: string): Promise<boolea
   actionMessage.value = overwrite
     ? t('plugins.overwriteSuccess', { name: result.name })
     : t('plugins.installSuccess', { name: result.name });
-  await refreshStagingStatus();
   return true;
 }
 
@@ -1006,7 +982,6 @@ async function deleteConfiguredPlugin(mode: 'configuration' | 'file'): Promise<v
     const result = await pluginApi.deleteFile(plugin.name, {}, projectStore.currentProject);
     applyConfig(result.configuration || await pluginApi.read(projectStore.currentProject));
     actionMessage.value = t('plugins.deleteSuccess', { name: plugin.name });
-    await refreshStagingStatus();
     deleted = true;
   } catch (deleteError) {
     error.value = formatPluginActionError(deleteError);
@@ -1029,7 +1004,7 @@ function adjacentConfiguredKey(index: number): string {
 }
 
 async function deleteUnconfiguredFile(file: ManagedPluginFile): Promise<void> {
-  if (!projectStore.currentProject || file.deleted || busyKey.value) return;
+  if (!projectStore.currentProject || busyKey.value) return;
   try {
     await ElMessageBox.confirm(
       t('plugins.deleteUnconfiguredConfirm', { name: file.name }),
@@ -1054,7 +1029,6 @@ async function deleteUnconfiguredFile(file: ManagedPluginFile): Promise<void> {
     const result = await pluginApi.deleteFile(file.name, {}, projectStore.currentProject);
     applyConfig(result.configuration || await pluginApi.read(projectStore.currentProject));
     actionMessage.value = t('plugins.deleteFileSuccess', { name: file.name });
-    await refreshStagingStatus();
   } catch (deleteError) {
     error.value = formatPluginActionError(deleteError);
   } finally {
@@ -1192,56 +1166,6 @@ function fileKeydown(event: KeyboardEvent, file: ManagedPluginFile): void {
 async function openPluginUrl(): Promise<void> {
   if (selectedHeader.value?.urlHref) {
     await system.openExternalUrl(selectedHeader.value.urlHref);
-  }
-}
-
-async function applyPluginStaging(): Promise<void> {
-  if (!projectStore.currentProject || busyKey.value) return;
-  busyKey.value = 'apply-staging';
-  error.value = '';
-  try {
-    const status = await mapsApi.projectStaging(projectStore.currentProject);
-    const summary = parseProjectStagingSummary(status);
-    if (summary.operations.length) {
-      const operations = summary.operations
-        .map((operation) => `${operation.operationId} · ${operation.files.length}`)
-        .join('\n');
-      try {
-        await ElMessageBox.confirm(
-          t('plugins.applyAgentOperationsConfirm', { operations }),
-          t('plugins.applyAgentOperationsTitle'),
-          { type: 'warning' },
-        );
-      } catch {
-        return;
-      }
-    }
-    const result = await mapsApi.applyProjectStaging(
-      projectStore.currentProject,
-      summary.operations.map((operation) => operation.operationId),
-    ) as { canceled?: boolean };
-    if (result?.canceled) return;
-    await loadPlugins();
-    actionMessage.value = t('plugins.applySuccess');
-  } catch (applyError) {
-    error.value = formatPluginActionError(applyError);
-  } finally {
-    busyKey.value = '';
-  }
-}
-
-async function discardPluginStaging(): Promise<void> {
-  if (!projectStore.currentProject || busyKey.value) return;
-  busyKey.value = 'discard-staging';
-  error.value = '';
-  try {
-    await mapsApi.discardProjectStaging(projectStore.currentProject);
-    await loadPlugins();
-    actionMessage.value = t('plugins.discardSuccess');
-  } catch (discardError) {
-    error.value = formatPluginActionError(discardError);
-  } finally {
-    busyKey.value = '';
   }
 }
 
@@ -1480,7 +1404,7 @@ function resizeKeydown(event: KeyboardEvent): void {
               :key="file.relativePath"
               :ref="(element) => setPluginRowElement(fileKey(file.relativePath), element)"
               class="plugin-row file-row"
-              :class="{ active: selectedFile?.relativePath === file.relativePath, deleted: file.deleted }"
+              :class="{ active: selectedFile?.relativePath === file.relativePath }"
               role="button"
               tabindex="0"
               :aria-pressed="selectedFile?.relativePath === file.relativePath"
@@ -1494,10 +1418,8 @@ function resizeKeydown(event: KeyboardEvent): void {
                   <strong>{{ file.name }}</strong>
                 </span>
                 <small>{{ file.header.plugindesc || file.header.displayPath }}</small>
-                <em v-if="file.deleted">{{ t('plugins.pendingDelete') }}</em>
               </span>
               <button
-                v-if="!file.deleted"
                 type="button"
                 class="row-action"
                 :disabled="Boolean(busyKey)"
@@ -1642,7 +1564,7 @@ function resizeKeydown(event: KeyboardEvent): void {
                 {{ t('plugins.delete') }}
               </button>
               <button
-                v-else-if="selectedFile && !selectedFile.deleted"
+                v-else-if="selectedFile"
                 type="button"
                 :disabled="Boolean(busyKey)"
                 @click="addExistingFile(selectedFile)"
@@ -1650,7 +1572,7 @@ function resizeKeydown(event: KeyboardEvent): void {
                 {{ t('plugins.addToConfiguration') }}
               </button>
               <button
-                v-if="selectedFile && !selectedFile.deleted"
+                v-if="selectedFile"
                 type="button"
                 class="danger"
                 :disabled="Boolean(busyKey)"
@@ -1764,22 +1686,6 @@ function resizeKeydown(event: KeyboardEvent): void {
             <div v-else class="help-empty">{{ t('plugins.noHelp') }}</div>
           </section>
 
-          <footer v-if="stagingDirty" class="staging-bar">
-            <span>{{ t('plugins.stagingSourceUntouched') }}</span>
-            <div>
-              <button type="button" :disabled="Boolean(busyKey)" @click="discardPluginStaging">
-                {{ t('editor.toolbar.discard') }}
-              </button>
-              <button
-                type="button"
-                class="primary"
-                :disabled="Boolean(busyKey)"
-                @click="applyPluginStaging"
-              >
-                {{ t('editor.toolbar.applyStaging') }}
-              </button>
-            </div>
-          </footer>
         </template>
         <div v-else class="state">{{ t('plugins.emptySelection') }}</div>
       </main>
@@ -2036,19 +1942,11 @@ input:focus-visible {
   color: var(--console-text-muted, #9a8e7e);
   font-size: 9.5px;
 }
-.plugin-main em {
-  color: var(--app-danger);
-  font-size: 10px;
-  font-style: normal;
-}
 .plugin-row.disabled .plugin-main {
   opacity: .68;
 }
 .file-row {
   grid-template-columns: 22px minmax(0, 1fr) auto;
-}
-.file-row.deleted {
-  opacity: .62;
 }
 .row-action {
   min-height: 32px;
@@ -2152,8 +2050,7 @@ input:focus-visible {
   color: var(--console-text-muted, #9a8e7e);
   font: 10px var(--app-font-mono);
 }
-.detail-actions,
-.staging-bar > div {
+.detail-actions {
   flex: 0 0 auto;
   display: flex;
   gap: 14px;
@@ -2179,8 +2076,7 @@ input:focus-visible {
 .translate-popover .el-button {
   align-self: flex-end;
 }
-.detail-actions button,
-.staging-bar button {
+.detail-actions button {
   min-height: 34px;
   padding: 0 11px;
   border: 1px solid var(--console-border-strong, #ddd3c2);
@@ -2212,7 +2108,6 @@ input:focus-visible {
   background: color-mix(in srgb, var(--app-danger) 84%, #000);
 }
 .detail-actions button:hover:not(:disabled),
-.staging-bar button:hover:not(:disabled),
 .row-action:hover:not(:disabled) {
   border-color: var(--console-accent, #be5630);
 }
@@ -2387,23 +2282,6 @@ input:focus-visible {
   color: var(--console-text-muted, #9a8e7e);
   font-size: 11px;
 }
-.staging-bar {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 10px 14px;
-  border-top: 1px solid var(--console-border, #e4dcce);
-  background: var(--console-accent-soft, #f6e3d7);
-  color: var(--console-text-soft, #5a5247);
-  font-size: 10px;
-}
-.staging-bar button.primary {
-  border-color: var(--console-accent, #be5630);
-  background: var(--console-accent, #be5630);
-  color: #fff;
-}
 button:disabled {
   opacity: .45;
   cursor: not-allowed;
@@ -2422,8 +2300,7 @@ button:disabled {
   .pane-resizer {
     display: none;
   }
-  .detail-header,
-  .staging-bar {
+  .detail-header {
     align-items: flex-start;
     flex-direction: column;
     padding-top: 10px;

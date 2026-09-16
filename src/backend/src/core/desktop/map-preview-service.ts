@@ -23,10 +23,8 @@ import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import { resolveDataDir } from '../rmmv/project-scanner.ts';
 import {
   cleanupIsolatedProject,
-  snapshotProjectStaging,
   verifyIsolatedSourceState,
   type IsolatedProjectPreparation,
-  type IsolatedStagingSnapshot,
 } from './isolated-project-preparation.ts';
 import {
   buildIsolatedNwLaunchCommand,
@@ -40,17 +38,11 @@ import {
   startMapPreviewPreparation,
   type MapPreviewPreparationTask,
 } from './map-preview-preparation.ts';
-import { normalizeMapPreviewStagingConflictFiles } from './map-preview-staging-conflict.ts';
 import type {
   InteractiveProjectRuntime,
   InteractiveProjectRuntimeResolution,
 } from './interactive-playtest-runtime.ts';
-import {
-  getProjectStagingStatus,
-  getMapFileForRead,
-  getProjectFileForRead,
-  preflightStagedProjectFiles,
-} from './staging-service.ts';
+import { resolveMapFileForRead, resolveProjectFileForRead } from './project-file-service.ts';
 
 const PACKET_HANDSHAKE = 1;
 const PACKET_STATUS = 2;
@@ -226,7 +218,6 @@ export class MapPreviewService {
   #cleanupInProgress = false;
   #pendingFrameMeta: PreviewFrameMeta | null = null;
   #sourceSnapshot: ProjectFileSnapshot | null = null;
-  #stagingSnapshot: IsolatedStagingSnapshot | null = null;
   #pendingMapSyncIds = new Set<number>();
   #desiredRunning = true;
   #pendingResume: MapPreviewResumeRequest | null = null;
@@ -267,7 +258,6 @@ export class MapPreviewService {
     if (!manifest.mapFiles.some((entry) => entry.id === mapId && entry.exists)) {
       throw new Error(`Map${String(mapId).padStart(3, '0')}.json does not exist.`);
     }
-    assertNoStagingConflicts(this.#workflowRoot, project);
     const mapRevision = effectiveMapRevision(this.#workflowRoot, project, mapId);
 
     const runtimeResolution = this.#dependencies.resolveProjectRuntime(project, manifest.engine);
@@ -318,7 +308,6 @@ export class MapPreviewService {
         mtimeMs: entry.mtimeMs,
         hash: entry.hash,
       }]));
-      this.#stagingSnapshot = this.#preparation.staging;
       this.#pendingMapSyncIds.clear();
       this.#desiredRunning = true;
       this.#pendingResume = null;
@@ -543,12 +532,10 @@ export class MapPreviewService {
       return this.current();
     }
     const request = this.#pendingResume;
-    assertNoStagingConflicts(this.#workflowRoot, request.project);
     const changes = inspectWarmProjectChanges(
       this.#workflowRoot,
       request.project,
       this.#sourceSnapshot,
-      this.#stagingSnapshot,
     );
     if (changes.unsafePaths.length) {
       await this.stop();
@@ -557,7 +544,6 @@ export class MapPreviewService {
       return this.current();
     }
     this.#sourceSnapshot = changes.sourceSnapshot;
-    this.#stagingSnapshot = changes.stagingSnapshot;
     for (const mapId of changes.changedMapIds) this.#pendingMapSyncIds.add(mapId);
     if (changes.mapInfosChanged) syncEffectiveMapInfos(this.#workflowRoot, request.project, this.#preparation.temporaryProject);
 
@@ -939,8 +925,8 @@ export class MapPreviewService {
     if (this.#preparation) {
       const preparation = this.#preparation;
       const evidence = verifyIsolatedSourceState(this.#workflowRoot, preparation);
-      if (!evidence.sourceUnchanged || !evidence.savesUnchanged || !evidence.stagingUnchanged) {
-        console.warn('[map-preview] Source or staging changed while the isolated preview was warm; cleanup will continue.');
+      if (!evidence.sourceUnchanged || !evidence.savesUnchanged) {
+        console.warn('[map-preview] Source project changed while the isolated preview was warm; cleanup will continue.');
       }
       let preparationCleaned = false;
       if (processResult.exited) {
@@ -957,7 +943,6 @@ export class MapPreviewService {
     }
     if (!this.#preparation) {
       this.#sourceSnapshot = null;
-      this.#stagingSnapshot = null;
     }
     this.#pendingMapSyncIds.clear();
     this.#pendingResume = null;
@@ -1040,7 +1025,7 @@ export function injectPreviewHarness(projectRoot: string, resourceRoot: string, 
   const harnessSource = previewHarnessSource(options);
   fs.writeFileSync(plan.indexPath, injected, 'utf8');
   writeIsolatedNwAppPackage(plan, harnessSource, {
-    stagedIndexSource: injected,
+    injectedIndexSource: injected,
     window: {
       width: options.viewportWidth,
       height: options.viewportHeight,
@@ -1950,15 +1935,6 @@ ${mapPreviewDebugMarkerBootstrapSource()}
 `;
 }
 
-export function assertNoStagingConflicts(workflowRoot: string, project: string): void {
-  const status = getProjectStagingStatus(workflowRoot, project) as { files?: Array<Record<string, unknown>> };
-  const relativePaths = (status.files || []).map((entry) => String(entry.relativePath || '')).filter(Boolean);
-  if (!relativePaths.length) return;
-  const preflight = preflightStagedProjectFiles(workflowRoot, project, relativePaths) as Array<Record<string, unknown>>;
-  const conflicts = preflight.filter((entry) => Array.isArray(entry.conflictReasons) && entry.conflictReasons.length > 0);
-  if (conflicts.length) throw new Error('Resolve staged project conflicts before starting map preview.');
-}
-
 export function describeMapPreviewStartupTimeout(stage: string): {
   message: string;
   failureCode?: MapPreviewFailureCode;
@@ -2055,24 +2031,20 @@ function normalizedView(value: MapPreviewViewRequest): MapPreviewViewRequest {
 
 export interface WarmProjectChanges {
   sourceSnapshot: ProjectFileSnapshot;
-  stagingSnapshot: IsolatedStagingSnapshot;
   changedMapIds: Set<number>;
   mapInfosChanged: boolean;
   unsafePaths: string[];
 }
 
 export function inspectWarmProjectChanges(
-  workflowRoot: string,
+  _workflowRoot: string,
   project: string,
   previousSource: ProjectFileSnapshot | null,
-  previousStaging: IsolatedStagingSnapshot | null,
 ): WarmProjectChanges {
   const sourceSnapshot = captureProjectSnapshot(project, previousSource || undefined);
-  const stagingSnapshot = snapshotProjectStaging(workflowRoot, project);
   const changedPaths = changedSnapshotPaths(previousSource, sourceSnapshot);
-  for (const relative of changedStagingPaths(previousStaging, stagingSnapshot)) changedPaths.add(relative);
   const classification = classifyWarmPreviewPaths(project, changedPaths);
-  return { sourceSnapshot, stagingSnapshot, ...classification };
+  return { sourceSnapshot, ...classification };
 }
 
 export function classifyWarmPreviewPaths(
@@ -2141,22 +2113,8 @@ function changedSnapshotPaths(previous: ProjectFileSnapshot | null, current: Pro
   return changed;
 }
 
-function changedStagingPaths(previous: IsolatedStagingSnapshot | null, current: IsolatedStagingSnapshot): Set<string> {
-  if (!previous) return new Set(current.files.map((entry) => entry.relativePath));
-  const serialize = (snapshot: IsolatedStagingSnapshot) => new Map(snapshot.files.map((entry) => [
-    normalizeRelativePath(entry.relativePath),
-    `${entry.delete ? 'delete' : 'write'}:${entry.draftHash || ''}`,
-  ]));
-  const before = serialize(previous);
-  const after = serialize(current);
-  const changed = new Set<string>();
-  for (const [relative, value] of after) if (before.get(relative) !== value) changed.add(relative);
-  for (const relative of before.keys()) if (!after.has(relative)) changed.add(relative);
-  return changed;
-}
-
 export function syncEffectiveMap(workflowRoot: string, sourceProject: string, temporaryProject: string, mapId: number): void {
-  const source = getMapFileForRead(workflowRoot, sourceProject, mapId);
+  const source = resolveMapFileForRead(sourceProject, mapId);
   if (!source || !fs.existsSync(source)) throw new Error(`Map${String(mapId).padStart(3, '0')}.json no longer exists.`);
   const target = path.join(resolveDataDir(temporaryProject), `Map${String(mapId).padStart(3, '0')}.json`);
   atomicCopyJson(source, target, temporaryProject);
@@ -2164,7 +2122,7 @@ export function syncEffectiveMap(workflowRoot: string, sourceProject: string, te
 
 export function syncEffectiveMapInfos(workflowRoot: string, sourceProject: string, temporaryProject: string): void {
   const relative = normalizeRelativePath(path.relative(sourceProject, path.join(resolveDataDir(sourceProject), 'MapInfos.json')));
-  const source = getProjectFileForRead(workflowRoot, sourceProject, relative)
+  const source = resolveProjectFileForRead(sourceProject, relative)
     || path.join(sourceProject, relative.split('/').join(path.sep));
   if (!fs.existsSync(source)) throw new Error('MapInfos.json no longer exists.');
   atomicCopyJson(source, path.join(resolveDataDir(temporaryProject), 'MapInfos.json'), temporaryProject);
@@ -2187,7 +2145,7 @@ function atomicCopyJson(source: string, target: string, temporaryProject: string
 }
 
 export function effectiveMapRevision(workflowRoot: string, project: string, mapId: number): string {
-  const file = getMapFileForRead(workflowRoot, project, mapId);
+  const file = resolveMapFileForRead(project, mapId);
   if (!file || !fs.existsSync(file)) throw new Error(`Map${String(mapId).padStart(3, '0')}.json does not exist.`);
   return sha256(fs.readFileSync(file));
 }
@@ -2253,7 +2211,7 @@ export function previewMapGeometry(project: string, mapId: number, tileSizeInput
   };
 }
 
-/** Staged-aware variant of previewMapGeometry for serve-direct previews. */
+/** Project-file variant of previewMapGeometry for serve-direct previews. */
 export function effectivePreviewMapGeometry(
   workflowRoot: string,
   project: string,
@@ -2261,7 +2219,7 @@ export function effectivePreviewMapGeometry(
   tileSizeInput: number,
 ): PreviewMapGeometry {
   const tileSize = positiveInteger(tileSizeInput, 'tile size');
-  const file = getMapFileForRead(workflowRoot, project, mapId);
+  const file = resolveMapFileForRead(project, mapId);
   if (!file || !fs.existsSync(file)) throw new Error(`Map${String(mapId).padStart(3, '0')}.json does not exist.`);
   const map = readJson(file) as Record<string, unknown>;
   const widthTiles = positiveInteger(map.width, 'map width');
@@ -2384,7 +2342,6 @@ export function normalizeMapPreviewFailureDetail(
   const operationId = positiveOptionalInteger(detail.operationId);
   const sourceMapId = positiveOptionalInteger(detail.sourceMapId);
   const targetMapId = positiveOptionalInteger(detail.targetMapId);
-  const stagingConflicts = normalizeMapPreviewStagingConflictFiles(detail.stagingConflicts || []);
   return {
     stage: boundedText(detail.stage || 'unknown', 128),
     ...(operationId ? { operationId } : {}),
@@ -2394,7 +2351,6 @@ export function normalizeMapPreviewFailureDetail(
     ...(typeof detail.transferring === 'boolean' ? { transferring: detail.transferring } : {}),
     ...(typeof detail.resourcesReady === 'boolean' ? { resourcesReady: detail.resourcesReady } : {}),
     ...(resources.length ? { resources } : {}),
-    ...(stagingConflicts.length ? { stagingConflicts } : {}),
     message: sanitizeMapPreviewDiagnosticText(detail.message || 'Map preview failed.', preparation),
     ...(detail.runtimeOutput ? {
       runtimeOutput: sanitizeMapPreviewDiagnosticText(

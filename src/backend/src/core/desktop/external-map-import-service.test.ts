@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { readJson, writeJson } from '../rmmv/json.ts';
-import { getProjectFileForRead } from './staging-service.ts';
+import { resolveProjectFileForRead } from './project-file-service.ts';
 import {
   applyExternalMapImport,
   applyExternalMapReplace,
@@ -93,7 +93,7 @@ describe('external map import service', { concurrency: false }, () => {
     assert.equal(keys.has('pictures:Portrait'), false);
   });
 
-  test('applies a staged draft: new map id, conflict rename, tileset add, reference rewrite', () => {
+  test('saves a new map atomically with conflict rename, tileset add, and reference rewrite', () => {
     const scan = scanExternalMapImport(root, target, req([1]), LANG);
     const apply = applyExternalMapImport(
       root,
@@ -110,20 +110,20 @@ describe('external map import service', { concurrency: false }, () => {
     );
     assert.deepEqual(apply.mapIds, [2]);
 
-    const map = readStaged(root, target, 'www/data/Map002.json') as Record<string, any>;
+    const map = readSaved(root, target, 'www/data/Map002.json') as Record<string, any>;
     assert.equal(map.tilesetId, 2); // freshly added tileset id
     const events = map.events as any[];
     const picture = events[1].pages[0].list.find((command: any) => command.code === 231);
     assert.equal(picture.parameters[1], 'Portrait_2'); // conflict rename propagated into the command
     assert.equal(events[1].pages[0].image.characterName, 'Hero'); // identical asset kept, not renamed
 
-    assert.equal(fs.readFileSync(stagedPath(root, target, 'www/img/pictures/Portrait_2.png'), 'utf8'), 'portrait-source');
-    assert.ok(getProjectFileForRead(root, target, 'www/img/faces/HeroFace.png'));
+    assert.equal(fs.readFileSync(savedPath(root, target, 'www/img/pictures/Portrait_2.png'), 'utf8'), 'portrait-source');
+    assert.ok(resolveProjectFileForRead(target, 'www/img/faces/HeroFace.png'));
 
-    const tilesets = readStaged(root, target, 'www/data/Tilesets.json') as any[];
+    const tilesets = readSaved(root, target, 'www/data/Tilesets.json') as any[];
     assert.equal(tilesets[2].tilesetNames[0], 'World_A1');
 
-    const mapInfos = readStaged(root, target, 'www/data/MapInfos.json') as any[];
+    const mapInfos = readSaved(root, target, 'www/data/MapInfos.json') as any[];
     assert.equal(mapInfos[2].name, 'Field');
     assert.equal(mapInfos[2].parentId, 0);
   });
@@ -147,8 +147,8 @@ describe('external map import service', { concurrency: false }, () => {
       LANG,
     );
     // Overwriting keeps the original name and replaces the bytes in place.
-    assert.equal(fs.readFileSync(stagedPath(root, target, 'www/img/pictures/Portrait.png'), 'utf8'), 'portrait-source');
-    const map = readStaged(root, target, 'www/data/Map002.json') as Record<string, any>;
+    assert.equal(fs.readFileSync(savedPath(root, target, 'www/img/pictures/Portrait.png'), 'utf8'), 'portrait-source');
+    const map = readSaved(root, target, 'www/data/Map002.json') as Record<string, any>;
     const picture = (map.events as any[])[1].pages[0].list.find((command: any) => command.code === 231);
     assert.equal(picture.parameters[1], 'Portrait');
   });
@@ -173,9 +173,9 @@ describe('external map import service', { concurrency: false }, () => {
       },
       LANG,
     );
-    const map = readStaged(root, target, `www/data/Map${String(apply.mapIds[0]).padStart(3, '0')}.json`) as Record<string, any>;
+    const map = readSaved(root, target, `www/data/Map${String(apply.mapIds[0]).padStart(3, '0')}.json`) as Record<string, any>;
     assert.equal(map.tilesetId, 1);
-    const tilesets = readStaged(root, target, 'www/data/Tilesets.json') as any[];
+    const tilesets = readSaved(root, target, 'www/data/Tilesets.json') as any[];
     assert.equal(tilesets.length, 2); // overwrite in place, no new row
     assert.equal(tilesets[1].name, 'World');
     assert.equal(tilesets[1].tilesetNames[0], 'World_A1');
@@ -196,11 +196,11 @@ describe('external map import service', { concurrency: false }, () => {
       },
       LANG,
     );
-    const map = readStaged(root, target, `www/data/Map${String(apply.mapIds[0]).padStart(3, '0')}.json`) as Record<string, any>;
+    const map = readSaved(root, target, `www/data/Map${String(apply.mapIds[0]).padStart(3, '0')}.json`) as Record<string, any>;
     assert.equal(map.tilesetId, 1);
-    const tilesets = readStaged(root, target, 'www/data/Tilesets.json') as any[];
+    const tilesets = readSaved(root, target, 'www/data/Tilesets.json') as any[];
     assert.equal(tilesets.length, 2);
-    assert.ok(!getProjectFileForRead(root, target, 'www/img/tilesets/World_A1.png'));
+    assert.ok(!resolveProjectFileForRead(target, 'www/img/tilesets/World_A1.png'));
   });
 
   test('replace keeps the target identity and takes the source body', () => {
@@ -222,14 +222,14 @@ describe('external map import service', { concurrency: false }, () => {
     );
     assert.deepEqual(apply.mapIds, [1]);
 
-    const map = readStaged(root, target, 'www/data/Map001.json') as Record<string, any>;
+    const map = readSaved(root, target, 'www/data/Map001.json') as Record<string, any>;
     assert.equal(map.width, 12); // source dimensions
     assert.equal(map.height, 12);
     assert.equal(map.displayName, 'HomeDisplay'); // target displayName preserved
     assert.equal(map.tilesetId, 2); // source tileset added as a new row
 
     // MapInfos is untouched: id/name/parent/order stay as the target's.
-    const mapInfos = readStaged(root, target, 'www/data/MapInfos.json') as any[];
+    const mapInfos = readSaved(root, target, 'www/data/MapInfos.json') as any[];
     assert.equal(mapInfos[1].name, 'Home');
     assert.equal(mapInfos[1].parentId, 0);
     assert.equal(mapInfos[1].order, 1);
@@ -250,7 +250,7 @@ describe('external map import service', { concurrency: false }, () => {
       },
       LANG,
     );
-    const map = readStaged(root, target, 'www/data/Map001.json') as Record<string, any>;
+    const map = readSaved(root, target, 'www/data/Map001.json') as Record<string, any>;
     const npc = (map.events as any[])[1];
     assert.equal(npc.name, 'NPC'); // source event replaced the target's
     const picture = npc.pages[0].list.find((command: any) => command.code === 231);
@@ -275,7 +275,7 @@ describe('external map import service', { concurrency: false }, () => {
       LANG,
     );
     assert.deepEqual(apply.mapIds, [1]);
-    const map = readStaged(root, target, 'www/data/Map001.json') as Record<string, any>;
+    const map = readSaved(root, target, 'www/data/Map001.json') as Record<string, any>;
     assert.equal(map.width, 8); // source dimensions
     const guard = (map.events as any[])[1];
     assert.equal(guard.name, 'Guard'); // target event preserved
@@ -298,9 +298,9 @@ describe('external map import service', { concurrency: false }, () => {
       LANG,
     );
     assert.deepEqual(apply.mapIds, [1]);
-    const map = readStaged(root, target, 'www/data/Map001.json') as Record<string, any>;
+    const map = readSaved(root, target, 'www/data/Map001.json') as Record<string, any>;
     assert.equal(map.tilesetId, 1); // target's own tileset id, reused
-    const tilesets = readStaged(root, target, 'www/data/Tilesets.json') as any[];
+    const tilesets = readSaved(root, target, 'www/data/Tilesets.json') as any[];
     assert.equal(tilesets.length, 2); // no new tileset row
   });
 });
@@ -319,14 +319,14 @@ function sourceOf(): string {
   return activeSource;
 }
 
-function stagedPath(root: string, project: string, relative: string): string {
-  const file = getProjectFileForRead(root, project, relative);
-  assert.ok(file, `expected a staged/committed file for ${relative}`);
+function savedPath(_root: string, project: string, relative: string): string {
+  const file = resolveProjectFileForRead(project, relative);
+  assert.ok(file, `expected a saved project file for ${relative}`);
   return file;
 }
 
-function readStaged(root: string, project: string, relative: string): unknown {
-  return readJson(stagedPath(root, project, relative));
+function readSaved(root: string, project: string, relative: string): unknown {
+  return readJson(savedPath(root, project, relative));
 }
 
 function createSourceProject(project: string): void {

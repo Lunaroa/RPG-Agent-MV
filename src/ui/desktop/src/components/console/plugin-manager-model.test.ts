@@ -44,14 +44,12 @@ const plugin = (name: string, status: boolean): ManagedPluginEntry => ({
   header: header(name, `${name} description`),
 });
 
-const file = (name: string, deleted = false): ManagedPluginFile => ({
+const file = (name: string): ManagedPluginFile => ({
   name,
   fileName: `${name}.js`,
   relativePath: `js/plugins/${name}.js`,
-  exists: !deleted,
-  staged: deleted,
-  deleted,
-  size: deleted ? null : 100,
+  exists: true,
+  size: 100,
   header: header(name, `${name} description`),
 });
 
@@ -64,19 +62,16 @@ function configuration(): PluginConfigurationResult {
     relativePath: 'js/plugins.js',
     exists: true,
     plugins: configured,
-    pluginFiles: [file('Core'), file('Feature'), file('Extra'), file('Removed', true)],
+    pluginFiles: [file('Core'), file('Feature'), file('Extra')],
     validation: { ok: true, issues: [] },
   };
 }
 
 describe('plugin manager model', () => {
-  test('groups configured, unconfigured, and pending-delete files while counting configurations only', () => {
+  test('groups configured and unconfigured files while counting configurations only', () => {
     const groups = buildPluginManagerGroups(configuration());
     expect(groups.configured.map((entry) => entry.name)).toEqual(['Core', 'Feature']);
-    expect(groups.unconfigured.map((entry) => [entry.name, entry.deleted])).toEqual([
-      ['Extra', false],
-      ['Removed', true],
-    ]);
+    expect(groups.unconfigured.map((entry) => entry.name)).toEqual(['Extra']);
     expect(groups.enabledCount).toBe(1);
     expect(groups.configuredCount).toBe(2);
   });

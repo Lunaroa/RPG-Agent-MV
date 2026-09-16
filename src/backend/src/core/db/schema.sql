@@ -42,15 +42,6 @@ CREATE TABLE IF NOT EXISTS map_selections (
   created_at TEXT DEFAULT (datetime('now'))
 );
 
--- Staging Manifests（暂存区清单）
-CREATE TABLE IF NOT EXISTS staging_manifests (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  project_id TEXT NOT NULL,
-  manifest TEXT NOT NULL,  -- JSON
-  created_at TEXT DEFAULT (datetime('now')),
-  updated_at TEXT DEFAULT (datetime('now'))
-);
-
 -- Story Tasks（剧情制作待办）
 CREATE TABLE IF NOT EXISTS story_tasks (
   id TEXT PRIMARY KEY,
@@ -68,7 +59,6 @@ CREATE TABLE IF NOT EXISTS story_tasks (
 CREATE INDEX IF NOT EXISTS idx_event_contracts_project ON event_contracts(project_id);
 CREATE INDEX IF NOT EXISTS idx_event_contracts_status ON event_contracts(status);
 CREATE INDEX IF NOT EXISTS idx_map_selections_project ON map_selections(project_id);
-CREATE INDEX IF NOT EXISTS idx_staging_manifests_project ON staging_manifests(project_id);
 CREATE INDEX IF NOT EXISTS idx_story_tasks_project ON story_tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_story_tasks_map ON story_tasks(project_id, map_id);
 CREATE INDEX IF NOT EXISTS idx_story_tasks_status ON story_tasks(project_id, status);

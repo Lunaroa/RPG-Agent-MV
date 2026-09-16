@@ -5,7 +5,7 @@ import type { MapPreviewStateCatalog, MapPreviewStateEntry } from '../../../../c
 import { collectRawEventCommandReferences, type RmmvEventCommandReference } from '../rmmv/event-command-references.ts';
 import { readJson } from '../rmmv/json.ts';
 import { resolveDataDir } from '../rmmv/project-scanner.ts';
-import { getMapFileForRead, getProjectFileForRead } from './staging-service.ts';
+import { resolveMapFileForRead, resolveProjectFileForRead } from './project-file-service.ts';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -14,7 +14,7 @@ export function buildMapPreviewStateCatalog(
   project: string,
   mapId: number,
 ): MapPreviewStateCatalog {
-  const map = readJson(getMapFileForRead(workflowRoot, project, mapId)) as JsonRecord;
+  const map = readJson(resolveMapFileForRead(project, mapId)) as JsonRecord;
   const dataDir = resolveDataDir(project);
   const system = readEffectiveProjectJson(workflowRoot, project, path.join(dataDir, 'System.json')) as JsonRecord;
   const commonEvents = readEffectiveProjectJson(workflowRoot, project, path.join(dataDir, 'CommonEvents.json')) as unknown[];
@@ -91,7 +91,7 @@ function catalogEntries(names: string[], reachableIds: Set<number>): MapPreviewS
 
 function readEffectiveProjectJson(workflowRoot: string, project: string, sourceFile: string): unknown {
   const relative = path.relative(project, sourceFile).replaceAll(path.sep, '/');
-  const effective = getProjectFileForRead(workflowRoot, project, relative) || sourceFile;
+  const effective = resolveProjectFileForRead(project, relative) || sourceFile;
   if (!fs.existsSync(effective)) return [];
   return readJson(effective);
 }

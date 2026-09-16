@@ -9,10 +9,7 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { writeJson } from '../rmmv/json.ts';
-import {
-  deleteStagedProjectFile,
-  writeStagedProjectJson,
-} from './staging-service.ts';
+import { deleteProjectFile, writeProjectJson } from './project-file-service.ts';
 import {
   executeIsolatedProbeWorker,
   runIsolatedRmmvPlaytestProbe,
@@ -23,7 +20,7 @@ import {
   RPG_MAKER_MZ_REQUIRED_WEB_RUNTIME_FILES,
 } from './rpg-maker-mz-runtime.ts';
 
-describe('isolated staged-project playtest probe', { concurrency: false }, () => {
+describe('isolated project playtest probe', { concurrency: false }, () => {
   let root: string;
   let project: string;
   let leakedTemporaryProjects: string[];
@@ -48,9 +45,9 @@ describe('isolated staged-project playtest probe', { concurrency: false }, () =>
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  test('overlays every staged draft and deletion, changes only the temporary start, and verifies strict evidence', async () => {
-    writeStagedProjectJson(root, project, 'data/Actors.json', [null, { id: 1, name: 'Draft Actor', pluginField: { kept: true } }]);
-    deleteStagedProjectFile(root, project, 'data/obsolete.json');
+  test('copies directly saved project state, changes only the temporary start, and verifies strict evidence', async () => {
+    writeProjectJson(root, project, 'data/Actors.json', [null, { id: 1, name: 'Saved Actor', pluginField: { kept: true } }]);
+    deleteProjectFile(root, project, 'data/obsolete.json');
     let temporaryProject = '';
 
     const result = await runIsolatedRmmvPlaytestProbe(root, project, {
@@ -61,7 +58,7 @@ describe('isolated staged-project playtest probe', { concurrency: false }, () =>
     }, {
       executeWorker: async (request) => {
         temporaryProject = request.temporaryProject;
-        assert.equal(readJson(path.join(temporaryProject, 'data', 'Actors.json'))[1].name, 'Draft Actor');
+        assert.equal(readJson(path.join(temporaryProject, 'data', 'Actors.json'))[1].name, 'Saved Actor');
         assert.deepEqual(readJson(path.join(temporaryProject, 'data', 'Actors.json'))[1].pluginField, { kept: true });
         assert.equal(fs.existsSync(path.join(temporaryProject, 'data', 'obsolete.json')), false);
         assert.deepEqual(readStart(temporaryProject), { startMapId: 2, startX: 4, startY: 5 });
@@ -73,39 +70,20 @@ describe('isolated staged-project playtest probe', { concurrency: false }, () =>
 
     assert.equal(result.status, 'verified');
     assert.equal(result.verified, true);
-    assert.equal(result.stagedFileCount, 2);
     assert.equal(result.evidence.coordinatesVerified, true);
     assert.equal(result.evidence.runtimeReady, true);
     assert.equal(result.evidence.eventIdle, true);
     assert.equal(result.evidence.sourceUnchanged, true);
     assert.equal(result.evidence.savesUnchanged, true);
-    assert.equal(result.evidence.stagingUnchanged, true);
     assert.equal(result.evidence.temporaryProjectCleaned, true);
     assert.equal(fs.existsSync(temporaryProject), false);
-    assert.equal(readJson(path.join(project, 'data', 'Actors.json'))[1].name, 'Source Actor');
+    assert.equal(readJson(path.join(project, 'data', 'Actors.json'))[1].name, 'Saved Actor');
+    assert.equal(fs.existsSync(path.join(project, 'data', 'obsolete.json')), false);
     assert.deepEqual(readStart(project), { startMapId: 1, startX: 1, startY: 1 });
     assert.equal(fs.readFileSync(path.join(project, 'save', 'file1.rpgsave'), 'utf8'), 'source save');
   });
 
-  test('blocks before starting a worker when staged source hashes conflict', async () => {
-    writeStagedProjectJson(root, project, 'data/Actors.json', [null, { id: 1, name: 'Draft Actor' }]);
-    writeJson(path.join(project, 'data', 'Actors.json'), [null, { id: 1, name: 'External Actor' }]);
-    let workerCalls = 0;
-
-    const result = await runIsolatedRmmvPlaytestProbe(root, project, {}, {
-      executeWorker: async () => {
-        workerCalls += 1;
-        throw new Error('worker must not start');
-      },
-    });
-
-    assert.equal(result.status, 'blocked');
-    assert.equal(result.verified, false);
-    assert.equal(workerCalls, 0);
-    assert.equal(result.blockers.some((item) => /conflict/i.test(item)), true);
-  });
-
-  test('requires map coordinates together and validates them against the staged map', async () => {
+  test('requires map coordinates together and validates them against the saved map', async () => {
     let workerCalls = 0;
     const missingCoordinate = await runIsolatedRmmvPlaytestProbe(root, project, { mapId: 2, x: 4 }, {
       executeWorker: async () => {
@@ -127,10 +105,10 @@ describe('isolated staged-project playtest probe', { concurrency: false }, () =>
     assert.equal(workerCalls, 0);
   });
 
-  test('invalidates otherwise-passing evidence when staging or source saves drift during the worker run', async () => {
+  test('invalidates otherwise-passing evidence when source files or saves drift during the worker run', async () => {
     const result = await runIsolatedRmmvPlaytestProbe(root, project, {}, {
       executeWorker: async (request) => {
-        writeStagedProjectJson(root, project, 'data/Actors.json', [null, { id: 1, name: 'Late Draft' }]);
+        writeJson(path.join(project, 'data', 'Actors.json'), [null, { id: 1, name: 'External Actor' }]);
         fs.writeFileSync(path.join(project, 'save', 'file1.rpgsave'), 'changed save', 'utf8');
         return strictWorkerResponse(request, { mapId: 1, x: 1, y: 1 });
       },
@@ -138,7 +116,7 @@ describe('isolated staged-project playtest probe', { concurrency: false }, () =>
 
     assert.equal(result.status, 'blocked');
     assert.equal(result.verified, false);
-    assert.equal(result.evidence.stagingUnchanged, false);
+    assert.equal(result.evidence.sourceUnchanged, false);
     assert.equal(result.evidence.savesUnchanged, false);
   });
 

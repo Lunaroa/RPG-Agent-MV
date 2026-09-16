@@ -388,14 +388,6 @@ declare global {
         getSettings(): Promise<unknown>;
         setSettings(patch: Record<string, unknown>): Promise<unknown>;
       };
-      staging: {
-        projectStatus(project?: string): Promise<unknown>;
-        applyProject(project?: string, expectedOperationIds?: string[]): Promise<unknown>;
-        discardProject(project?: string): Promise<unknown>;
-        mapStatus(mapId: number, project?: string): Promise<unknown>;
-        applyMap(mapId: number, project?: string): Promise<unknown>;
-        discardMap(mapId: number, project?: string): Promise<unknown>;
-      };
       placementQueue: {
         get(project?: string): Promise<unknown>;
         save(session: Record<string, unknown>, project?: string): Promise<unknown>;
@@ -426,7 +418,6 @@ declare global {
         createEntry(request: unknown, project?: string): Promise<unknown>;
         resizeDatabase(request: unknown, project?: string): Promise<unknown>;
         resetEntry(request: unknown, project?: string): Promise<unknown>;
-        revertEntry(request: unknown, project?: string): Promise<unknown>;
       };
       commonEvents: {
         list(project?: string): Promise<unknown>;
@@ -482,7 +473,7 @@ import type {
   LunaRpgSearchSettings,
   GlobalSearchCategory, GlobalSearchDocument, GlobalSearchHit, GlobalSearchIndexState, GlobalSearchMatchPrecision, GlobalSearchOptions, GlobalSearchResult,
   PluginTranslationPayload, PluginTranslationRecord,
-  EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, EditorTilesetCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
+  EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, EditorTilesetCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset,
   ProjectAssetDeleteBatchResult, ProjectAssetDeleteTargetInput, ProjectAssetDeleteItemResult,
   ProjectAssetCopyBatchInput, ProjectAssetCopyBatchResult,
@@ -518,7 +509,7 @@ export type {
   LunaRpgSearchSettings,
   GlobalSearchCategory, GlobalSearchDocument, GlobalSearchHit, GlobalSearchIndexState, GlobalSearchMatchPrecision, GlobalSearchOptions, GlobalSearchResult,
   PluginTranslationPayload, PluginTranslationRecord,
-  EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, EditorTilesetCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryRevertResult, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
+  EditorProjectCatalog, EditorActorBattleProfile, EditorActorCatalogEntry, EditorAnimationCatalogEntry, EditorEnemyCatalogEntry, EditorIconCatalogEntry, EditorTilesetCatalogEntry, MapPreviewStateEntry, NamedCatalogEntry, ProjectAssetEntry, ProjectRelativeDirectoryListResult, ManagedAssetDetail, ProjectManagedEntry, ProjectManagedEntryResetResult, ProjectManagedDatabaseResizeResult,
   ProjectAssetMutationSafetyCheck, ProjectAssetReferenceGraph, ProjectAssetReferenceGraphAsset, ProjectAssetReference,
   ProjectAssetCategoryTree, ProjectAssetCategoryListing, ProjectAssetBrowseCacheInvalidationResult, ProjectAssetBrowseOptions,
   ProjectAssetReplaceMissingReferenceInput,
@@ -1026,7 +1017,7 @@ export const maps = {
     return desktopApi().maps.remove(mapId, project);
   },
   postTiles(mapId: number, edits: TileEdit[], project: string = DEFAULT_PROJECT) {
-    return desktopApi().maps.postTiles(mapId, edits, project) as Promise<{ changedCells: number; changes: TileEdit[]; effectiveMapRevision: string; staging: unknown }>;
+    return desktopApi().maps.postTiles(mapId, edits, project) as Promise<{ changedCells: number; changes: TileEdit[]; effectiveMapRevision: string; write: unknown }>;
   },
   setStartPosition(mapId: number, x: number, y: number, project: string = DEFAULT_PROJECT) {
     return desktopApi().maps.setStartPosition(mapId, x, y, project) as Promise<{
@@ -1035,7 +1026,7 @@ export const maps = {
       x: number;
       y: number;
       relativePath: string;
-      staging: unknown;
+      write: unknown;
     }>;
   },
   setSystemPosition(target: RmmvSystemPositionTarget, mapId: number, x: number, y: number, project: string = DEFAULT_PROJECT) {
@@ -1045,7 +1036,7 @@ export const maps = {
       x: number;
       y: number;
       relativePath: string;
-      staging: unknown;
+      write: unknown;
     }>;
   },
   playtest(mapId: number, startX = 0, startY = 0, project: string = DEFAULT_PROJECT) {
@@ -1066,7 +1057,7 @@ export const maps = {
   importExternalScan(request: ExternalMapImportScanRequest, project: string = DEFAULT_PROJECT) {
     return desktopApi().maps.importExternalScan(toPlain(request), project) as Promise<ExternalMapImportScanResult>;
   },
-  /** Write the resolved import into a staging draft (applied/rolled back via staging APIs). */
+  /** Atomically commit the resolved import to the project. */
   importExternalApply(request: ExternalMapImportApplyRequest, project: string = DEFAULT_PROJECT) {
     return desktopApi().maps.importExternalApply(toPlain(request), project) as Promise<ExternalMapImportApplyResult>;
   },
@@ -1074,24 +1065,9 @@ export const maps = {
   replaceExternalScan(request: ExternalMapReplaceScanRequest, project: string = DEFAULT_PROJECT) {
     return desktopApi().maps.replaceExternalScan(toPlain(request), project) as Promise<ExternalMapImportScanResult>;
   },
-  /** Write the resolved replace into a staging draft over the target map. */
+  /** Atomically replace the target map with the resolved external map. */
   replaceExternalApply(request: ExternalMapReplaceApplyRequest, project: string = DEFAULT_PROJECT) {
     return desktopApi().maps.replaceExternalApply(toPlain(request), project) as Promise<ExternalMapImportApplyResult>;
-  },
-  projectStaging(project: string = DEFAULT_PROJECT) {
-    return desktopApi().staging.projectStatus(project);
-  },
-  applyProjectStaging(project: string = DEFAULT_PROJECT, expectedOperationIds: string[] = []) {
-    return desktopApi().staging.applyProject(project, [...expectedOperationIds]);
-  },
-  discardProjectStaging(project: string = DEFAULT_PROJECT) {
-    return desktopApi().staging.discardProject(project);
-  },
-  applyMapStaging(mapId: number, project: string = DEFAULT_PROJECT) {
-    return desktopApi().staging.applyMap(mapId, project);
-  },
-  discardMapStaging(mapId: number, project: string = DEFAULT_PROJECT) {
-    return desktopApi().staging.discardMap(mapId, project);
   },
   importFromLibrary(
     assetId: string,
@@ -1200,14 +1176,14 @@ export interface CommonEventListResult {
 
 export interface CommonEventMutationResult {
   entry: ProjectManagedEntry;
-  staging: unknown;
+  write: unknown;
 }
 
 export interface CommonEventDeleteResult {
   deleted: true;
   id: number;
   relativePath: string;
-  staging: unknown;
+  write: unknown;
 }
 
 export interface CommonEventUsageReference {
@@ -1775,9 +1751,6 @@ export const projectManagement = {
   resetEntry(request: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
     return desktopApi().projectManagement.resetEntry(toPlain(request), project) as Promise<ProjectManagedEntryResetResult>;
   },
-  revertEntry(request: Record<string, unknown>, project: string = DEFAULT_PROJECT) {
-    return desktopApi().projectManagement.revertEntry(toPlain(request), project) as Promise<ProjectManagedEntryRevertResult>;
-  },
 };
 
 export const playtest = {
@@ -1941,14 +1914,14 @@ export const plugins = {
     return desktopApi().plugins.installFile(sourceFile, toPlain(options), project) as Promise<{
       name: string;
       relativePath: string;
-      staging: unknown;
+      write: unknown;
       configuration?: PluginConfigurationResult;
     }>;
   },
   installDirectory(sourceDirectory: string, options: Record<string, unknown> = {}, project: string = DEFAULT_PROJECT) {
     return desktopApi().plugins.installDirectory(sourceDirectory, toPlain(options), project) as Promise<{
       installed: Array<{ name: string; relativePath: string }>;
-      staging: unknown;
+      write: unknown;
       configuration: PluginConfigurationResult;
     }>;
   },
@@ -1956,7 +1929,7 @@ export const plugins = {
     return desktopApi().plugins.deleteFile(pluginName, toPlain(options), project) as Promise<{
       name: string;
       relativePath: string;
-      staging: unknown;
+      write: unknown;
       configuration?: PluginConfigurationResult;
     }>;
   },
@@ -1979,7 +1952,7 @@ export const plugins = {
       engine: RpgMakerEngine;
       pluginRelativePath: string;
       backupRelativePath: string | null;
-      staging: unknown;
+      write: unknown;
     }>;
   },
   ensureManagedUnlimitedTileLayers(
@@ -1991,7 +1964,7 @@ export const plugins = {
       engine: RpgMakerEngine;
       pluginRelativePath: string;
       backupRelativePath: string | null;
-      staging: unknown;
+      write: unknown | null;
     }>;
   },
 };

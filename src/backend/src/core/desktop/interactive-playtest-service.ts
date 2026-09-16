@@ -12,7 +12,6 @@ import type {
   InteractivePlaytestRun,
   InteractivePlaytestRunStatus,
   InteractivePlaytestRuntimeInfo,
-  InteractivePlaytestStagingSummary,
 } from '../../../../contract/types.ts';
 import type { UiRuntimeSceneExport } from '../../../../contract/ui-designer.ts';
 import { writeJsonAtomic } from '../rmmv/json.ts';
@@ -31,7 +30,6 @@ import {
   prepareParticleAnimationPreview,
   type ParticleAnimationPreviewPreparation,
 } from './particle-animation-preview-preparation.ts';
-import { getProjectStagingStatus } from './staging-service.ts';
 import {
   createRpgMakerMZRuntimeOutputSanitizer,
   redactRpgMakerMZRuntimePath,
@@ -74,7 +72,6 @@ export interface InteractivePlaytestDependencies {
     args: readonly string[],
     options: InteractivePlaytestSpawnOptions,
   ) => InteractivePlaytestChild;
-  getStagingStatus: (workflowRoot: string, project: string) => unknown;
   requestGracefulStop: (child: InteractivePlaytestChild) => { ok: boolean; error?: string };
   forceKillProcessTree: (child: InteractivePlaytestChild) => Promise<{ ok: boolean; error?: string }>;
   forceKillProcessTreeSync: (child: InteractivePlaytestChild) => { ok: boolean; error?: string };
@@ -108,7 +105,6 @@ export interface InteractivePlaytestDependencies {
 
 export interface InteractivePlaytestStartOptions {
   mode?: InteractivePlaytestMode;
-  confirmedStagingHash?: string;
   sessionId?: string;
   troopId?: number;
   battlers?: InteractiveBattleTestBattler[];
@@ -116,12 +112,6 @@ export interface InteractivePlaytestStartOptions {
   battleback2Name?: string;
   animationPreview?: InteractiveParticleAnimationPreview;
   uiScene?: UiRuntimeSceneExport;
-}
-
-interface StagingConfirmation {
-  staged: boolean;
-  summary: InteractivePlaytestStagingSummary;
-  hash: string;
 }
 
 const STARTUP_TIMEOUT_MS = 10_000;
@@ -154,7 +144,6 @@ export class InteractivePlaytestService {
     this.#workflowRoot = path.resolve(workflowRoot);
     this.#dependencies = {
       spawnProcess: dependencies.spawnProcess || defaultSpawnProcess,
-      getStagingStatus: dependencies.getStagingStatus || getProjectStagingStatus,
       requestGracefulStop: dependencies.requestGracefulStop || defaultRequestGracefulStop,
       forceKillProcessTree: dependencies.forceKillProcessTree || defaultForceKillProcessTree,
       forceKillProcessTreeSync: dependencies.forceKillProcessTreeSync || defaultForceKillProcessTreeSync,
@@ -177,7 +166,6 @@ export class InteractivePlaytestService {
 
   current(): InteractivePlaytestResult {
     return {
-      confirmationRequired: false,
       ...(this.#currentRun ? { run: cloneRun(this.#currentRun) } : {}),
     };
   }
@@ -249,20 +237,19 @@ export class InteractivePlaytestService {
     try {
       project = fs.realpathSync.native(path.resolve(projectRoot));
     } catch {
-      return { confirmationRequired: false, error: `RPG Maker project directory does not exist: ${path.resolve(projectRoot)}` };
+      return { error: `RPG Maker project directory does not exist: ${path.resolve(projectRoot)}` };
     }
     let engine: RpgMakerEngine;
     try {
       const manifest = this.#dependencies.inspectProject(project);
       if (!manifest.editable) {
         return {
-          confirmationRequired: false,
           error: `The RPG Maker project is not editable: ${manifest.missingRequired.join(', ')}`,
         };
       }
       engine = manifest.engine;
     } catch (error) {
-      return { confirmationRequired: false, error: errorMessage(error) };
+      return { error: errorMessage(error) };
     }
 
     let projectRuntime: InteractiveProjectRuntime | null = null;
@@ -277,37 +264,21 @@ export class InteractivePlaytestService {
       const resolution = this.#dependencies.resolveProjectRuntime(project, engine);
       if (resolution.selectionRequired) {
         return {
-          confirmationRequired: false,
           runtimeSelectionRequired: resolution.selectionRequired,
         };
       }
-      if (!resolution.runtime) return { confirmationRequired: false, error: 'The RPG Maker playtest runtime could not be resolved.' };
+      if (!resolution.runtime) return { error: 'The RPG Maker playtest runtime could not be resolved.' };
       projectRuntime = resolution.runtime;
       executable = projectRuntime.executable;
       evidenceExecutable = projectRuntime.evidenceExecutable;
       privateExecutable = projectRuntime.privateExecutable || '';
-      if (mode === 'project') {
-        let staging: StagingConfirmation;
-        try {
-          staging = buildStagingConfirmation(this.#dependencies.getStagingStatus(this.#workflowRoot, project));
-        } catch (error) {
-          return { confirmationRequired: false, error: errorMessage(error) };
-        }
-        if (staging.staged && options.confirmedStagingHash !== staging.hash) {
-          return {
-            confirmationRequired: true,
-            stagingSummary: staging.summary,
-            stagingSummaryHash: staging.hash,
-          };
-        }
-      }
     } else {
       if (engine === 'rpg-maker-mz') {
         const resolution = this.#dependencies.resolveProjectRuntime(project, engine);
         if (resolution.selectionRequired) {
-          return { confirmationRequired: false, runtimeSelectionRequired: resolution.selectionRequired };
+          return { runtimeSelectionRequired: resolution.selectionRequired };
         }
-        if (!resolution.runtime) return { confirmationRequired: false, error: 'The RPG Maker playtest runtime could not be resolved.' };
+        if (!resolution.runtime) return { error: 'The RPG Maker playtest runtime could not be resolved.' };
         projectRuntime = resolution.runtime;
         executable = projectRuntime.executable;
         evidenceExecutable = projectRuntime.evidenceExecutable;
@@ -329,7 +300,7 @@ export class InteractivePlaytestService {
           battleback2Name: String(options.battleback2Name || ''),
         });
       } catch (error) {
-        return { confirmationRequired: false, error: errorMessage(error) };
+        return { error: errorMessage(error) };
       } finally {
         this.#preparingIsolation = false;
       }
@@ -338,19 +309,19 @@ export class InteractivePlaytestService {
       launchProject = battlePreparation.temporaryProject;
       if (battlePreparation.engine !== engine) {
         const cleanupError = this.#cleanupUnlaunchedPreparation(battlePreparation, 'Battle Test');
-        return { confirmationRequired: false, error: ['Battle Test project engine changed while preparing the isolated copy.', cleanupError].filter(Boolean).join(' ') };
+        return { error: ['Battle Test project engine changed while preparing the isolated copy.', cleanupError].filter(Boolean).join(' ') };
       }
       if (engine === 'rpg-maker-mv') {
         if (!battlePreparation.executable) {
           const cleanupError = this.#cleanupUnlaunchedPreparation(battlePreparation, 'Battle Test');
-          return { confirmationRequired: false, error: ['Game.exe was not found in the isolated RPG Maker MV project.', cleanupError].filter(Boolean).join(' ') };
+          return { error: ['Game.exe was not found in the isolated RPG Maker MV project.', cleanupError].filter(Boolean).join(' ') };
         }
         executable = battlePreparation.executable;
         evidenceExecutable = executable;
       }
     } else if (mode === 'particle_preview') {
       if (!options.animationPreview) {
-        return { confirmationRequired: false, error: 'Particle animation preview data is required.' };
+        return { error: 'Particle animation preview data is required.' };
       }
       this.#preparingIsolation = true;
       try {
@@ -360,7 +331,7 @@ export class InteractivePlaytestService {
           options.animationPreview,
         );
       } catch (error) {
-        return { confirmationRequired: false, error: errorMessage(error) };
+        return { error: errorMessage(error) };
       } finally {
         this.#preparingIsolation = false;
       }
@@ -369,15 +340,15 @@ export class InteractivePlaytestService {
       launchProject = particlePreparation.appDirectory;
       if (particlePreparation.engine !== engine) {
         const cleanupError = this.#cleanupUnlaunchedPreparation(particlePreparation, 'Particle preview');
-        return { confirmationRequired: false, error: ['Particle preview project engine changed while preparing the isolated copy.', cleanupError].filter(Boolean).join(' ') };
+        return { error: ['Particle preview project engine changed while preparing the isolated copy.', cleanupError].filter(Boolean).join(' ') };
       }
     } else if (mode === 'ui_designer_scene') {
-      if (!options.uiScene) return { confirmationRequired: false, error: 'UI designer scene preview data is required.' };
+      if (!options.uiScene) return { error: 'UI designer scene preview data is required.' };
       this.#preparingIsolation = true;
       try {
         uiDesignerPreparation = await this.#dependencies.prepareUiDesignerPreview(this.#workflowRoot, project, options.uiScene);
       } catch (error) {
-        return { confirmationRequired: false, error: errorMessage(error) };
+        return { error: errorMessage(error) };
       } finally {
         this.#preparingIsolation = false;
       }
@@ -386,18 +357,18 @@ export class InteractivePlaytestService {
       launchProject = uiDesignerPreparation.temporaryProject;
       if (uiDesignerPreparation.engine !== engine) {
         const cleanupError = this.#cleanupUnlaunchedPreparation(uiDesignerPreparation, 'UI designer preview');
-        return { confirmationRequired: false, error: ['UI designer preview project engine changed while preparing the isolated copy.', cleanupError].filter(Boolean).join(' ') };
+        return { error: ['UI designer preview project engine changed while preparing the isolated copy.', cleanupError].filter(Boolean).join(' ') };
       }
       if (engine === 'rpg-maker-mv' && projectRuntime?.launchStyle === 'embedded') {
         if (!uiDesignerPreparation.executable) {
           const cleanupError = this.#cleanupUnlaunchedPreparation(uiDesignerPreparation, 'UI designer preview');
-          return { confirmationRequired: false, error: ['Game.exe was not found in the isolated RPG Maker MV project.', cleanupError].filter(Boolean).join(' ') };
+          return { error: ['Game.exe was not found in the isolated RPG Maker MV project.', cleanupError].filter(Boolean).join(' ') };
         }
         executable = uiDesignerPreparation.executable;
         evidenceExecutable = executable;
       }
     } else if (mode !== 'project') {
-      return { confirmationRequired: false, error: `Unsupported interactive playtest mode: ${String(mode)}` };
+      return { error: `Unsupported interactive playtest mode: ${String(mode)}` };
     }
 
     const now = this.#dependencies.now();
@@ -418,13 +389,11 @@ export class InteractivePlaytestService {
       exitCode: null,
       signal: null,
       forced: false,
-      stagingIncluded: mode !== 'project',
       sourceSaveRisk: mode === 'project',
       temporaryProject: mode !== 'project',
       ...(battlePreparation ? {
         troopId: battlePreparation.troopId,
         troopName: battlePreparation.troopName,
-        stagedFileCount: battlePreparation.staging.files.length,
       } : {}),
       ...(particlePreparation ? { effectName: particlePreparation.effectName } : {}),
       ...(uiDesignerPreparation ? { sceneName: uiDesignerPreparation.sceneName } : {}),
@@ -679,15 +648,12 @@ export class InteractivePlaytestService {
     const failures: string[] = [];
     let sourceUnchanged = false;
     let savesUnchanged = false;
-    let stagingUnchanged = false;
     try {
       const state = this.#dependencies.verifyIsolatedSource(this.#workflowRoot, preparation);
       sourceUnchanged = state.sourceUnchanged;
       savesUnchanged = state.savesUnchanged;
-      stagingUnchanged = state.stagingUnchanged;
       if (!sourceUnchanged) failures.push(`Source project content changed during ${label}.`);
       if (!savesUnchanged) failures.push(`Source project save content changed during ${label}.`);
-      if (!stagingUnchanged) failures.push(`Staged project content changed during ${label}.${state.stagingError ? ` ${state.stagingError}` : ''}`);
     } catch (error) {
       failures.push(`${label} source isolation could not be verified: ${errorMessage(error)}`);
     }
@@ -708,7 +674,6 @@ export class InteractivePlaytestService {
       patch: {
         sourceUnchanged,
         savesUnchanged,
-        stagingUnchanged,
         temporaryProjectCleaned,
       },
       ...(failures.length ? { error: failures.join(' ') } : {}),
@@ -722,45 +687,6 @@ export class InteractivePlaytestService {
     this.#runs.set(run.runId, run);
     this.#dependencies.onStatus(cloneRun(run));
   }
-}
-
-function buildStagingConfirmation(status: unknown): StagingConfirmation {
-  const source = isRecord(status) ? status : {};
-  const files = Array.isArray(source.files)
-    ? source.files.filter(isRecord).map((entry) => ({
-      relativePath: String(entry.relativePath || ''),
-      baseHash: entry.baseHash ?? null,
-      sourceHash: entry.sourceHash ?? null,
-      draftHash: entry.draftHash ?? null,
-      recordedDraftHash: entry.recordedDraftHash ?? null,
-      operationId: entry.operationId ?? null,
-      delete: Boolean(entry.delete),
-      conflict: Boolean(entry.conflict),
-      conflictReasons: Array.isArray(entry.conflictReasons) ? entry.conflictReasons : [],
-      updatedAt: entry.updatedAt ?? null,
-    })).sort((left, right) => left.relativePath.localeCompare(right.relativePath))
-    : [];
-  const operations = Array.isArray(source.operations)
-    ? source.operations.filter(isRecord).map((entry) => ({
-      operationId: String(entry.operationId || ''),
-      planHash: String(entry.planHash || ''),
-      files: Array.isArray(entry.files) ? entry.files.map(String).sort() : [],
-    })).sort((left, right) => left.operationId.localeCompare(right.operationId))
-    : [];
-  const maps = Array.isArray(source.maps) ? source.maps.map(Number).filter(Number.isFinite).sort((a, b) => a - b) : [];
-  const staged = Boolean(source.staged) || files.length > 0 || operations.length > 0;
-  const payload = { version: 1, files, operations, maps };
-  return {
-    staged,
-    summary: {
-      fileCount: files.length,
-      operationCount: operations.length,
-      mapCount: maps.length,
-      conflict: Boolean(source.conflict) || files.some((file) => file.conflict),
-      files: files.map((file) => file.relativePath),
-    },
-    hash: crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex'),
-  };
 }
 
 interface InteractiveArtifactLocations {
@@ -901,10 +827,6 @@ function buildRunId(now: Date, uuid: string): string {
 
 function cloneRun(run: InteractivePlaytestRun): InteractivePlaytestRun {
   return structuredClone(run);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
 function requirePositiveInteger(value: unknown, label: string): number {

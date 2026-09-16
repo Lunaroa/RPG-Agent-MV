@@ -18,7 +18,7 @@ import {
   mapOverviewThumbnailWorkerConcurrency,
   requestMapOverviewThumbnail,
 } from './map-overview-service.ts';
-import { writeStagedProjectJson, discardStagedMap } from './staging-service.ts';
+import { writeProjectJson } from './project-file-service.ts';
 
 describe('map overview snapshot', () => {
   let root: string;
@@ -211,7 +211,7 @@ describe('map overview snapshot', () => {
     assert.ok(hasColor(decoded.rgba, [30, 180, 70]));
   });
 
-  test('persists a validated snapshot and rebuilds it after source or staged map changes', () => {
+  test('persists a validated snapshot and rebuilds it after directly saved map changes', () => {
     writeInfos(2);
     writeMap(1, [event(1, 'Gate', 0, 0, [page({}, [transfer(2, 1, 1)])])]);
     writeMap(2, []);
@@ -223,20 +223,26 @@ describe('map overview snapshot', () => {
     assert.equal(second.generatedAt, first.generatedAt);
     assert.equal(fs.statSync(cacheFile).mtimeMs, cacheMtime);
 
-    const stagedMap = {
+    const changedMap = {
       width: 2,
       height: 2,
       tilesetId: 0,
       data: Array(24).fill(0),
       events: [null, event(1, 'Gate', 0, 0, [page({}, [transfer(1, 1, 1)])])],
     };
-    writeStagedProjectJson(root, project, 'www/data/Map001.json', stagedMap);
-    const staged = buildMapOverviewSnapshot(root, project);
-    assert.deepEqual(staged.edges.map((edge) => edge.id), ['1:0,0->1:1,1']);
+    writeProjectJson(root, project, 'www/data/Map001.json', changedMap);
+    const changed = buildMapOverviewSnapshot(root, project);
+    assert.deepEqual(changed.edges.map((edge) => edge.id), ['1:0,0->1:1,1']);
 
-    discardStagedMap(root, project, 1);
-    const discarded = buildMapOverviewSnapshot(root, project);
-    assert.deepEqual(discarded.edges.map((edge) => edge.id), ['1:0,0->2:1,1']);
+    writeProjectJson(root, project, 'www/data/Map001.json', {
+      width: 2,
+      height: 2,
+      tilesetId: 0,
+      data: Array(24).fill(0),
+      events: [null, event(1, 'Gate', 0, 0, [page({}, [transfer(2, 1, 1)])])],
+    });
+    const restored = buildMapOverviewSnapshot(root, project);
+    assert.deepEqual(restored.edges.map((edge) => edge.id), ['1:0,0->2:1,1']);
   });
 
   test('reports real progress for map reading, relationship scanning, image versioning, and cache checks', () => {

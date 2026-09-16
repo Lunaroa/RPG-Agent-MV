@@ -8,7 +8,7 @@ import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { readJson, writeJson } from '../rmmv/json.ts';
 import {
-  buildStagedAwareAssetInventory,
+  buildProjectAssetInventory,
   deleteProjectAssets,
   getAssetDetail,
   importLocalAssetFile,
@@ -23,7 +23,6 @@ import {
   findMissingAssetReferences,
   findUnusedProjectAssets,
 } from './asset-reference-graph-service.ts';
-import { getProjectStagingStatus, getProjectFileForRead } from './staging-service.ts';
 
 describe('asset reference graph service', { concurrency: false }, () => {
   let root: string;
@@ -154,8 +153,6 @@ describe('asset reference graph service', { concurrency: false }, () => {
     assert.equal(batch.results[0]?.status, 'deleted');
     assert.deepEqual(trashed, [sourcePath]);
     assert.equal(fs.existsSync(sourcePath), false);
-    const status = getProjectStagingStatus(root, project);
-    assert.equal(status.files.some((entry) => entry.relativePath === 'www/img/pictures/Unused.png'), false);
   });
 
   test('importLocalAssetFile copies a local file into the category directory immediately', () => {
@@ -171,7 +168,6 @@ describe('asset reference graph service', { concurrency: false }, () => {
     assert.equal(result.category, 'pictures');
     assert.equal(result.name, 'ImportedPortrait');
     assert.equal(result.relativePath, 'www/img/pictures/ImportedPortrait.png');
-    assert.equal(result.staged, false);
     assert.equal(result.size, 'imported portrait'.length);
     assert.deepEqual(result.references, []);
 
@@ -179,14 +175,10 @@ describe('asset reference graph service', { concurrency: false }, () => {
     assert.equal(fs.existsSync(sourceTarget), true);
     assert.equal(fs.readFileSync(sourceTarget, 'utf8'), 'imported portrait');
 
-    const status = getProjectStagingStatus(root, project);
-    assert.equal(status.files.some((entry) => entry.relativePath === 'www/img/pictures/ImportedPortrait.png'), false);
-
     const graph = buildAssetReferenceGraph(root, project);
     const imported = graph.assets.find((asset) => asset.relativePath === 'www/img/pictures/ImportedPortrait.png');
     assert.ok(imported);
     assert.equal(imported.category, 'pictures');
-    assert.equal(imported.staged, false);
   });
 
   test('importLocalAssetFile rejects unsupported extensions for the selected category', () => {
@@ -221,10 +213,7 @@ describe('asset reference graph service', { concurrency: false }, () => {
     });
 
     assert.equal(result.relativePath, 'www/img/characters/Hero.png');
-    assert.equal(result.staged, false);
     assert.equal(fs.readFileSync(sourceTarget, 'utf8'), 'replacement hero');
-    const status = getProjectStagingStatus(root, project);
-    assert.equal(status.files.some((entry) => entry.relativePath === 'www/img/characters/Hero.png'), false);
   });
 
   test('importLocalAssetFile rejects unsafe local import inputs', () => {
@@ -250,7 +239,7 @@ describe('asset reference graph service', { concurrency: false }, () => {
     })), /overwrite/);
   });
 
-  test('replaceMissingAssetReference writes to staging and keeps source file unchanged', () => {
+  test('replaceMissingAssetReference saves the map change directly', () => {
     const sourceMapPath = path.join(project, 'www', 'data', 'Map001.json');
     const mapBefore = readJson(sourceMapPath) as Record<string, unknown>;
     assert.equal(JSON.stringify(mapBefore), JSON.stringify(mapBefore), 'source data baseline');
@@ -268,28 +257,13 @@ describe('asset reference graph service', { concurrency: false }, () => {
     assert.equal(result.updatedReferences, 1);
     assert.deepEqual(result.updatedFiles, ['www/data/Map001.json']);
 
-    const status = getProjectStagingStatus(root, project);
-    assert.equal(status.staged, true);
-    const stagedEntry = status.files.find((entry) => entry.relativePath === 'www/data/Map001.json');
-    assert.ok(stagedEntry);
-    assert.equal(stagedEntry.dirty, true);
-
-    const stagedPath = getProjectFileForRead(root, project, 'www/data/Map001.json');
-    assert.equal(typeof stagedPath, 'string');
-    assert.ok(stagedPath);
-    assert.notEqual(stagedPath, sourceMapPath);
-    const stagedMap = readJson(stagedPath as string) as Record<string, unknown>;
-    const afterStage = JSON.stringify(stagedMap);
-    assert.notEqual(afterStage, beforeSource);
-    assert.ok(afterStage.includes('"Bell"'));
-    assert.ok(!afterStage.includes('"MissingBell"'));
-
-    const sourceAgain = JSON.stringify(readJson(sourceMapPath) as Record<string, unknown>);
-    assert.equal(sourceAgain, beforeSource);
-    assert.ok(sourceAgain.includes('MissingBell'));
+    const saved = JSON.stringify(readJson(sourceMapPath) as Record<string, unknown>);
+    assert.notEqual(saved, beforeSource);
+    assert.ok(saved.includes('"Bell"'));
+    assert.ok(!saved.includes('"MissingBell"'));
   });
 
-  test('replaceMissingAssetReference can stage missing plugin configuration fixes', () => {
+  test('replaceMissingAssetReference directly saves plugin configuration fixes', () => {
     const sourcePluginConfig = path.join(project, 'www', 'js', 'plugins.js');
     const beforeSource = fs.readFileSync(sourcePluginConfig, 'utf8');
 
@@ -305,16 +279,10 @@ describe('asset reference graph service', { concurrency: false }, () => {
     assert.equal(result.updatedReferences, 1);
     assert.deepEqual(result.updatedFiles, ['www/js/plugins.js']);
 
-    const stagedPath = getProjectFileForRead(root, project, 'www/js/plugins.js');
-    assert.equal(typeof stagedPath, 'string');
-    assert.ok(stagedPath);
-    assert.notEqual(stagedPath, sourcePluginConfig);
-    const stagedRaw = fs.readFileSync(stagedPath as string, 'utf8');
-    assert.ok(stagedRaw.includes('QuestPlugin'));
-    assert.ok(!stagedRaw.includes('MissingPlugin'));
-
-    assert.equal(fs.readFileSync(sourcePluginConfig, 'utf8'), beforeSource);
-    assert.ok(beforeSource.includes('MissingPlugin'));
+    const savedRaw = fs.readFileSync(sourcePluginConfig, 'utf8');
+    assert.notEqual(savedRaw, beforeSource);
+    assert.ok(savedRaw.includes('QuestPlugin'));
+    assert.ok(!savedRaw.includes('MissingPlugin'));
   });
 
   test('renames references inside plugin parameters and writes the asset move to disk', () => {
@@ -337,10 +305,9 @@ describe('asset reference graph service', { concurrency: false }, () => {
     );
     assert.equal(fs.existsSync(sourcePicture), false);
     assert.equal(fs.existsSync(path.join(project, 'www', 'img', 'pictures', 'PortraitAlt.png')), true);
-    assert.equal(getProjectStagingStatus(root, project).staged, false);
   });
 
-  test('builds project asset lists from the effective staged add plus immediate rename and delete', async () => {
+  test('builds project asset lists after direct add, rename, and delete', async () => {
     const localFile = path.join(root, 'desktop-local-assets', 'NewPicture.png');
     fs.mkdirSync(path.dirname(localFile), { recursive: true });
     fs.writeFileSync(localFile, 'new picture');
@@ -360,7 +327,7 @@ describe('asset reference graph service', { concurrency: false }, () => {
       },
     });
 
-    const inventory = buildStagedAwareAssetInventory(root, project);
+    const inventory = buildProjectAssetInventory(root, project);
     assert.equal(inventory.images.pictures.names.includes('NewPicture'), true);
     assert.equal(inventory.images.pictures.names.includes('Unused'), false);
     assert.equal(inventory.images.pictures.names.includes('RenamedUnused'), false);

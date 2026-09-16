@@ -8,7 +8,7 @@ import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { createDefaultRmmvDatabaseEntry } from '../rmmv/database-schema.ts';
 import { writeJson } from '../rmmv/json.ts';
-import { writeStagedProjectJson } from './staging-service.ts';
+import { writeProjectJson } from './project-file-service.ts';
 import { cleanupIsolatedProject, verifyIsolatedSourceState } from './isolated-project-preparation.ts';
 import { prepareBattleTestProject } from './battle-test-preparation.ts';
 
@@ -32,10 +32,10 @@ describe('isolated Battle Test preparation', { concurrency: false }, () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  test('overlays staging, excludes saves, and changes only the copied Battle Test fields', () => {
-    const stagedTroops = readJson(path.join(project, 'data', 'Troops.json'));
-    stagedTroops[1].name = 'Staged Troop';
-    writeStagedProjectJson(root, project, 'data/Troops.json', stagedTroops);
+  test('uses directly saved data, excludes saves, and changes only the copied Battle Test fields', () => {
+    const savedTroops = readJson(path.join(project, 'data', 'Troops.json'));
+    savedTroops[1].name = 'Saved Troop';
+    writeProjectJson(root, project, 'data/Troops.json', savedTroops);
     const sourceSystem = readJson(path.join(project, 'data', 'System.json'));
     const preparation = prepareBattleTestProject(root, project, {
       troopId: 1,
@@ -44,8 +44,7 @@ describe('isolated Battle Test preparation', { concurrency: false }, () => {
       battleback2Name: 'Forest',
     });
 
-    assert.equal(preparation.troopName, 'Staged Troop');
-    assert.equal(preparation.staging.files.length, 1);
+    assert.equal(preparation.troopName, 'Saved Troop');
     assert.equal(fs.existsSync(path.join(preparation.temporaryProject, 'save')), false);
     const temporarySystem = readJson(path.join(preparation.temporaryProject, 'data', 'System.json'));
     assert.equal(temporarySystem.testTroopId, 1);
@@ -62,7 +61,6 @@ describe('isolated Battle Test preparation', { concurrency: false }, () => {
     assert.deepEqual(verifyIsolatedSourceState(root, preparation), {
       sourceUnchanged: true,
       savesUnchanged: true,
-      stagingUnchanged: true,
     });
 
     cleanupIsolatedProject(preparation);

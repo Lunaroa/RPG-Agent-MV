@@ -5,7 +5,7 @@ import { ConsoleSettingsDao } from '../db/dao/console-settings-dao.ts';
 import { readJson } from '../rmmv/json.ts';
 import { resolveDataDir } from '../rmmv/project-scanner.ts';
 import { loadRegistry } from '../workflow/event/event-registry.ts';
-import { getMapFileForRead, projectHash } from './staging-service.ts';
+import { projectHash, resolveMapFileForRead } from './project-file-service.ts';
 
 export interface PlacementQueueEvent {
   contractId: string;
@@ -108,7 +108,7 @@ function findMapEventForContract(
     : mapIds;
 
   for (const mapId of orderedMapIds) {
-    const mapFile = getMapFileForRead(workflowRoot, resolvedProject, mapId)
+    const mapFile = resolveMapFileForRead(resolvedProject, mapId)
       || path.join(dataDir, `Map${String(mapId).padStart(3, '0')}.json`);
     if (!fs.existsSync(mapFile)) continue;
     const map = readJson(mapFile) as { events?: Array<MapEventLite | null> };

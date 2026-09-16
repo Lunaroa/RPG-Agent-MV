@@ -145,7 +145,6 @@ export const MAP_IPC_CHANNELS = [
   'projectManagement:createEntry',
   'projectManagement:resizeDatabase',
   'projectManagement:resetEntry',
-  'projectManagement:revertEntry',
   'commonEvents:list',
   'commonEvents:get',
   'commonEvents:create',
@@ -177,12 +176,6 @@ export const MAP_IPC_CHANNELS = [
   'assetLibrary:detail',
   'assetLibrary:validateImport',
   'assetLibrary:import',
-  'staging:projectStatus',
-  'staging:applyProject',
-  'staging:discardProject',
-  'staging:mapStatus',
-  'staging:applyMap',
-  'staging:discardMap',
   'placementQueue:get',
   'placementQueue:save',
   'placementQueue:clear',
@@ -468,7 +461,7 @@ export function registerMapIpcHandlers(
   handle('maps:setEditorNote', (_event, mapId: number, note: string, value?: string) =>
     desktop.maps.setEditorMapNote(project(value), mapId, note));
   // Import maps from another RPG Maker project. Browse opens a directory picker (reusing the
-  // project-add flow) and lists the source maps; scan is read-only; apply writes a staging draft.
+  // project-add flow) and lists the source maps; scan is read-only; apply commits atomically.
   handle('maps:browseExternalProject', async (event) => {
     if (!options.selectProjectDirectory) {
       throw new Error(electronText(options.productLanguage?.(), 'projects.selectDirectoryUnsupported'));
@@ -488,7 +481,7 @@ export function registerMapIpcHandlers(
     return result;
   });
   // Replace one existing map's body with an external source map (phase 2). Scan is read-only;
-  // apply writes a staging draft over the target map id and invalidates the asset browser cache.
+  // apply atomically replaces the target map and invalidates the asset browser cache.
   handle('maps:replaceExternalScan', (_event, request: ExternalMapReplaceScanRequest, value?: string) =>
     desktop.externalMapImport.scanExternalMapReplace(workflowRoot, project(value), request));
   handle('maps:replaceExternalApply', (_event, request: ExternalMapReplaceApplyRequest, value?: string) => {
@@ -740,8 +733,6 @@ export function registerMapIpcHandlers(
     desktop.projectManagement.resizeProjectManagedDatabase(workflowRoot, project(value), request));
   handle('projectManagement:resetEntry', (_event, request: Record<string, unknown>, value?: string) =>
     desktop.projectManagement.resetProjectManagedEntry(workflowRoot, project(value), request));
-  handle('projectManagement:revertEntry', (_event, request: Record<string, unknown>, value?: string) =>
-    desktop.projectManagement.revertProjectManagedEntry(workflowRoot, project(value), request));
 
   handle('commonEvents:list', (_event, value?: string) =>
     desktop.commonEvents.listCommonEvents(workflowRoot, project(value)));
@@ -827,38 +818,6 @@ export function registerMapIpcHandlers(
     desktop.assetLibrary.validateAssetLibraryImport(workflowRoot, project(value), assetId));
   handle('assetLibrary:import', (_event, assetId: string, value?: string) =>
     desktop.assetLibrary.importAssetLibraryEntry(workflowRoot, project(value), assetId));
-
-  handle('staging:projectStatus', (_event, value?: string) => desktop.staging.getProjectStagingStatus(workflowRoot, project(value)));
-  handle('staging:applyProject', async (event, value?: string, expectedOperationIds?: string[]) => {
-    const resolved = project(value);
-    if (!await confirmProjectCompatibility(event, resolved, 'write')) return { canceled: true };
-    const result = invokeDesktop(() => desktop.staging.applyProjectStaging(workflowRoot, resolved, {
-      expectedOperationIds: expectedOperationIds || [],
-      validate: () => desktop.projectManagement.preflightProjectManagedStagingApply(workflowRoot, resolved),
-    }));
-    desktop.projectAssetBrowser.invalidateProjectAssetBrowserCache(resolved);
-    return result;
-  });
-  handle('staging:discardProject', (_event, value?: string) => {
-    const resolved = project(value);
-    const result = desktop.staging.discardProjectStaging(workflowRoot, resolved);
-    desktop.projectAssetBrowser.invalidateProjectAssetBrowserCache(resolved);
-    return result;
-  });
-  handle('staging:mapStatus', (_event, mapId: number, value?: string) => desktop.staging.getStagingStatus(workflowRoot, project(value), mapId));
-  handle('staging:applyMap', async (event, mapId: number, value?: string) => {
-    const resolved = project(value);
-    if (!await confirmProjectCompatibility(event, resolved, 'write')) return { canceled: true };
-    const result = desktop.staging.applyStagedMap(workflowRoot, resolved, mapId);
-    desktop.projectAssetBrowser.invalidateProjectAssetBrowserCache(resolved);
-    return result;
-  });
-  handle('staging:discardMap', (_event, mapId: number, value?: string) => {
-    const resolved = project(value);
-    const result = desktop.staging.discardStagedMap(workflowRoot, resolved, mapId);
-    desktop.projectAssetBrowser.invalidateProjectAssetBrowserCache(resolved);
-    return result;
-  });
 
   handle('placementQueue:get', (_event, value?: string) =>
     desktop.placementQueue.getPlacementQueueSession(workflowRoot, project(value)));

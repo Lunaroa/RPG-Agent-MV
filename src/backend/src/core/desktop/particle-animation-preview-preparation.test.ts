@@ -80,7 +80,6 @@ describe('isolated MZ particle animation preview preparation', { concurrency: fa
     assert.deepEqual(verifyIsolatedSourceState(root, preparation), {
       sourceUnchanged: true,
       savesUnchanged: true,
-      stagingUnchanged: true,
     });
     assert.deepEqual(fs.readFileSync(path.join(project, 'effects', 'fx', 'Spark.efkefc')), sourceEffect);
   });
@@ -173,18 +172,18 @@ describe('isolated MZ particle animation preview preparation', { concurrency: fa
     assert.match(html, /"autoplay":true/);
   });
 
-  test('serve-direct app overlays staged drafts so they win over the pass-through root', () => {
-    const draft = path.join(root, 'staged-Spark.efkefc');
-    fs.writeFileSync(draft, 'staged effect draft', 'utf8');
+  test('serve-direct app honors an explicit effective-file override over the pass-through root', () => {
+    const override = path.join(root, 'override-Spark.efkefc');
+    fs.writeFileSync(override, 'override effect bytes', 'utf8');
     appPreparation = prepareParticleAnimationPreviewApp(root, project, animation(), {}, {
       getEffectiveFile: (_workflowRoot, _project, relative) => (
-        relative === 'effects/fx/Spark.efkefc' ? draft : path.join(project, ...relative.split('/'))
+        relative === 'effects/fx/Spark.efkefc' ? override : path.join(project, ...relative.split('/'))
       ),
     });
 
     assert.equal(
       fs.readFileSync(path.join(appPreparation.appDirectory, 'effects', 'fx', 'Spark.efkefc'), 'utf8'),
-      'staged effect draft',
+      'override effect bytes',
     );
     // Untouched assets stay serve-direct.
     assert.equal(fs.existsSync(path.join(appPreparation.appDirectory, 'audio')), false);

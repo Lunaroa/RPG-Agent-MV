@@ -41,7 +41,7 @@ describe('playtest preparation worker host', { concurrency: false }, () => {
       assert.equal(preparation.temporaryProject.startsWith(os.tmpdir()), true);
       assert.equal(fs.existsSync(path.join(preparation.appDirectory, 'index.html')), true);
       assert.equal(typeof preparation.sourceFingerprint, 'string');
-      assert.equal(preparation.staging.files.length, 0);
+      assert.equal(preparation.savesExcluded, true);
     } finally {
       cleanupIsolatedProject(preparation);
     }

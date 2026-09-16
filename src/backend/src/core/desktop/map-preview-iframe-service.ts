@@ -26,7 +26,6 @@ import {
   parseMapPreviewSelfSwitchKey,
 } from '../../../../contract/map-preview-state.ts';
 import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
-import type { IsolatedStagingSnapshot } from './isolated-project-preparation.ts';
 import {
   cleanupMapPreviewApp,
   MAP_PREVIEW_DENIED_PREFIXES,
@@ -49,7 +48,6 @@ import {
   syncEffectiveMapInfos,
   type ProjectFileSnapshot,
 } from './map-preview-service.ts';
-import { inspectMapPreviewStagingConflict } from './map-preview-staging-conflict.ts';
 import { attestOwnedIsolatedProject } from './isolated-project-attestation.ts';
 
 const RUNTIME_TIMEOUT_MS = 20_000;
@@ -84,7 +82,6 @@ export class MapPreviewIframeService {
   #sourceProject = '';
   #preparation: MapPreviewAppPreparation | null = null;
   #sourceSnapshot: ProjectFileSnapshot | null = null;
-  #stagingSnapshot: IsolatedStagingSnapshot | null = null;
   #pendingMapSyncIds = new Set<number>();
   #protocolKey = '';
   #channelToken = '';
@@ -133,8 +130,6 @@ export class MapPreviewIframeService {
     if (!manifest.mapFiles.some((entry) => entry.id === mapId && entry.exists)) {
       throw new Error(`Map${String(mapId).padStart(3, '0')}.json does not exist.`);
     }
-    const preflightFailure = inspectMapPreviewStagingConflict(this.#workflowRoot, project);
-    if (preflightFailure) return { preflightFailure };
     const mapRevision = effectiveMapRevision(this.#workflowRoot, project, mapId);
     const now = new Date().toISOString();
     this.#nextOperationId = 1;
@@ -161,12 +156,11 @@ export class MapPreviewIframeService {
     };
     this.#publish();
     try {
-      // Serve-direct: only the tiny app shell and staged overlays are generated;
+      // Serve-direct: only the tiny app shell is generated;
       // everything else streams straight from the project, so this is instant.
       const prepared = prepareMapPreviewApp(this.#workflowRoot, project);
       this.#preparation = prepared;
       this.#sourceSnapshot = captureWarmProjectSnapshot(project);
-      this.#stagingSnapshot = prepared.staging;
       const geometry = effectivePreviewMapGeometry(this.#workflowRoot, project, mapId, prepared.tileSize);
       this.#channelToken = crypto.randomBytes(32).toString('hex');
       this.#protocolKey = crypto.randomBytes(32).toString('hex');
@@ -381,15 +375,6 @@ export class MapPreviewIframeService {
     const sourceProject = this.#preparation?.sourceProject || this.#sourceProject;
     if (!sourceProject) throw new Error('The active map preview has no source project.');
     const sameProject = fs.realpathSync.native(sourceProject) === project;
-    const preflightFailure = inspectMapPreviewStagingConflict(this.#workflowRoot, project);
-    if (preflightFailure) {
-      const canKeepSuccessfulPreview = sameProject
-        && Boolean(this.#session.iframeUrl)
-        && ['running', 'suspended'].includes(this.#session.status);
-      if (canKeepSuccessfulPreview) return { ...this.current(), preflightFailure };
-      await this.stop();
-      return { preflightFailure };
-    }
     if (!sameProject) {
       await this.stop();
       const result = await this.start(project, request.mapId, request.overrides);
@@ -631,10 +616,9 @@ export class MapPreviewIframeService {
 
   #prepareRuntimeTarget(request: MapPreviewResumeRequest): PreparedRuntimeTarget | null {
     if (!this.#session || !this.#preparation) return null;
-    const changes = inspectWarmProjectChanges(this.#workflowRoot, request.project, this.#sourceSnapshot, this.#stagingSnapshot);
+    const changes = inspectWarmProjectChanges(this.#workflowRoot, request.project, this.#sourceSnapshot);
     if (changes.unsafePaths.length) return null;
     this.#sourceSnapshot = changes.sourceSnapshot;
-    this.#stagingSnapshot = changes.stagingSnapshot;
     for (const mapId of changes.changedMapIds) this.#pendingMapSyncIds.add(mapId);
     if (changes.mapInfosChanged) {
       this.#ownedWrite(() => syncEffectiveMapInfos(this.#workflowRoot, request.project, this.#preparation!.appDirectory));
@@ -724,7 +708,6 @@ export class MapPreviewIframeService {
       this.#preparation = null;
       this.#sourceProject = '';
       this.#sourceSnapshot = null;
-      this.#stagingSnapshot = null;
     }
     this.#pendingMapSyncIds.clear();
     this.#pendingResume = null;

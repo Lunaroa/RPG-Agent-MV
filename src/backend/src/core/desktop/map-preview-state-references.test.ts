@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { buildMapPreviewStateCatalog } from './map-preview-state-references.ts';
-import { writeStagedProjectJson } from './staging-service.ts';
+import { writeProjectJson } from './project-file-service.ts';
 
 test('lists every named state and marks references reachable through effective map common events', { concurrency: false }, async () => {
   const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'map-preview-state-'));
@@ -30,7 +30,7 @@ test('lists every named state and marks references reachable through effective m
       { id: 1, name: 'Source Common Event', trigger: 0, switchId: 0, list: [command(121, [15, 15, 0]), command(0, [])] },
     ]);
 
-    writeStagedProjectJson(workflowRoot, project, 'data/Map001.json', mapWithCommands([
+    writeProjectJson(workflowRoot, project, 'data/Map001.json', mapWithCommands([
       command(121, [3, 4, 0]),
       command(101, ['', 0, 0]),
       command(122, [5, 6, 0, 1, 7]),
@@ -49,7 +49,7 @@ test('lists every named state and marks references reachable through effective m
       variableValid: true,
       variableId: 3,
     }));
-    writeStagedProjectJson(workflowRoot, project, 'data/CommonEvents.json', [
+    writeProjectJson(workflowRoot, project, 'data/CommonEvents.json', [
       null,
       { id: 1, name: 'Nested A', trigger: 0, switchId: 0, list: [command(121, [11, 11, 0]), command(117, [2]), command(0, [])] },
       { id: 2, name: 'Nested B', trigger: 0, switchId: 0, list: [command(122, [12, 12, 0, 0, 1]), command(117, [1]), command(0, [])] },

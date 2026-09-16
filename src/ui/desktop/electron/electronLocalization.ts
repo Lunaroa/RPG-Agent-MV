@@ -3,15 +3,7 @@ import { DEFAULT_PRODUCT_LANGUAGE, normalizeProductLanguage } from '../../../con
 
 const messages = {
   'zh-CN': {
-    'staging.checkFailed': '检查暂存失败',
-    'staging.savePrompt': '是否保存修改',
-    'staging.save': '是',
-    'staging.discard': '否',
-    'staging.cancel': '取消',
-    'staging.closeDetail': '当前项目存在暂存修改。选择“是”保存到工程；选择“否”放弃暂存；选择“取消”回到当前界面。',
-    'staging.agentOperations': '将同时应用以下 Agent 数据库操作：\n{{operations}}',
-    'staging.saveFailed': '保存修改失败',
-    'staging.discardFailed': '放弃修改失败',
+    'common.cancel': '取消',
     'projects.selectDirectoryTitle': '选择 RPG Maker MV 或 MZ 项目目录',
     'projects.selectDirectoryUnsupported': '当前运行环境不支持选择项目目录',
     'playtest.selectRuntimePromptTitle': '配置 RPG Maker {{engine}} 试玩运行器',
@@ -39,7 +31,7 @@ const messages = {
     'projects.compatibilityEncryptedAudio': '音频',
     'projects.compatibilityEncryptedImagesAudio': '图片和音频',
     'projects.compatibilityImportDetail': '可以继续导入。建议先备份工程，并在对应版本的 RPG Maker 中检查最终结果。',
-    'projects.compatibilityWriteDetail': '本次操作将把暂存修改写入版本未完整验证的 MZ 工程。请确认已备份工程。',
+    'projects.compatibilityWriteDetail': '本次操作将直接写入版本未完整验证的 MZ 工程。请确认已备份工程。',
     'projects.compatibilityContinueImport': '仍然导入',
     'projects.compatibilityContinueWrite': '仍然写入',
     'projects.compatibilityCancel': '取消',
@@ -93,15 +85,7 @@ const messages = {
     'updater.checkFailedMessage': '无法从 GitHub Releases 获取版本信息。请稍后重试或检查网络。',
   },
   'en-US': {
-    'staging.checkFailed': 'Failed to Check Staging',
-    'staging.savePrompt': 'Save Changes?',
-    'staging.save': 'Save',
-    'staging.discard': 'Discard',
-    'staging.cancel': 'Cancel',
-    'staging.closeDetail': 'The current project has staged changes. Save writes them to the project, Discard removes the staging draft, and Cancel returns to the current window.',
-    'staging.agentOperations': 'The following Agent database operations will also be applied:\n{{operations}}',
-    'staging.saveFailed': 'Failed to Save Changes',
-    'staging.discardFailed': 'Failed to Discard Changes',
+    'common.cancel': 'Cancel',
     'projects.selectDirectoryTitle': 'Select RPG Maker MV or MZ Project Folder',
     'projects.selectDirectoryUnsupported': 'This runtime does not support selecting a project folder.',
     'playtest.selectRuntimePromptTitle': 'Configure RPG Maker {{engine}} Playtest Runtime',
@@ -129,7 +113,7 @@ const messages = {
     'projects.compatibilityEncryptedAudio': 'audio',
     'projects.compatibilityEncryptedImagesAudio': 'image and audio',
     'projects.compatibilityImportDetail': 'You can continue importing. Back up the project first and inspect the final result in the matching RPG Maker editor.',
-    'projects.compatibilityWriteDetail': 'This operation will write staged changes to an MZ project whose version has not been fully validated. Confirm that the project is backed up.',
+    'projects.compatibilityWriteDetail': 'This operation will write directly to an MZ project whose version has not been fully validated. Confirm that the project is backed up.',
     'projects.compatibilityContinueImport': 'Import Anyway',
     'projects.compatibilityContinueWrite': 'Write Anyway',
     'projects.compatibilityCancel': 'Cancel',
@@ -197,12 +181,4 @@ export function electronText(
     text = text.replaceAll(`{{${name}}}`, String(value));
   }
   return text;
-}
-
-export function stagingCloseButtons(language: ProductLanguage | null | undefined): string[] {
-  return [
-    electronText(language, 'staging.save'),
-    electronText(language, 'staging.discard'),
-    electronText(language, 'staging.cancel'),
-  ];
 }

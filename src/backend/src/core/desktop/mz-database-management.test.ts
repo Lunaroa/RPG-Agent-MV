@@ -15,7 +15,7 @@ import {
   getProjectManagedEntry,
   updateProjectManagedEntry,
 } from "./project-management-service.ts";
-import { getProjectFileForRead } from "./staging-service.ts";
+import { resolveProjectFileForRead } from "./project-file-service.ts";
 
 describe("MZ database management", { concurrency: false }, () => {
   let root: string;
@@ -51,11 +51,11 @@ describe("MZ database management", { concurrency: false }, () => {
       id: 1,
       value: { id: 1, name: "Renamed Particle", rotation: { z: 45 } },
     });
-    const stagedAnimations = readJson(getProjectFileForRead(root, project, "data/Animations.json")!) as Array<Record<string, unknown> | null>;
-    assert.equal(stagedAnimations[1]?.name, "Renamed Particle");
-    assert.equal(stagedAnimations[1]?.effectName, "battle/Spark");
-    assert.deepEqual(stagedAnimations[1]?.rotation, { x: 10, y: 20, z: 45 });
-    assert.deepEqual(stagedAnimations[1]?.pluginData, { keep: true });
+    const savedAnimations = readJson(resolveProjectFileForRead(project, "data/Animations.json")!) as Array<Record<string, unknown> | null>;
+    assert.equal(savedAnimations[1]?.name, "Renamed Particle");
+    assert.equal(savedAnimations[1]?.effectName, "battle/Spark");
+    assert.deepEqual(savedAnimations[1]?.rotation, { x: 10, y: 20, z: 45 });
+    assert.deepEqual(savedAnimations[1]?.pluginData, { keep: true });
 
     withTestLanguage(() => updateProjectManagedEntry(root, project, {
       kind: "database",
@@ -63,8 +63,8 @@ describe("MZ database management", { concurrency: false }, () => {
       id: 0,
       value: { advanced: { screenWidth: 1280 } },
     }));
-    const stagedSystem = readJson(getProjectFileForRead(root, project, "data/System.json")!) as Record<string, unknown>;
-    assert.deepEqual(stagedSystem.advanced, {
+    const savedSystem = readJson(resolveProjectFileForRead(project, "data/System.json")!) as Record<string, unknown>;
+    assert.deepEqual(savedSystem.advanced, {
       screenWidth: 1280,
       screenHeight: 540,
       uiAreaWidth: 960,
@@ -78,12 +78,12 @@ describe("MZ database management", { concurrency: false }, () => {
       windowOpacity: 192,
       pluginOption: "keep",
     });
-    assert.deepEqual(stagedSystem.pluginData, { keep: true });
+    assert.deepEqual(savedSystem.pluginData, { keep: true });
 
     const sourceAnimations = readJson(path.join(project, "data", "Animations.json")) as Array<Record<string, unknown> | null>;
     const sourceSystem = readJson(path.join(project, "data", "System.json")) as Record<string, unknown>;
-    assert.equal(sourceAnimations[1]?.name, "Sample Particle");
-    assert.equal((sourceSystem.advanced as Record<string, unknown>).screenWidth, 960);
+    assert.equal(sourceAnimations[1]?.name, "Renamed Particle");
+    assert.equal((sourceSystem.advanced as Record<string, unknown>).screenWidth, 1280);
   });
 
   test("creates native MZ animations and exposes engine-specific limits", () => {

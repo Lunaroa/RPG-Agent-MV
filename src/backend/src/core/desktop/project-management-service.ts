@@ -4,11 +4,8 @@ import { isDeepStrictEqual } from 'node:util';
 
 import type {
   ProjectManagedEntry,
-  ProjectManagedEntryInspection,
-  ProjectManagedEntryRevertResult,
   ProjectManagedEntryResetResult,
   ProjectManagedDatabaseResizeResult,
-  ProjectManagedFieldDiff,
 } from '../../../../contract/types.ts';
 import {
   EXTENDED_TILESET_FIRST_TILE_ID,
@@ -29,12 +26,9 @@ import { dataRelativePath, inspectRmmvProject, resolveRmmvLayout } from '../rmmv
 import { scanProjectWithReader } from '../rmmv/project-scanner.ts';
 import {
   dryRunRmmvDatabaseChanges,
-  preflightRmmvDatabaseProjectApply,
   type RmmvArrayDatabaseTableKey,
   type RmmvDatabaseChange,
-  validateEffectiveRmmvDatabaseStagingTransition,
 } from '../rmmv/database-changes.ts';
-import type { RmmvDatabaseSemanticIssue } from '../rmmv/database-validation.ts';
 import { getCommonEvent, updateCommonEvent } from './common-event-service.ts';
 import {
   projectManagedCreateDatabaseOnly,
@@ -55,15 +49,14 @@ import {
   projectManagedMaximumInvalid,
   projectManagedMaximumOccupied,
   projectManagedNamedListIdOutOfRange,
-  projectManagedOperationOwnedCannotRevert,
   projectManagedSystemSharedGroupImmutable,
   projectManagedTypeListInvalid,
 } from './projectManagementServiceLocalization.ts';
 import {
-  getProjectFileForRead,
-  getProjectStagingStatus,
-  writeStagedProjectJson,
-} from './staging-service.ts';
+  readProjectFileVersion,
+  resolveProjectFileForRead,
+  writeProjectJson,
+} from './project-file-service.ts';
 
 const TYPE_LIST_KEYS = ['elements', 'skillTypes', 'weaponTypes', 'armorTypes', 'equipTypes'] as const;
 
@@ -71,7 +64,7 @@ export function buildProjectManagementScan(workflowRoot: string, project: string
   const layout = resolveRmmvLayout(project);
   return scanProjectWithReader(project, (fileName) => {
     const relative = dataRelativePath(layout, fileName);
-    const file = getProjectFileForRead(workflowRoot, project, relative);
+    const file = resolveProjectFileForRead(project, relative);
     if (!file || !exists(file)) return undefined;
     return readJson(file);
   }, { includeUnnamedEntries: true, readIssueMode: 'collect' });
@@ -83,7 +76,7 @@ export function getProjectManagedEntry(
   request: { kind: ProjectManagedEntry['kind']; group?: string; id: number },
 ): ProjectManagedEntry {
   if (request.kind === 'commonEvent') {
-    return withEntryInspection(workflowRoot, project, request, getCommonEvent(workflowRoot, project, request));
+    return getCommonEvent(workflowRoot, project, request);
   }
   const relativePath = relativePathFor(project, request);
   const data = readData(workflowRoot, project, relativePath);
@@ -92,37 +85,33 @@ export function getProjectManagedEntry(
     const key = request.kind === 'switch' ? 'switches' : 'variables';
     const list = (data as Record<string, unknown>)[key];
     if (!Array.isArray(list)) throw new Error(projectManagedListInvalid(key));
-    return withEntryInspection(workflowRoot, project, request, {
+    return {
       ...request,
       id,
       relativePath,
       value: { id, name: String(list[id] || '') },
-    });
+    };
   }
   const schema = schemaForManagedEntry(request);
   const engine = inspectRmmvProject(project).engine;
   if (!schema.isArrayTable) {
     if (Number(request.id) !== 0) throw new Error(projectManagedFixedDocumentIdRequired(schema.group));
-    return withEntryInspection(workflowRoot, project, request, {
+    return {
       ...request,
       id: 0,
       relativePath,
       value: readDocumentEntry(schema, data),
       schema: schemaPayload(schema, engine),
-    });
+    };
   }
   if (!Array.isArray(data) || !data[id]) throw new Error(projectManagedEntryMissing());
-  return withEntryInspection(workflowRoot, project, request, {
+  return {
     ...request,
     id,
     relativePath,
     value: data[id],
     schema: schemaPayload(schema, engine),
-  });
-}
-
-export function preflightProjectManagedStagingApply(workflowRoot: string, project: string) {
-  return preflightRmmvDatabaseProjectApply(workflowRoot, project);
+  };
 }
 
 export function updateProjectManagedEntry(
@@ -135,6 +124,7 @@ export function updateProjectManagedEntry(
     return getProjectManagedEntry(workflowRoot, project, request);
   }
   const current = getProjectManagedEntry(workflowRoot, project, request);
+  const sourceHash = readProjectFileVersion(project, current.relativePath).sha256;
   const data = readData(workflowRoot, project, current.relativePath);
   if (request.kind === 'switch' || request.kind === 'variable') {
     const key = request.kind === 'switch' ? 'switches' : 'variables';
@@ -170,7 +160,7 @@ export function updateProjectManagedEntry(
       writeDocumentEntry(schema, data, next);
     }
   }
-  writeStagedProjectJson(workflowRoot, project, current.relativePath, data);
+  writeProjectJson(workflowRoot, project, current.relativePath, data, sourceHash);
   return getProjectManagedEntry(workflowRoot, project, request);
 }
 
@@ -243,7 +233,7 @@ export function validateExtendedTilesetResources(
     const relativePath = [layout.resourceRootRelative, 'img', 'tilesets', ...nameParts.slice(0, -1), `${nameParts.at(-1)}.png`]
       .filter(Boolean)
       .join('/');
-    const file = getProjectFileForRead(workflowRoot, project, relativePath)
+    const file = resolveProjectFileForRead(project, relativePath)
       || path.join(layout.resourceRoot, 'img', 'tilesets', ...nameParts.slice(0, -1), `${nameParts.at(-1)}.png`);
     if (!exists(file)) {
       throw new Error(`Extended tileset sheet ${descriptor.label} image is missing: ${descriptor.imageName}.png.`);
@@ -269,7 +259,7 @@ function findTilesetReferencesAtOrAbove(
   minimumTileId: number,
 ): string[] {
   const layout = resolveRmmvLayout(project);
-  const infosFile = getProjectFileForRead(workflowRoot, project, dataRelativePath(layout, 'MapInfos.json'));
+  const infosFile = resolveProjectFileForRead(project, dataRelativePath(layout, 'MapInfos.json'));
   const infos = infosFile && exists(infosFile) ? readJson(infosFile) : [];
   if (!Array.isArray(infos)) return [];
   const referenced: string[] = [];
@@ -278,7 +268,7 @@ function findTilesetReferencesAtOrAbove(
     const mapId = Number(info.id);
     if (!Number.isInteger(mapId) || mapId <= 0) continue;
     const fileName = `Map${String(mapId).padStart(3, '0')}.json`;
-    const mapFile = getProjectFileForRead(workflowRoot, project, dataRelativePath(layout, fileName));
+    const mapFile = resolveProjectFileForRead(project, dataRelativePath(layout, fileName));
     if (!mapFile || !exists(mapFile)) continue;
     const map = readJson(mapFile);
     if (!isRecord(map) || Number(map.tilesetId) !== tilesetId) continue;
@@ -305,6 +295,7 @@ export function createProjectManagedEntry(
   const schema = schemaForManagedEntry(request);
   if (!schema.isArrayTable) throw new Error(projectManagedFixedDocumentCannotCreate(schema.group));
   const relativePath = relativePathFor(project, request);
+  const sourceHash = readProjectFileVersion(project, relativePath).sha256;
   const data = readData(workflowRoot, project, relativePath);
   if (!Array.isArray(data)) throw new Error(projectManagedGroupMustBeArray(schema.group));
   const engine = inspectRmmvProject(project).engine;
@@ -318,60 +309,8 @@ export function createProjectManagedEntry(
     throw new Error(projectManagedEntryInvalidWithIssues(validation.issues.map(issue => `${issue.path} ${issue.message}`).join('; ')));
   }
   data[id] = next;
-  writeStagedProjectJson(workflowRoot, project, relativePath, data);
+  writeProjectJson(workflowRoot, project, relativePath, data, sourceHash);
   return getProjectManagedEntry(workflowRoot, project, { kind: 'database', group: schema.group, id });
-}
-
-export function revertProjectManagedEntry(
-  workflowRoot: string,
-  project: string,
-  request: { kind: ProjectManagedEntry['kind']; group?: string; id: number },
-): ProjectManagedEntryRevertResult {
-  const id = validId(request.id);
-  const relativePath = relativePathFor(project, request);
-  const status = getProjectStagingStatus(workflowRoot, project);
-  const stagedFile = status.files.find((entry) => entry.relativePath === relativePath);
-  if (!stagedFile) {
-    return {
-      reverted: true,
-      entry: getProjectManagedEntry(workflowRoot, project, request),
-      staging: status,
-    };
-  }
-  if (stagedFile.operationId) throw new Error(projectManagedOperationOwnedCannotRevert());
-
-  const effectiveData = readData(workflowRoot, project, relativePath);
-  const sourceData = readSourceData(project, relativePath);
-  let sourceEntryExists = true;
-
-  if (request.kind === 'switch' || request.kind === 'variable') {
-    if (!isRecord(effectiveData) || !isRecord(sourceData)) throw new Error(projectManagedEntryInvalid());
-    const key = request.kind === 'switch' ? 'switches' : 'variables';
-    const effectiveList = effectiveData[key];
-    const sourceList = sourceData[key];
-    if (!Array.isArray(effectiveList) || !Array.isArray(sourceList)) throw new Error(projectManagedListInvalid(key));
-    effectiveList[id] = sourceList[id] ?? '';
-  } else {
-    const schema = schemaForManagedEntry(request);
-    if (schema.isArrayTable) {
-      if (!Array.isArray(effectiveData) || !Array.isArray(sourceData)) {
-        throw new Error(projectManagedGroupMustBeArray(schema.group));
-      }
-      sourceEntryExists = Boolean(sourceData[id]);
-      effectiveData[id] = sourceEntryExists ? structuredClone(sourceData[id]) : null;
-      if (!sourceEntryExists) trimRestoredArrayTail(effectiveData, sourceData.length);
-    } else {
-      restoreDocumentGroup(schema, effectiveData, sourceData);
-    }
-  }
-
-  writeStagedProjectJson(workflowRoot, project, relativePath, effectiveData);
-  const nextStatus = getProjectStagingStatus(workflowRoot, project);
-  return {
-    reverted: true,
-    ...(sourceEntryExists ? { entry: getProjectManagedEntry(workflowRoot, project, request) } : {}),
-    staging: nextStatus,
-  };
 }
 
 export function resetProjectManagedEntry(
@@ -384,6 +323,7 @@ export function resetProjectManagedEntry(
   if (!schema.isArrayTable) throw new Error(projectManagedFixedDocumentCannotCreate(schema.group));
   const id = validId(request.id);
   const relativePath = relativePathFor(project, request);
+  const sourceHash = readProjectFileVersion(project, relativePath).sha256;
   const data = readData(workflowRoot, project, relativePath);
   if (!Array.isArray(data)) throw new Error(projectManagedGroupMustBeArray(schema.group));
   if (!data[id]) throw new Error(projectManagedEntryMissing());
@@ -398,12 +338,12 @@ export function resetProjectManagedEntry(
     throw new Error(projectManagedEntryInvalidWithIssues(errors));
   }
   data[id] = null;
-  writeStagedProjectJson(workflowRoot, project, relativePath, data);
+  const write = writeProjectJson(workflowRoot, project, relativePath, data, sourceHash);
   return {
     reset: true,
     id,
     group: schema.group,
-    staging: getProjectStagingStatus(workflowRoot, project),
+    write,
   };
 }
 
@@ -429,6 +369,7 @@ export function resizeProjectManagedDatabase(
     throw new Error(projectManagedMaximumInvalid(schema.group, entryLimit));
   }
   const relativePath = relativePathFor(project, request);
+  const sourceHash = readProjectFileVersion(project, relativePath).sha256;
   const data = readData(workflowRoot, project, relativePath);
   if (!Array.isArray(data)) throw new Error(projectManagedGroupMustBeArray(schema.group));
   const previousMaximum = Math.max(0, data.length - 1);
@@ -438,7 +379,6 @@ export function resizeProjectManagedDatabase(
       group: schema.group,
       previousMaximum,
       maximum,
-      staging: getProjectStagingStatus(workflowRoot, project),
     };
   }
   if (maximum < previousMaximum) {
@@ -451,13 +391,13 @@ export function resizeProjectManagedDatabase(
   } else {
     while (data.length <= maximum) data.push(null);
   }
-  writeStagedProjectJson(workflowRoot, project, relativePath, data);
+  const write = writeProjectJson(workflowRoot, project, relativePath, data, sourceHash);
   return {
     resized: true,
     group: schema.group,
     previousMaximum,
     maximum,
-    staging: getProjectStagingStatus(workflowRoot, project),
+    write,
   };
 }
 
@@ -476,6 +416,7 @@ function resizeSystemNamedList(
     throw new Error(projectManagedMaximumInvalid(group, SYSTEM_NAMED_LIST_LIMIT));
   }
   const relativePath = relativePathFor(project, { kind });
+  const sourceHash = readProjectFileVersion(project, relativePath).sha256;
   const data = readData(workflowRoot, project, relativePath);
   if (!isRecord(data)) throw new Error(projectManagedGroupInvalid('System'));
   const list = data[key];
@@ -489,7 +430,6 @@ function resizeSystemNamedList(
       group,
       previousMaximum,
       maximum,
-      staging: getProjectStagingStatus(workflowRoot, project),
     };
   }
   if (maximum < previousMaximum) {
@@ -502,13 +442,13 @@ function resizeSystemNamedList(
   } else {
     while (list.length <= maximum) list.push('');
   }
-  writeStagedProjectJson(workflowRoot, project, relativePath, data);
+  const write = writeProjectJson(workflowRoot, project, relativePath, data, sourceHash);
   return {
     resized: true,
     group,
     previousMaximum,
     maximum,
-    staging: getProjectStagingStatus(workflowRoot, project),
+    write,
   };
 }
 
@@ -526,7 +466,8 @@ function schemaForManagedEntry(request: { kind: ProjectManagedEntry['kind']; gro
 }
 
 function readData(workflowRoot: string, project: string, relativePath: string): unknown {
-  const file = getProjectFileForRead(workflowRoot, project, relativePath);
+  void workflowRoot;
+  const file = resolveProjectFileForRead(project, relativePath);
   if (!file) throw new Error(projectManagedFileMissing(path.basename(relativePath)));
   return readJson(file);
 }
@@ -567,166 +508,6 @@ function pick(source: Record<string, unknown>, keys: string[]): Record<string, u
   const out: Record<string, unknown> = {};
   for (const key of keys) out[key] = structuredClone(source[key]);
   return out;
-}
-
-function withEntryInspection(
-  workflowRoot: string,
-  project: string,
-  request: { kind: ProjectManagedEntry['kind']; group?: string; id: number },
-  entry: ProjectManagedEntry,
-): ProjectManagedEntry {
-  const status = getProjectStagingStatus(workflowRoot, project);
-  const stagedFile = status.files.find((candidate) => candidate.relativePath === entry.relativePath);
-  if (!stagedFile) {
-    return {
-      ...entry,
-      inspection: emptyInspection(),
-    };
-  }
-
-  const sourceData = readSourceData(project, entry.relativePath);
-  const sourceValue = managedValueFromData(request, sourceData);
-  const before = inspectionValue(request, sourceValue);
-  const after = inspectionValue(request, entry.value);
-  const diffs = collectFieldDiffs(before, after);
-  const validation = diffs.length > 0
-    ? validateEffectiveRmmvDatabaseStagingTransition(workflowRoot, project)
-    : null;
-  const inspection: ProjectManagedEntryInspection = {
-    staged: true,
-    changed: diffs.length > 0,
-    conflict: stagedFile.conflict,
-    ...(stagedFile.operationId ? { operationId: stagedFile.operationId } : {}),
-    diffs,
-    issues: inspectionIssuesForManagedEntry(request, validation?.issues ?? []).map((issue) => ({
-      code: issue.code,
-      severity: issue.severity,
-      table: issue.source.table,
-      ...(issue.source.id === undefined ? {} : { id: issue.source.id }),
-      path: issue.source.path,
-      message: issue.message,
-    })),
-    limitations: [...(validation?.limitations ?? [])],
-  };
-  return { ...entry, inspection };
-}
-
-function inspectionIssuesForManagedEntry(
-  request: { kind: ProjectManagedEntry['kind']; group?: string; id: number },
-  issues: readonly RmmvDatabaseSemanticIssue[],
-): readonly RmmvDatabaseSemanticIssue[] {
-  if (request.kind === 'switch' || request.kind === 'variable') {
-    const key = request.kind === 'switch' ? 'switches' : 'variables';
-    const pathPrefix = `system.${key}[${validId(request.id)}]`;
-    return issues.filter((issue) => issue.source.table === 'system' && issue.source.path.startsWith(pathPrefix));
-  }
-
-  const schema = schemaForManagedEntry(request);
-  if (!schema.isArrayTable) return issues;
-  const id = validId(request.id);
-  return issues.filter((issue) => issue.source.table === schema.key && issue.source.id === id);
-}
-
-function emptyInspection(): ProjectManagedEntryInspection {
-  return {
-    staged: false,
-    changed: false,
-    conflict: false,
-    diffs: [],
-    issues: [],
-    limitations: [],
-  };
-}
-
-function managedValueFromData(
-  request: { kind: ProjectManagedEntry['kind']; group?: string; id: number },
-  data: unknown,
-): unknown {
-  const id = validId(request.id);
-  if (request.kind === 'switch' || request.kind === 'variable') {
-    if (!isRecord(data)) return { id, name: '' };
-    const key = request.kind === 'switch' ? 'switches' : 'variables';
-    const list = data[key];
-    return { id, name: Array.isArray(list) ? String(list[id] || '') : '' };
-  }
-  const schema = schemaForManagedEntry(request);
-  if (schema.isArrayTable) return Array.isArray(data) ? structuredClone(data[id] ?? null) : null;
-  return readDocumentEntry(schema, data);
-}
-
-function inspectionValue(
-  request: { kind: ProjectManagedEntry['kind']; group?: string },
-  value: unknown,
-): unknown {
-  if (request.kind !== 'database' || request.group !== 'System' || !isRecord(value)) return value;
-  const schema = getRmmvDatabaseSchema('System');
-  const keys = [...new Set(schema.coreFields
-    .map((field) => field.path.split('.')[0])
-    .filter((key) => key !== 'terms' && !TYPE_LIST_KEYS.includes(key as typeof TYPE_LIST_KEYS[number])))];
-  return pick(value, keys);
-}
-
-function collectFieldDiffs(before: unknown, after: unknown, pathPrefix = ''): ProjectManagedFieldDiff[] {
-  if (Object.is(before, after)) return [];
-  if (Array.isArray(before) || Array.isArray(after)) {
-    const beforeList = Array.isArray(before) ? before : [];
-    const afterList = Array.isArray(after) ? after : [];
-    const diffs: ProjectManagedFieldDiff[] = [];
-    for (let index = 0; index < Math.max(beforeList.length, afterList.length); index += 1) {
-      diffs.push(...collectFieldDiffs(beforeList[index], afterList[index], `${pathPrefix}/${index}`));
-    }
-    return diffs;
-  }
-  if (isRecord(before) || isRecord(after)) {
-    const beforeRecord = isRecord(before) ? before : {};
-    const afterRecord = isRecord(after) ? after : {};
-    const keys = [...new Set([...Object.keys(beforeRecord), ...Object.keys(afterRecord)])].sort();
-    return keys.flatMap((key) => collectFieldDiffs(
-      beforeRecord[key],
-      afterRecord[key],
-      `${pathPrefix}/${escapeJsonPointer(key)}`,
-    ));
-  }
-  return [{
-    path: pathPrefix || '/',
-    ...(before === undefined ? {} : { before: structuredClone(before) }),
-    ...(after === undefined ? {} : { after: structuredClone(after) }),
-  }];
-}
-
-function escapeJsonPointer(value: string): string {
-  return value.replace(/~/g, '~0').replace(/\//g, '~1');
-}
-
-function readSourceData(project: string, relativePath: string): unknown {
-  const file = path.resolve(project, ...relativePath.split('/'));
-  if (!exists(file)) throw new Error(projectManagedFileMissing(path.basename(relativePath)));
-  return readJson(file);
-}
-
-function restoreDocumentGroup(
-  schema: RmmvDatabaseTableSchema,
-  effectiveData: unknown,
-  sourceData: unknown,
-): void {
-  if (!isRecord(effectiveData) || !isRecord(sourceData)) throw new Error(projectManagedGroupInvalid(schema.group));
-  if (schema.group === 'Types') {
-    for (const key of TYPE_LIST_KEYS) restoreRecordKey(effectiveData, sourceData, key);
-    return;
-  }
-  if (schema.group === 'Terms') {
-    restoreRecordKey(effectiveData, sourceData, 'terms');
-    return;
-  }
-  const keys = [...new Set(schema.coreFields
-    .map((field) => field.path.split('.')[0])
-    .filter((key) => key !== 'terms' && !TYPE_LIST_KEYS.includes(key as typeof TYPE_LIST_KEYS[number])))];
-  for (const key of keys) restoreRecordKey(effectiveData, sourceData, key);
-}
-
-function restoreRecordKey(target: Record<string, unknown>, source: Record<string, unknown>, key: string): void {
-  if (Object.hasOwn(source, key)) target[key] = structuredClone(source[key]);
-  else delete target[key];
 }
 
 function assertDocumentMutationAllowed(
@@ -776,12 +557,6 @@ function requireTypeList(value: unknown, field: string): string[] {
     throw new Error(projectManagedTypeListInvalid(field));
   }
   return value as string[];
-}
-
-function trimRestoredArrayTail(records: unknown[], sourceLength: number): void {
-  while (records.length > sourceLength && (records.at(-1) === null || records.at(-1) === undefined)) {
-    records.pop();
-  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

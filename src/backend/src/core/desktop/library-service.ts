@@ -17,7 +17,7 @@ import {
   resolveMapLibraryFilePath,
 } from './map-library-paths.ts';
 import { resolveMapLibraryPackage } from './map-library-package.ts';
-import { isInside } from './staging-service.ts';
+import { isInside } from './project-file-service.ts';
 
 const SELECTION_PROJECT_ID = 'default';
 

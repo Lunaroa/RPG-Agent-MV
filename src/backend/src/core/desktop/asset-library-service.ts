@@ -38,7 +38,7 @@ import {
 } from './assetLibraryLocalization.ts';
 import { listMapLibrary, validateMapLibraryPackage } from './library-service.ts';
 import { importMapDraftFromLibrary } from './map-service.ts';
-import { getProjectFileForRead, writeStagedProjectBuffer, writeStagedProjectJson } from './staging-service.ts';
+import { resolveProjectFileForRead, writeProjectBuffer, writeProjectJson } from './project-file-service.ts';
 
 const FILE_BUCKETS: Record<string, {
   category: AssetLibraryFileEntry['category'];
@@ -127,18 +127,18 @@ export function importAssetLibraryEntry(
   if (entry.kind === 'file') {
     const source = resolveLibrarySourceFile(workflowRoot, entry.sourceSlug, entry.relativePath);
     const relativePath = resourceRelativePath(resolveRmmvLayout(project), entry.relativePath);
-    writeStagedProjectBuffer(workflowRoot, project, relativePath, fs.readFileSync(source));
+    writeProjectBuffer(workflowRoot, project, relativePath, fs.readFileSync(source));
     return { kind: 'file', assetId, relativePath };
   }
 
   const layout = resolveRmmvLayout(project);
   const skillsRelative = dataRelativePath(layout, 'Skills.json');
-  const skillsPath = getProjectFileForRead(workflowRoot, project, skillsRelative);
+  const skillsPath = resolveProjectFileForRead(project, skillsRelative);
   if (!skillsPath) throw new Error(assetLibraryTargetSkillsMissing());
   const skills = readJson(skillsPath) as Array<Record<string, unknown> | null>;
   const importedId = firstAvailableId(skills);
   skills[importedId] = { ...structuredClone(entry.skill), id: importedId };
-  writeStagedProjectJson(workflowRoot, project, skillsRelative, skills);
+  writeProjectJson(workflowRoot, project, skillsRelative, skills);
   return { kind: 'skill', assetId, importedId };
 }
 
@@ -261,9 +261,9 @@ function validateSkillImport(workflowRoot: string, project: string, entry: Asset
   validateDatabaseDependencies(workflowRoot, project, layout, 'CommonEvents.json', entry.dependencies.commonEvents, dependencyLabels.commonEvent, issues);
   validatePlugins(workflowRoot, project, layout, entry.dependencies.plugins, issues);
   for (const resource of entry.dependencies.resources) {
-    if (!getProjectFileForRead(workflowRoot, project, resourceRelativePath(layout, safeRelativePath(resource)))) issues.push(assetLibraryResourceMissing(resource));
+    if (!resolveProjectFileForRead(project, resourceRelativePath(layout, safeRelativePath(resource)))) issues.push(assetLibraryResourceMissing(resource));
   }
-  if (!getProjectFileForRead(workflowRoot, project, dataRelativePath(layout, 'Skills.json'))) issues.push(assetLibrarySkillsJsonMissing());
+  if (!resolveProjectFileForRead(project, dataRelativePath(layout, 'Skills.json'))) issues.push(assetLibrarySkillsJsonMissing());
   return { ok: issues.length === 0, issues };
 }
 
@@ -302,7 +302,7 @@ function validateNamedArray(
 
 function validatePlugins(workflowRoot: string, project: string, layout: ReturnType<typeof resolveRmmvLayout>, plugins: string[], issues: string[]): void {
   if (!plugins.length) return;
-  const pluginsPath = getProjectFileForRead(workflowRoot, project, resourceRelativePath(layout, 'js/plugins.js'));
+  const pluginsPath = resolveProjectFileForRead(project, resourceRelativePath(layout, 'js/plugins.js'));
   if (!pluginsPath) {
     issues.push(assetLibraryPluginsJsMissing());
     return;
@@ -314,7 +314,7 @@ function validatePlugins(workflowRoot: string, project: string, layout: ReturnTy
 }
 
 function readProjectJson(workflowRoot: string, project: string, relativePath: string, issues: string[]): unknown {
-  const file = getProjectFileForRead(workflowRoot, project, relativePath);
+  const file = resolveProjectFileForRead(project, relativePath);
   if (!file) {
     issues.push(assetLibraryFileMissing(path.basename(relativePath)));
     return null;

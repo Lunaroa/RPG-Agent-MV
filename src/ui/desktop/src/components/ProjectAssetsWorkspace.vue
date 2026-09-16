@@ -47,7 +47,6 @@ import type {
 } from '@contract/types'
 import {
   clipboard,
-  maps as mapsApi,
   projectAssets,
   type ManagedAssetDetail,
 } from '../api/client'
@@ -1439,20 +1438,6 @@ function syncTreeCurrentKey(categoryId: string) {
   nextTick(() => {
     treeRef.value?.setCurrentKey(categoryId || undefined)
   })
-}
-
-async function refreshStagingStatus() {
-  if (!projectStore.currentProject) {
-    workbenchUi.sbStagingDirty = false
-    return
-  }
-  try {
-    const status = await mapsApi.projectStaging(projectStore.currentProject)
-    workbenchUi.sbStagingDirty = Boolean((status as { staged?: boolean }).staged)
-  } catch {
-    // Best-effort only: asset mutations are immediate and a stale global indicator
-    // must not be presented as asset staging.
-  }
 }
 
 async function loadTree(preferredCategoryId?: string) {
@@ -3467,7 +3452,6 @@ async function deleteSelectedEntries() {
 }
 
 async function afterMutation(detail: ManagedAssetDetail | null) {
-  await refreshStagingStatus()
   await loadTree(selectedCategoryId.value)
   if (detail?.name) {
     const match = categoryEntries.value.find((entry) => entry.name === detail.name)
@@ -3481,7 +3465,6 @@ async function refreshAll() {
   categoryError.value = ''
   await projectAssets.invalidateBrowseCache(projectStore.currentProject)
   await loadTree(selectedCategoryId.value)
-  await refreshStagingStatus()
 }
 
 /** Watcher-driven refresh: reload tree + entries while keeping scroll, selection, and armed thumbnails. */
@@ -3513,7 +3496,6 @@ async function refreshSilently() {
   }
   syncTreeCurrentKey(categoryId)
   await loadCategory(categoryId, { preserveViewState: true })
-  await refreshStagingStatus()
 }
 
 watch(
@@ -3524,7 +3506,6 @@ watch(
     assetClipboard.value = null
     folderClipboard.value = null
     void loadTree()
-    void refreshStagingStatus()
     void refreshFavorites()
     // Restart file-system watcher for the new project
     void projectAssets.stopWatcher()
@@ -3583,7 +3564,6 @@ onMounted(() => {
   void loadTree(routeCategory).then(() => {
     if (!isSelectionMode.value) void applyRouteAssetFocus()
   })
-  void refreshStagingStatus()
   void refreshFavorites()
 
   // Start file-system watcher for auto-refresh

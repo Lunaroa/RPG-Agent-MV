@@ -4,13 +4,11 @@ import path from 'node:path';
 import { migrate } from './migrate.ts';
 import { ProviderDao } from './dao/provider-dao.ts';
 import { ConsoleSettingsDao } from './dao/console-settings-dao.ts';
-import { StagingManifestDao } from './dao/staging-manifest-dao.ts';
 import { MapSelectionDao } from './dao/map-selection-dao.ts';
 
 interface MigrationResult {
   providers: { migrated: number; skipped: number; errors: number };
   consoleSettings: { migrated: number; skipped: number; errors: number };
-  stagingManifests: { migrated: number; skipped: number; errors: number };
   mapSelections: { migrated: number; skipped: number; errors: number };
 }
 
@@ -25,7 +23,6 @@ export async function migrateJsonToSqlite(workflowRoot: string): Promise<Migrati
   const result: MigrationResult = {
     providers: { migrated: 0, skipped: 0, errors: 0 },
     consoleSettings: { migrated: 0, skipped: 0, errors: 0 },
-    stagingManifests: { migrated: 0, skipped: 0, errors: 0 },
     mapSelections: { migrated: 0, skipped: 0, errors: 0 }
   };
 
@@ -34,9 +31,6 @@ export async function migrateJsonToSqlite(workflowRoot: string): Promise<Migrati
 
   // 迁移 console settings
   result.consoleSettings = await migrateConsoleSettings(workflowRoot);
-
-  // 迁移 staging manifests
-  result.stagingManifests = await migrateStagingManifests(workflowRoot);
 
   // 迁移 map selections
   result.mapSelections = await migrateMapSelections(workflowRoot);
@@ -153,55 +147,6 @@ async function migrateConsoleSettings(workflowRoot: string): Promise<{ migrated:
 }
 
 /**
- * 迁移 staging manifests
- */
-async function migrateStagingManifests(workflowRoot: string): Promise<{ migrated: number; skipped: number; errors: number }> {
-  const result = { migrated: 0, skipped: 0, errors: 0 };
-  const stagingDir = path.join(workflowRoot, 'runtime', 'agent-console-staging');
-
-  if (!fs.existsSync(stagingDir)) {
-    console.log('[migrate] agent-console-staging directory not found, skipping');
-    return result;
-  }
-
-  try {
-    const entries = fs.readdirSync(stagingDir, { withFileTypes: true });
-
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-
-      const manifestPath = path.join(stagingDir, entry.name, 'manifest.json');
-      if (!fs.existsSync(manifestPath)) continue;
-
-      try {
-        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-        const projectId = entry.name; // 使用目录名作为 project_id
-
-        // 检查是否已存在
-        const existing = StagingManifestDao.getLatestByProject(projectId);
-        if (existing) {
-          result.skipped++;
-          continue;
-        }
-
-        StagingManifestDao.create(projectId, manifest);
-        result.migrated++;
-      } catch (error) {
-        console.error(`[migrate] Error migrating staging manifest ${entry.name}:`, error);
-        result.errors++;
-      }
-    }
-
-    console.log(`[migrate] Staging Manifests: ${result.migrated} migrated, ${result.skipped} skipped, ${result.errors} errors`);
-  } catch (error) {
-    console.error('[migrate] Error reading staging directory:', error);
-    result.errors++;
-  }
-
-  return result;
-}
-
-/**
  * 迁移 map-selection.json
  */
 async function migrateMapSelections(workflowRoot: string): Promise<{ migrated: number; skipped: number; errors: number }> {
@@ -257,24 +202,6 @@ export function backupJsonFiles(workflowRoot: string): void {
       const dest = path.join(backupDir, path.basename(file));
       fs.copyFileSync(src, dest);
       console.log(`[migrate] Backed up ${file} to ${dest}`);
-    }
-  }
-
-  // 备份 staging manifests
-  const stagingDir = path.join(workflowRoot, 'runtime', 'agent-console-staging');
-  if (fs.existsSync(stagingDir)) {
-    const backupStagingDir = path.join(backupDir, 'agent-console-staging');
-    fs.mkdirSync(backupStagingDir, { recursive: true });
-
-    const entries = fs.readdirSync(stagingDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const manifestPath = path.join(stagingDir, entry.name, 'manifest.json');
-      if (fs.existsSync(manifestPath)) {
-        const dest = path.join(backupStagingDir, `${entry.name}-manifest.json`);
-        fs.copyFileSync(manifestPath, dest);
-        console.log(`[migrate] Backed up staging manifest ${entry.name}`);
-      }
     }
   }
 

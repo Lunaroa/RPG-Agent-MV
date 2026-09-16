@@ -39,7 +39,7 @@ export interface MapPreviewResolutionEntry {
   resourceRoot: string;
   /** Optional pass-through root for shared asset trees served straight from the project. */
   fallback?: { root: string; prefixes: readonly string[] };
-  /** Paths that must 404 (staged deletions, save data); prefixes deny whole trees. */
+  /** Paths that must 404 (save data and explicitly denied runtime paths); prefixes deny whole trees. */
   denied?: { exact: Set<string>; prefixes: readonly string[] };
 }
 

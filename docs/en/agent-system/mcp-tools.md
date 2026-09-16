@@ -4,11 +4,11 @@
 
 MCP tools expose project-aware actions to the Agent runtime.
 
-Tools should have clear ownership: reading project facts, staging edits, registering pending events, inspecting assets, or running controlled diagnostics. They should not bypass the product's review and placement boundaries.
+Tools should have clear ownership: reading project facts, saving reviewed edits, registering pending events, inspecting assets, or running controlled diagnostics. They should not bypass the product's review and placement boundaries.
 
-When a tool writes to a game project, it must use the established staging, validation, or controlled write path. Missing context should fail fast with a clear error.
+When a tool writes to a game project, it must use the established validation and atomic direct-save path. Missing context should fail fast with a clear error.
 
-`RmmvReadContext` exposes paged full database catalogs and complete entries, preferring the effective staged version. The main Agent uses `RmmvDatabase` for validate, dry-run, stage, and discard. `RmmvDatabaseApply` accepts only an existing operation identifier and requires native approval plus a fresh preflight. `RmmvVerify` runs the bounded isolated-copy probe. Read-only sub-agents cannot call these write or verification paths.
+`RmmvReadContext` exposes paged full database catalogs and complete source entries. The main Agent uses `RmmvDatabase` to validate and dry-run a batch, then passes the exact changes and plan hash to `RmmvDatabaseCommit`. The commit requires native approval, rechecks source fingerprints, and saves all affected files atomically. `RmmvMap` saves supported map edits directly. `RmmvVerify` copies the saved source project and runs the bounded isolated probe. Read-only sub-agents cannot call these save or verification paths; the sole controlled write exception is registering a pending event draft that has not entered the game project.
 
 Tool availability depends on the runtime environment. If a tool requires a feature, platform, or environment variable, the UI should show that reason rather than silently hiding the failure.
 

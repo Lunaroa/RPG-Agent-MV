@@ -18,8 +18,6 @@
       :undo-len="undoLen"
       :redo-len="redoLen"
       :busy="busy"
-      :staging-dirty="stagingDirty && mode !== 'preview'"
-      :staging-conflicted="stagingConflict"
       :preview-refresh-enabled="previewRefreshEnabled"
       :preview-execution-enabled="previewExecutionEnabled"
       :preview-execution-available="previewExecutionAvailable"
@@ -31,8 +29,6 @@
       @zoom-in="zoomIn"
       @zoom-out="zoomOut"
       @reset-zoom="resetZoom"
-      @apply="applyStaging"
-      @discard="discardStaging"
       @open-ulds="openUldsPanel"
       @add-extra-layer="addExtraTileLayer"
       @remove-extra-layer="removeExtraTileLayer"
@@ -53,7 +49,6 @@
         :map-tree-error="mapTreeError"
         :map-tree-draggable="!busy && mode !== 'preview'"
         :selected-map-id="requestedMapId ?? selectedMapId"
-        :staged-map-ids="stagedMapIds"
         :expanded-map-ids="expandedMapIds"
         :current-events="currentEvents"
         :selected-event-id="selectedEventId"
@@ -99,7 +94,6 @@
             :presentation-epoch="previewPresentationEpoch"
             :error="previewError"
             :diagnostic="previewDiagnostic"
-            :preflight-failure="previewPreflightFailure"
             :refreshing="previewRefreshActive"
             :selected-event="selectedPreviewEventState"
             :tile-size="currentTileSize"
@@ -108,7 +102,6 @@
             :load-progress="previewSession?.loadProgress"
             :started-at="previewSession?.startedAt"
             @retry="restartPreview"
-            @resolve-staging="resolvePreviewStagingConflict"
             @copy-diagnostic="copyPreviewDiagnostic"
             @runtime-event="onPreviewRuntimeEvent"
             @view-changed="updatePreviewView"
@@ -299,9 +292,6 @@
           <li @click="ctxOpenNotes">{{ t('editor.ctx.notes') }}</li>
           <li @click="ctxExportMapImage">{{ t('editor.ctx.exportMapImage') }}</li>
           <li class="ctx-sep" />
-          <li :class="{ disabled: !stagedMapIds.has(treeContext.mapId) }" @click="ctxApplyMap">{{ t('editor.ctx.applyMapStaging') }}</li>
-          <li :class="{ disabled: !stagedMapIds.has(treeContext.mapId) }" @click="ctxDiscardMap">{{ t('editor.ctx.discardMapStaging') }}</li>
-          <li class="ctx-sep" />
           <li @click="ctxCopyMap">{{ t('editor.ctx.copy') }}</li>
           <li :class="{ disabled: mapClipboard == null }" @click="ctxPasteMap">{{ t('editor.ctx.paste') }}</li>
           <li class="ctx-danger" @click="ctxDeleteMap">{{ t('editor.ctx.delete') }}</li>
@@ -391,7 +381,6 @@ import { isPlacedStatus } from '../utils/placementStatus';
 import { canActivatePlacementOnMap } from '../utils/placementMapPolicy';
 import { placementValidityHint, validatePlacementCell } from '../utils/placementCellValidity';
 import { registerEditorUiControlHandler, type EditorUiControlState } from '../utils/uiControl';
-import { parseProjectStagingSummary, type ProjectStagingSummary } from '../utils/projectStaging';
 import { loadImageElement } from '../utils/imageLoading.ts';
 import { filterMapPreviewOverrides, removeMapPreviewOverrides } from '../utils/mapPreviewOverrides';
 import { mapPreviewSelfSwitchKey } from '@contract/map-preview-state';
@@ -399,24 +388,18 @@ import { LatestAsyncCoordinator, type LatestAsyncToken } from '../utils/latestAs
 import { previewSessionMatchesIntent, type EditorPreviewIntent } from '../utils/editorPreviewIntent';
 import {
   mapPreviewDiagnosticFromError,
-  mapPreviewDiagnosticFromPreflightFailure,
   mapPreviewDiagnosticFromSession,
-  mapPreviewPreflightFailureFromSession,
   serializeMapPreviewDiagnostic,
   type MapPreviewDiagnostic,
 } from '../utils/mapPreviewDiagnostics';
-import { formatUserFacingErrorMessage } from '../utils/user-facing-error';
 import { cloneDraft } from '../utils/clone-draft';
 import { registerProductPluginLifecycleGuard } from '../utils/productPluginLifecycle';
 import { useI18n, type MessageKey } from '../i18n';
 import type {
-  MapPreviewPreflightFailure,
-  MapPreviewResult,
   MapPreviewStateCatalog,
   RpgMakerEngine,
 } from '@contract/types';
 
-interface ApiError extends Error { status?: number }
 type EditableMap = MvMap & Partial<RmmvMapProperties> & Record<string, unknown>;
 
 const route = useRoute();
@@ -475,9 +458,6 @@ const showTileFlags = ref(false);
 const busy = ref(false);
 const statusText = ref('');
 const statusKind = ref<EditorStatusKind>('');
-const stagingDirty = ref(false);
-const stagingConflict = ref(false);
-const stagedMapIds = ref(new Set<number>());
 const selectedEventId = ref<number | null>(null);
 const hoveredEventId = ref<number | null>(null);
 const currentEvents = ref<EditorEventListItem[]>([]);
@@ -672,7 +652,6 @@ const previewSession = ref<MapPreviewSession | null>(null);
 const previewStatus = ref<MapPreviewStatus>('stopped');
 const previewError = ref('');
 const previewDiagnostic = shallowRef<MapPreviewDiagnostic | null>(null);
-const previewPreflightFailure = shallowRef<MapPreviewPreflightFailure | null>(null);
 const previewRuntimeCommand = shallowRef<MapPreviewRuntimeCommand | null>(null);
 const previewPresentationEpoch = ref(0);
 const previewStateCatalog = ref<MapPreviewStateCatalog>({ switches: [], variables: [] });
@@ -845,7 +824,6 @@ function stateRecordMap<T>(record?: Record<string, T>): Map<number, T> {
 function onPreviewStatus(session: MapPreviewSession) {
   const intent = previewIntentCoordinator.current()?.value;
   const currentSession = previewSession.value;
-  const stagingFailure = mapPreviewPreflightFailureFromSession(session);
   if (
     currentSession
     && !['stopped', 'failed'].includes(currentSession.status)
@@ -877,17 +855,10 @@ function onPreviewStatus(session: MapPreviewSession) {
   if (!previewSessionMatchesIntent(session, intent)) return;
   previewSession.value = session;
   previewStatus.value = session.status;
-  previewError.value = session.status === 'failed' && !stagingFailure ? previewFailureMessage(session) : '';
+  previewError.value = session.status === 'failed' ? previewFailureMessage(session) : '';
   previewDiagnostic.value = session.status === 'failed' ? mapPreviewDiagnosticFromSession(session) : null;
   if (session.status === 'failed' && previewDiagnostic.value) {
-    publishPreviewFailureToWorkbench(
-      previewDiagnostic.value,
-      stagingFailure ? t('editor.preview.stagingConflict.title') : previewError.value,
-    );
-  }
-  if (stagingFailure) {
-    previewPreflightFailure.value = stagingFailure;
-    stagingConflict.value = true;
+    publishPreviewFailureToWorkbench(previewDiagnostic.value, previewError.value);
   }
   if (session.status === 'running' || session.status === 'failed') previewRefreshActive.value = false;
   if (session.status === 'running') previewRequestedMapId.value = session.mapId;
@@ -901,46 +872,7 @@ function previewFailureMessage(session: MapPreviewSession): string {
   if (session.failureCode === 'runtime-resume-failed') return t('editor.preview.runtimeResumeFailed');
   if (session.failureCode === 'isolation-preparation-failed') return t('editor.preview.isolationPreparationFailed');
   if (session.failureCode === 'preview-debug-marker-conflict') return t('editor.preview.debugMarkerConflict');
-  if (session.failureCode === 'staging-conflict') return t('editor.preview.stagingConflict.title');
   return t('editor.preview.unknownError');
-}
-
-function handlePreviewPreflightFailure(
-  result: MapPreviewResult,
-  intent: Extract<EditorPreviewIntent, { active: true }>,
-): boolean {
-  const failure = result.preflightFailure;
-  if (!failure) return false;
-  if (result.session) onPreviewStatus(result.session);
-  previewPreflightFailure.value = failure;
-  stagingConflict.value = true;
-  previewError.value = '';
-  previewDiagnostic.value = mapPreviewDiagnosticFromPreflightFailure({
-    failure,
-    engine: currentEngine.value,
-    mapId: intent.mapId,
-    operationId: result.session?.operationId || previewSession.value?.operationId,
-  });
-  publishPreviewFailureToWorkbench(
-    previewDiagnostic.value,
-    t('editor.preview.stagingConflict.title'),
-  );
-  const retained = Boolean(
-    result.session?.iframeUrl
-    && ['running', 'suspended'].includes(result.session.status),
-  );
-  if (!retained) previewStatus.value = 'failed';
-  previewRefreshActive.value = false;
-  return true;
-}
-
-function clearPreviewPreflightFailure(): void {
-  previewPreflightFailure.value = null;
-}
-
-function acceptPreviewPreflightSuccess(): void {
-  clearPreviewPreflightFailure();
-  stagingConflict.value = false;
 }
 
 function onPreviewRuntimeCommand(command: MapPreviewRuntimeCommand) {
@@ -1171,8 +1103,6 @@ async function ensurePreviewForIntent(
         intent.forceReload,
       );
       if (!isCurrent()) return;
-      if (handlePreviewPreflightFailure(result, intent)) return;
-      acceptPreviewPreflightSuccess();
       if (result.session) onPreviewStatus(result.session);
     } catch (error) {
       if (!isCurrent()) return;
@@ -1192,7 +1122,6 @@ async function ensurePreviewForIntent(
     syncPreviewOverridesFromWorkspace();
     const result = await mapPreview.start(intent.project, mapId, overridesForCurrentMap());
     if (!isCurrent()) return;
-    if (handlePreviewPreflightFailure(result, intent)) return;
     if (result.runtimeSelectionRequired) {
       const selection = await playtest.selectRuntime(result.runtimeSelectionRequired);
       if (!isCurrent()) return;
@@ -1212,13 +1141,10 @@ async function ensurePreviewForIntent(
       }
       const retried = await mapPreview.start(intent.project, mapId, overridesForCurrentMap());
       if (!isCurrent()) return;
-      if (handlePreviewPreflightFailure(retried, intent)) return;
-      acceptPreviewPreflightSuccess();
       if (retried.session) onPreviewStatus(retried.session);
       else if (retried.error) throw new Error(retried.error);
       return;
     }
-    acceptPreviewPreflightSuccess();
     if (result.session) onPreviewStatus(result.session);
     else if (result.error) throw new Error(result.error);
   } catch (error) {
@@ -1270,26 +1196,12 @@ async function suspendPreviewSession() {
 async function restartPreview() {
   previewRefreshActive.value = false;
   const intent = currentPreviewIntent();
-  const keepExistingPreview = Boolean(
-    previewPreflightFailure.value
-    && previewSession.value?.iframeUrl
-    && ['running', 'suspended'].includes(previewSession.value.status),
-  );
-  const token = previewIntentCoordinator.begin(intent.active
-    ? { ...intent, forceReload: keepExistingPreview || intent.forceReload }
-    : intent);
+  const token = previewIntentCoordinator.begin(intent);
   void previewIntentCoordinator.runExclusive(token, async ({ isCurrent }) => {
-    if (!keepExistingPreview) await stopPreviewSession();
+    await stopPreviewSession();
     if (!isCurrent() || !token.value.active) return;
     await ensurePreviewForIntent(token, isCurrent);
   });
-}
-
-async function resolvePreviewStagingConflict() {
-  mode.value = 'map';
-  await nextTick();
-  await refreshStagingStatus();
-  ElMessage.warning(t('editor.preview.stagingConflict.resolveHint'));
 }
 
 async function refreshPreview() {
@@ -1653,7 +1565,6 @@ watch(selectedMapLabel, (v) => { workbenchUi.sbMapLabel = v; });
 watch(mode, (v) => { workbenchUi.sbMode = v; });
 watch(cursorText, (v) => { workbenchUi.sbCursor = v; });
 watch(zoom, (v) => { workbenchUi.sbZoom = Math.round(v * 100); });
-watch(stagingDirty, (v) => { workbenchUi.sbStagingDirty = v; });
 watch(placementActive, (v) => { workbenchUi.sbPlacementActive = v; });
 watch(placementStatusHint, (v) => { workbenchUi.sbPlacementHint = v; });
 watch(statusText, (v) => { workbenchUi.sbStatusText = v; });
@@ -1666,9 +1577,6 @@ watch(() => projectStore.currentProject, async (project) => {
   requestedMapId.value = null;
   previewIntentCoordinator.invalidate({ active: false, project });
   await stopPreviewSession();
-  stagingDirty.value = false;
-  stagingConflict.value = false;
-  stagedMapIds.value = new Set();
   selectedMapId.value = null;
   mapTree.value = [];
   mapTreeLoading.value = false;
@@ -1711,7 +1619,6 @@ async function loadTree() {
     } else {
       ElMessage.error(t('editor.map.editorNoteLoadFailed', { message: (editorNotesResult.reason as Error).message }));
     }
-    await refreshStagingStatus();
     return true;
   } catch (error) {
     if (!mapTreeLoadCoordinator.isCurrent(token) || projectStore.currentProject !== project) return false;
@@ -2163,7 +2070,6 @@ async function loadMap(
       currentMapNote.value = String(nextMap.note || '');
       tilesetFlags.value = Array.isArray(payload.tileset?.flags) ? payload.tileset.flags : [];
       setPropertiesFromMap(currentMapName.value, nextMap, Number(payload.info.parentId || 0));
-      stagingDirty.value = isStagingDirty(payload.staging);
       currentParallaxImage.value = parallaxImage;
       for (const [name, image] of eventCharacters) characterImages.set(name, image);
       await setMap(
@@ -2176,7 +2082,6 @@ async function loadMap(
       if (!isCurrent()) return;
       currentTilesetImages.value = images;
       renderMap();
-      await refreshStagingStatus();
       if (!isCurrent()) return;
       requestedMapId.value = null;
       persistWorkspaceSelection();
@@ -2234,45 +2139,6 @@ async function prepareEventCharacters(map: MvMap): Promise<Array<[string, HTMLIm
     return [name, await loadImage(await resolveAssetUrl(url))] as [string, HTMLImageElement | null];
   }));
 }
-function isStagingDirty(value: unknown) {
-  if (!value || typeof value !== 'object') return false;
-  const staging = value as Record<string, unknown>;
-  return Boolean(staging.staged || staging.dirty || staging.hasChanges || staging.updatedAt);
-}
-async function refreshStagingStatus() {
-  try {
-    const status = await mapsApi.projectStaging(projectStore.currentProject) as {
-      staged?: boolean;
-      conflict?: boolean;
-      maps?: number[];
-      operations?: unknown[];
-    };
-    stagedMapIds.value = new Set((status.maps || []).filter(Number.isFinite));
-    stagingDirty.value = Boolean(status.staged) || stagedMapIds.value.size > 0;
-    stagingConflict.value = Boolean(status.conflict);
-  } catch { /* staging status does not block the editor */ }
-}
-
-async function confirmAgentOperations(summary: ProjectStagingSummary): Promise<boolean> {
-  if (!summary.operations.length) return true;
-  const operations = summary.operations
-    .map((operation) => t('story.agentOperationSummary', {
-      operationId: operation.operationId,
-      count: operation.files.length,
-    }))
-    .join('\n');
-  try {
-    await ElMessageBox.confirm(
-      t('story.applyAgentOperationsConfirm', { operations }),
-      t('story.applyAgentOperationsTitle'),
-      { type: 'warning' },
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function defaultAudio(name = ''): RmmvAudioSettings {
   return { name, volume: 90, pitch: 100, pan: 0 };
 }
@@ -2399,13 +2265,13 @@ async function saveProperties() {
       propertiesDialogOpen.value = false;
       await loadTree();
       if (result.mapId) await loadMap(result.mapId);
-      ElMessage.success(t('editor.map.createdStaged'));
+      ElMessage.success(t('editor.map.created'));
     } else if (selectedMapId.value != null) {
       await mapsApi.updateProperties(selectedMapId.value, payload, projectStore.currentProject);
       propertiesDialogOpen.value = false;
       await loadTree();
       await loadMap(selectedMapId.value);
-      ElMessage.success(t('editor.map.propertiesSavedStaged'));
+      ElMessage.success(t('editor.map.propertiesSaved'));
     }
   } catch (error) { ElMessage.error(t('editor.map.savePropertiesFailed', { message: (error as Error).message })); }
   finally { busy.value = false; }
@@ -2418,8 +2284,7 @@ async function saveMapNote(mapId: number, note: string): Promise<boolean> {
       if (currentMap) currentMap.note = note;
       currentMapNote.value = note;
     }
-    await refreshStagingStatus();
-    setStatus(t('editor.map.propertiesSavedStaged'), 'saved');
+    setStatus(t('editor.map.propertiesSaved'), 'saved');
     return true;
   } catch (error) {
     ElMessage.error(t('editor.map.savePropertiesFailed', { message: (error as Error).message }));
@@ -2488,72 +2353,6 @@ async function saveEditorMapNote(mapId: number, note: string) {
 function onBottomNoteCommit(note: string) {
   if (selectedMapId.value == null) return;
   void saveEditorMapNote(selectedMapId.value, note);
-}
-
-async function applyStaging() {
-  if (stagingConflict.value) {
-    ElMessage.warning(t('editor.staging.conflictApplyDisabled'));
-    return;
-  }
-  busy.value = true;
-  try {
-    const status = await mapsApi.projectStaging(projectStore.currentProject);
-    const summary = parseProjectStagingSummary(status);
-    if (!await confirmAgentOperations(summary)) return;
-    const result = await mapsApi.applyProjectStaging(
-      projectStore.currentProject,
-      summary.operations.map((operation) => operation.operationId),
-    ) as { canceled?: boolean };
-    if (result?.canceled) return;
-    if (selectedMapId.value != null) await reloadCurrentMap();
-    await refreshStagingStatus();
-    ElMessage.success(t('editor.staging.applied'));
-  } catch (error) {
-    const err = error as ApiError;
-    const message = formatUserFacingErrorMessage(error, 'general', language.value);
-    ElMessage.error(err.status === 409 ? t('editor.staging.conflict') : t('editor.staging.applyFailed', { message }));
-  } finally { busy.value = false; }
-}
-async function discardStaging() {
-  busy.value = true;
-  try {
-    await mapsApi.discardProjectStaging(projectStore.currentProject);
-    if (selectedMapId.value != null && await loadMap(selectedMapId.value, { quiet: true }) === 'failed') {
-      clearCurrentMap();
-      await loadTree();
-      await openPreferredMap();
-    }
-    await refreshStagingStatus();
-    ElMessage.success(t('editor.staging.discarded'));
-  } catch (error) { ElMessage.error(t('editor.staging.discardFailed', { message: (error as Error).message })); }
-  finally { busy.value = false; }
-}
-async function applyOneMap(mapId: number) {
-  busy.value = true;
-  try {
-    const result = await mapsApi.applyMapStaging(mapId, projectStore.currentProject) as { canceled?: boolean };
-    if (result?.canceled) return;
-    if (selectedMapId.value === mapId) await reloadCurrentMap();
-    await loadTree();
-    ElMessage.success(t('editor.staging.mapApplied', { mapId }));
-  } catch (error) { ElMessage.error(t('editor.staging.applyFailed', { message: formatUserFacingErrorMessage(error, 'general', language.value) })); }
-  finally { busy.value = false; }
-}
-async function discardOneMap(mapId: number) {
-  try { await ElMessageBox.confirm(t('editor.staging.confirmDiscardMap', { mapId }), t('editor.staging.discardTitle'), { type: 'warning' }); }
-  catch { return; }
-  busy.value = true;
-  try {
-    await mapsApi.discardMapStaging(mapId, projectStore.currentProject);
-    if (selectedMapId.value === mapId && await loadMap(mapId, { quiet: true }) === 'failed') {
-      clearCurrentMap();
-      await loadTree();
-      await openPreferredMap();
-    }
-    await loadTree();
-    ElMessage.success(t('editor.staging.mapDiscarded', { mapId }));
-  } catch (error) { ElMessage.error(t('editor.staging.discardFailed', { message: (error as Error).message })); }
-  finally { busy.value = false; }
 }
 
 function onTreeContextMenu(event: MouseEvent, node: TreeNode) {
@@ -2662,11 +2461,11 @@ function ctxReplaceMap() {
 }
 async function onExternalMapImportApplied(payload: { mapIds: number[] }) {
   externalImportDialog.open = false;
-  // A staged import/replace can bring in new event assets (character sprites, faces, ...).
+  // An import or replacement can bring in new event assets (character sprites, faces, ...).
   // Event sprites resolve through the editor catalog cache (characterAssetUrls), so refresh
   // it before opening the map; otherwise the freshly imported sprite reads as missing until
   // the next project reload. Tileset/parallax URLs come from the backend map payload and are
-  // already staging-aware, so they are unaffected.
+  // already come from the backend map payload, so they are unaffected.
   await Promise.all([loadTree(), loadEditorCatalog()]);
   const firstMapId = payload.mapIds[0];
   if (firstMapId) await loadMap(firstMapId);
@@ -2681,7 +2480,7 @@ async function ctxPasteMap() {
     const result = await mapsApi.duplicate(mapClipboard.value, parentId, projectStore.currentProject) as { mapId: number };
     await loadTree();
     if (result.mapId) await loadMap(result.mapId);
-    ElMessage.success(t('editor.map.pastedStaged', { mapId: result.mapId }));
+    ElMessage.success(t('editor.map.pasted', { mapId: result.mapId }));
   } catch (error) { ElMessage.error(t('editor.map.pasteFailed', { message: (error as Error).message })); }
   finally { busy.value = false; }
 }
@@ -2698,13 +2497,10 @@ async function ctxDeleteMap() {
     }
     await loadTree();
     if (selectedMapId.value == null) await openPreferredMap();
-    ElMessage.success(t('editor.map.deletedStaged', { mapId }));
+    ElMessage.success(t('editor.map.deleted', { mapId }));
   } catch (error) { ElMessage.error(t('editor.map.deleteFailed', { message: (error as Error).message })); }
   finally { busy.value = false; }
 }
-async function ctxApplyMap() { const id = treeContext.mapId; closeTreeContext(); await applyOneMap(id); }
-async function ctxDiscardMap() { const id = treeContext.mapId; closeTreeContext(); await discardOneMap(id); }
-
 function onCanvasContextMenu(event: MouseEvent) {
   // While the event editor is open the map is inspect-only: no context menu.
   if (mode.value !== 'event' || eventDialogOpen.value) return;
@@ -2738,7 +2534,6 @@ async function ctxSetSystemPosition(target: RmmvSystemPositionTarget) {
   busy.value = true;
   try {
     await mapsApi.setSystemPosition(target, mapId, x, y, projectStore.currentProject);
-    await refreshStagingStatus();
     const label = t(systemPositionLabelKeys[target]);
     setStatus(t('editor.systemPosition.setStatus', { label, mapId, x, y }), 'saved');
     ElMessage.success(t('editor.systemPosition.saved', { label }));
@@ -2978,9 +2773,8 @@ async function saveCurrentEditorWork() {
     ElMessage.info(t('editor.command.noEditorWork'));
     return;
   }
-  await refreshStagingStatus();
-  const message = stagingDirty.value ? t('editor.command.savedToStaging') : t('editor.command.noPendingSave');
-  setStatus(message, stagingDirty.value ? 'saved' : '');
+  const message = t('editor.command.noPendingSave');
+  setStatus(message, '');
   ElMessage.info(message);
 }
 

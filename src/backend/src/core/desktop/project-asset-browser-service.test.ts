@@ -12,7 +12,7 @@ import {
   listProjectAssetCategory,
   type ProjectAssetDirectoryScanner,
 } from './project-asset-browser-service.ts';
-import { writeStagedProjectBuffer, stageProjectFilesAtomically } from './staging-service.ts';
+import { writeProjectBuffer, writeProjectFilesAtomically } from './project-file-service.ts';
 
 afterEach(() => {
   invalidateProjectAssetBrowserCache();
@@ -130,7 +130,7 @@ describe('project asset browser service', () => {
     }
   });
 
-  test('listing is staging-aware for additions and deletions', async () => {
+  test('listing reflects atomically saved additions and deletions', async () => {
     const root = tempRoot();
     const project = path.join(root, 'projects', 'sample');
     try {
@@ -141,15 +141,15 @@ describe('project asset browser service', () => {
       fs.writeFileSync(path.join(picturesDir, 'Keep.png'), 'keep');
       fs.writeFileSync(path.join(picturesDir, 'Gone.png'), 'gone');
 
-      writeStagedProjectBuffer(root, project, 'img/pictures/Staged.png', Buffer.from('staged'));
-      stageProjectFilesAtomically(root, project, [
+      writeProjectBuffer(root, project, 'img/pictures/Added.png', Buffer.from('added'));
+      writeProjectFilesAtomically(root, project, [
         { relativePath: 'img/pictures/Gone.png', delete: true },
       ]);
 
       const listing = listProjectAssetCategory(root, project, 'pictures');
       const names = listing.entries.map((entry) => entry.name).sort();
-      assert.deepEqual(names, ['Keep', 'Staged']);
-      assert.equal(listing.entries.find((entry) => entry.name === 'Staged')?.variants[0]?.fileName, 'Staged.png');
+      assert.deepEqual(names, ['Added', 'Keep']);
+      assert.equal(listing.entries.find((entry) => entry.name === 'Added')?.variants[0]?.fileName, 'Added.png');
       assert.ok(listing.entries.find((entry) => entry.name === 'Keep')?.url.includes('rmmv-asset://project/'));
       assert.ok(listing.entries.find((entry) => entry.name === 'Keep')?.thumbnailUrl?.includes('rmmv-asset://project-thumbnail/'));
     } finally {

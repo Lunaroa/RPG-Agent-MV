@@ -11,7 +11,7 @@ import { writeJsonAtomic } from '../rmmv/json.ts';
 import { inspectRmmvProject, RMMV_STANDARD_DATABASE_FILES } from '../rmmv/rmmv-layout.ts';
 import {
   cleanupIsolatedProject,
-  prepareIsolatedStagedProject,
+  prepareIsolatedProject,
   verifyIsolatedSourceState,
   type IsolatedProjectPreparation,
 } from './isolated-project-preparation.ts';
@@ -51,7 +51,7 @@ export function prepareBattleTestProject(
 ): BattleTestProjectPreparation {
   validateConfigurationShape(configuration);
   const sourceLayout = inspectRmmvProject(project);
-  const isolated = prepareIsolatedStagedProject(workflowRoot, project, {
+  const isolated = prepareIsolatedProject(workflowRoot, project, {
     temporaryPrefix: 'rmmv-agent-battle-test-',
     ...(dependencies.temporaryProjectPath ? { temporaryProjectPath: dependencies.temporaryProjectPath } : {}),
     ...(dependencies.ownershipChallenge ? { ownershipChallenge: dependencies.ownershipChallenge } : {}),
@@ -217,9 +217,6 @@ function assertBattleback(resourceRoot: string, bucket: 'battlebacks1' | 'battle
 function assertStableSource(state: ReturnType<typeof verifyIsolatedSourceState>): void {
   if (!state.sourceUnchanged) throw new BattleTestPreparationError('Source project content changed while preparing Battle Test.');
   if (!state.savesUnchanged) throw new BattleTestPreparationError('Source project save content changed while preparing Battle Test.');
-  if (!state.stagingUnchanged) {
-    throw new BattleTestPreparationError(`Staged project content changed while preparing Battle Test.${state.stagingError ? ` ${state.stagingError}` : ''}`);
-  }
 }
 
 function readRecord(filePath: string, label: string): Record<string, unknown> {

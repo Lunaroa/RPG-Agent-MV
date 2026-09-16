@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
-import { getProjectFileForRead, getProjectStagingStatus } from './staging-service.ts';
+import { resolveProjectFileForRead } from './project-file-service.ts';
 import { ensureManagedUnlimitedTileLayers } from './plugin-management-service.ts';
 import { UNLIMITED_TILE_LAYERS_PLUGIN_NAME } from './unlimited-tile-layers-runtime-plugin.ts';
 
@@ -27,25 +27,23 @@ describe('managed unlimited tile layers runtime', { concurrency: false }, () => 
   });
 
   for (const engine of ['MV', 'MZ'] as const) {
-    test(`stages the ${engine} plugin and plugins.js as one transaction, idempotently`, () => {
+    test(`saves the ${engine} plugin and plugins.js as one transaction, idempotently`, () => {
       const project = createProject(root, engine);
       const prefix = engine === 'MV' ? 'www/' : '';
       const result = ensureManagedUnlimitedTileLayers(root, project);
       assert.equal(result.engine, engine === 'MV' ? 'rpg-maker-mv' : 'rpg-maker-mz');
-      assert.deepEqual(
-        getProjectStagingStatus(root, project).files.map((file) => file.relativePath).sort(),
-        [`${prefix}js/plugins.js`, `${prefix}js/plugins/${UNLIMITED_TILE_LAYERS_PLUGIN_NAME}.js`].sort(),
-      );
-      const plugin = fs.readFileSync(getProjectFileForRead(root, project, result.pluginRelativePath)!, 'utf8');
+      const configPath = resolveProjectFileForRead(project, `${prefix}js/plugins.js`);
+      const pluginPath = resolveProjectFileForRead(project, `${prefix}js/plugins/${UNLIMITED_TILE_LAYERS_PLUGIN_NAME}.js`);
+      assert.ok(configPath);
+      assert.ok(pluginPath);
+      const plugin = fs.readFileSync(resolveProjectFileForRead(project, result.pluginRelativePath)!, 'utf8');
       assert.match(plugin, new RegExp(`@target ${engine}`));
+      const before = [fs.readFileSync(configPath!), fs.readFileSync(pluginPath!)];
 
       const again = ensureManagedUnlimitedTileLayers(root, project);
       assert.equal(again.backupRelativePath, null);
-      assert.equal(
-        getProjectStagingStatus(root, project).files.length,
-        2,
-        'a managed install must not stage additional mutations',
-      );
+      assert.deepEqual(fs.readFileSync(configPath!), before[0]);
+      assert.deepEqual(fs.readFileSync(pluginPath!), before[1]);
     });
   }
 
@@ -57,7 +55,7 @@ describe('managed unlimited tile layers runtime', { concurrency: false }, () => 
     const result = ensureManagedUnlimitedTileLayers(root, project, { backupAndReplaceModified: true });
     assert.equal(result.backupRelativePath, `www/js/plugins/${UNLIMITED_TILE_LAYERS_PLUGIN_NAME}.rpg-agent-backup.js`);
     assert.equal(
-      fs.readFileSync(getProjectFileForRead(root, project, result.backupRelativePath!)!, 'utf8'),
+      fs.readFileSync(resolveProjectFileForRead(project, result.backupRelativePath!)!, 'utf8'),
       '/* user modified */',
     );
   });

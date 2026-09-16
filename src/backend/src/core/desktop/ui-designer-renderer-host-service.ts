@@ -261,8 +261,8 @@ export class UiDesignerRendererHostService {
       sourceProject: active.sourceProject,
       temporaryProject: active.preparation.temporaryProject,
     })
-    if (!evidence.sourceUnchanged || !evidence.savesUnchanged || !evidence.stagingUnchanged) {
-      throw Object.assign(new Error(`UI designer renderer isolation evidence changed; the temporary project was kept for recovery.${evidence.stagingError ? ` ${evidence.stagingError}` : ''}`), {
+    if (!evidence.sourceUnchanged || !evidence.savesUnchanged) {
+      throw Object.assign(new Error('UI designer renderer isolation evidence changed; the temporary project was kept for recovery.'), {
         code: 'UI_DESIGNER_RENDERER_ISOLATION_CHANGED',
         evidence,
       })
@@ -340,10 +340,6 @@ function materializeRendererHostInput(
 ): string {
   const target = path.join(targetResourceRoot, ...relativePath.split('/'))
   if (fs.existsSync(target) && fs.statSync(target).isFile()) return target
-  const projectRelative = path.relative(preparation.temporaryProject, target).replace(/\\/g, '/')
-  if (preparation.staging.files.some((entry) => entry.delete && entry.relativePath.replace(/\\/g, '/') === projectRelative)) {
-    throw new Error(`The staged UI designer renderer deletes required host file: ${relativePath}`)
-  }
   const source = path.join(sourceResourceRoot, ...relativePath.split('/'))
   if (!fs.existsSync(source) || !fs.statSync(source).isFile()) {
     throw new Error(`The selected project does not expose required UI designer renderer file: ${relativePath}`)
@@ -356,20 +352,13 @@ function materializeRendererHostInput(
 }
 
 function rendererProtocolOptions(
-  preparation: IsolatedProjectPreparation,
+  _preparation: IsolatedProjectPreparation,
   sourceResourceRoot: string,
-  resourceRootRelative: '' | 'www',
+  _resourceRootRelative: '' | 'www',
 ): { fallback: { root: string; prefixes: readonly string[] }; deniedPaths: readonly string[] } {
-  const rootPrefix = resourceRootRelative ? `${resourceRootRelative}/` : ''
-  const stagedDeletes = preparation.staging.files
-    .filter((entry) => entry.delete)
-    .map((entry) => entry.relativePath.replace(/\\/g, '/'))
-    .filter((relative) => !rootPrefix || relative.startsWith(rootPrefix))
-    .map((relative) => rootPrefix ? relative.slice(rootPrefix.length) : relative)
-    .filter(Boolean)
   return {
     fallback: { root: sourceResourceRoot, prefixes: [''] },
-    deniedPaths: ['save/', '.git/', ...stagedDeletes],
+    deniedPaths: ['save/', '.git/'],
   }
 }
 

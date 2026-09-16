@@ -4,7 +4,7 @@
 
 Subagents handle bounded subtasks while the main Agent keeps responsibility for the user-facing workflow.
 
-Use subagents for independent investigation, project inspection, or narrow implementation work. Do not use them to bypass ASK approval, staging, or placement rules.
+Use subagents for independent investigation, project inspection, or narrow implementation work. Do not use them to bypass ASK approval, direct-save review, or placement rules.
 
 Foreground subagents must finish before the main session can close cleanly. If a subagent is stuck, stop it or wait for its result before continuing.
 

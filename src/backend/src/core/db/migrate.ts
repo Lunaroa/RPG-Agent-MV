@@ -271,8 +271,6 @@ const STORY_MODULE_REBUILD_MIGRATION_SQL = `
 
   DROP INDEX IF EXISTS idx_map_selections_project;
   CREATE INDEX idx_map_selections_project ON map_selections(project_id, created_at DESC, id DESC);
-  DROP INDEX IF EXISTS idx_staging_manifests_project;
-  CREATE INDEX idx_staging_manifests_project ON staging_manifests(project_id, updated_at DESC, id DESC);
 `;
 
 const STORY_OUTLINE_MARKDOWN_MIGRATION_SQL = `
@@ -629,6 +627,14 @@ function getMigrations(): Migration[] {
           updated_at TEXT NOT NULL DEFAULT (datetime('now')),
           PRIMARY KEY (project, plugin_name, lang)
         );
+      `,
+    },
+    {
+      version: 14,
+      name: 'remove_project_staging_manifests',
+      up: `
+        DROP INDEX IF EXISTS idx_staging_manifests_project;
+        DROP TABLE IF EXISTS staging_manifests;
       `,
     },
   ];

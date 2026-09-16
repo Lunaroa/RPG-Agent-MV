@@ -66,21 +66,26 @@ interface LibraryImportContext {
   mapInfos: any[];
   tilesets: any[];
   tilesetRegistry: Map<string, number>;
+  mapInfosSourceHash: string | null;
+  tilesetsSourceHash: string | null;
+  maps: Map<number, any>;
+  mapSourceHashes: Map<number, string | null>;
+  fileMutations: Map<string, ProjectFileMutation>;
 }
 import {
-  deleteStagedProjectFile,
-  getMapFileForRead,
-  getProjectFileForRead,
-  getProjectStagingStatus,
-  getStagingStatus,
+  type ProjectFileMutation,
   isInside,
-  withStagedMapMutation,
-  writeStagedProjectBuffer,
-  writeStagedProjectJson,
-} from './staging-service.ts';
+  readProjectFileVersion,
+  readProjectJson,
+  resolveMapFileForRead,
+  resolveProjectFileForRead,
+  withProjectMapMutation,
+  writeProjectFilesAtomically,
+  writeProjectJson,
+} from './project-file-service.ts';
 
 export function buildMapIndex(workflowRoot: string, project: string): MapIndex {
-  const file = getProjectFileForRead(workflowRoot, project, projectDataRelativePath(project, 'MapInfos.json'));
+  const file = resolveProjectFileForRead(project, projectDataRelativePath(project, 'MapInfos.json'));
   const infos = (file ? readJson(file) as any[] : []).filter(Boolean);
   const maps = infos
     .map((info) => ({
@@ -89,7 +94,7 @@ export function buildMapIndex(workflowRoot: string, project: string): MapIndex {
       parentId: Number(info.parentId || 0),
       order: Number(info.order || 0),
       expanded: Boolean(info.expanded),
-      mapFileExists: fs.existsSync(getMapFileForRead(workflowRoot, project, Number(info.id))),
+      mapFileExists: fs.existsSync(resolveMapFileForRead(project, Number(info.id))),
     }))
     .sort((a, b) => a.order - b.order || a.id - b.id);
   return { project, blocks: maps.filter((map) => map.parentId === 0), maps };
@@ -97,7 +102,7 @@ export function buildMapIndex(workflowRoot: string, project: string): MapIndex {
 
 export function buildTilesetIndex(workflowRoot: string, project: string): { project: string; tilesets: TilesetSummary[] } {
   const dataDir = resolveDataDir(project);
-  const file = getProjectFileForRead(workflowRoot, project, projectDataRelativePath(project, 'Tilesets.json'))
+  const file = resolveProjectFileForRead(project, projectDataRelativePath(project, 'Tilesets.json'))
     || path.join(dataDir, 'Tilesets.json');
   const tilesets = (readJson(file) as any[]).filter(Boolean).map((tileset) => {
     const tilesetNames = Array.isArray(tileset.tilesetNames) ? tileset.tilesetNames.map(String) : [];
@@ -115,17 +120,17 @@ export function buildTilesetIndex(workflowRoot: string, project: string): { proj
 export function buildMapPayload(workflowRoot: string, project: string, mapId: number): MapPayload {
   const manifest = inspectRmmvProject(project);
   const dataDir = resolveDataDir(project);
-  const mapInfosFile = getProjectFileForRead(workflowRoot, project, projectDataRelativePath(project, 'MapInfos.json'))
+  const mapInfosFile = resolveProjectFileForRead(project, projectDataRelativePath(project, 'MapInfos.json'))
     || path.join(dataDir, 'MapInfos.json');
-  const tilesetsFile = getProjectFileForRead(workflowRoot, project, projectDataRelativePath(project, 'Tilesets.json'))
+  const tilesetsFile = resolveProjectFileForRead(project, projectDataRelativePath(project, 'Tilesets.json'))
     || path.join(dataDir, 'Tilesets.json');
-  const mapFile = getMapFileForRead(workflowRoot, project, mapId);
+  const mapFile = resolveMapFileForRead(project, mapId);
   if (!fs.existsSync(mapFile)) throw new Error(mapNotFound(mapId));
   const effectiveMapRevision = fileRevision(mapFile);
   const infos = fs.existsSync(mapInfosFile) ? readJson(mapInfosFile) as any[] : [];
   const map = readJson(mapFile) as any;
   const tilesets = fs.existsSync(tilesetsFile) ? readJson(tilesetsFile) as any[] : [];
-  const systemPath = getProjectFileForRead(workflowRoot, project, projectDataRelativePath(project, 'System.json'))
+  const systemPath = resolveProjectFileForRead(project, projectDataRelativePath(project, 'System.json'))
     || path.join(dataDir, 'System.json');
   const system = fs.existsSync(systemPath) ? readJson(systemPath) as any : { switches: [], variables: [] };
   const info = infos[mapId] || { id: mapId, name: `Map${String(mapId).padStart(3, '0')}` };
@@ -180,7 +185,6 @@ export function buildMapPayload(workflowRoot: string, project: string, mapId: nu
       },
     },
     previewState: buildMapPreviewStateCatalog(workflowRoot, project, mapId),
-    staging: getStagingStatus(workflowRoot, project, mapId),
   };
 }
 
@@ -190,14 +194,16 @@ export function createMapDraft(workflowRoot: string, project: string, properties
   const normalized = normalizeMapProperties(properties, context.tilesets, { name: `MAP${String(mapId).padStart(3, '0')}` });
   const map = applyExtendedMapProperties(createBlankMapData(normalized), properties);
   const info = createMapInfo(mapId, normalized, context.mapInfos);
-  writeStagedProjectJson(workflowRoot, project, projectDataRelativePath(project, 'MapInfos.json'), upsertMapInfo(context.mapInfos, info));
-  writeStagedProjectJson(workflowRoot, project, mapRelativePath(project, mapId), map);
-  return { mapId, info, map, staging: getProjectStagingStatus(workflowRoot, project), warnings: [] };
+  const write = writeProjectFilesAtomically(workflowRoot, project, [
+    jsonMutation(projectDataRelativePath(project, 'MapInfos.json'), upsertMapInfo(context.mapInfos, info), context.mapInfosSourceHash),
+    jsonMutation(mapRelativePath(project, mapId), map, readProjectFileVersion(project, mapRelativePath(project, mapId)).sha256),
+  ]);
+  return { mapId, info, map, write, warnings: [] };
 }
 
 export function updateMapPropertiesDraft(workflowRoot: string, project: string, mapId: number, properties: Record<string, unknown>) {
   const context = readProjectData(workflowRoot, project);
-  const mapFile = getMapFileForRead(workflowRoot, project, mapId);
+  const mapFile = resolveMapFileForRead(project, mapId);
   if (!fs.existsSync(mapFile)) throw new Error(mapNotFound(mapId));
   const original = readJson(mapFile) as any;
   const currentInfo = context.mapInfos[mapId] || { id: mapId, name: `Map${String(mapId).padStart(3, '0')}`, parentId: 0 };
@@ -205,9 +211,11 @@ export function updateMapPropertiesDraft(workflowRoot: string, project: string, 
   let map = applyExtendedMapProperties({ ...original, displayName: normalized.displayName, tilesetId: normalized.tilesetId, scrollType: normalized.scrollType, encounterStep: normalized.encounterStep, note: normalized.note }, properties);
   if (normalized.width !== map.width || normalized.height !== map.height) map = resizeMapData(map, normalized.width, normalized.height);
   const info = { ...currentInfo, id: mapId, name: normalized.name, parentId: normalized.parentId };
-  writeStagedProjectJson(workflowRoot, project, projectDataRelativePath(project, 'MapInfos.json'), upsertMapInfo(context.mapInfos, info));
-  writeStagedProjectJson(workflowRoot, project, mapRelativePath(project, mapId), map);
-  return { mapId, info, staging: getProjectStagingStatus(workflowRoot, project) };
+  const write = writeProjectFilesAtomically(workflowRoot, project, [
+    jsonMutation(projectDataRelativePath(project, 'MapInfos.json'), upsertMapInfo(context.mapInfos, info), context.mapInfosSourceHash),
+    jsonMutation(mapRelativePath(project, mapId), map, fileRevision(mapFile)),
+  ]);
+  return { mapId, info, write };
 }
 
 export function reparentMapDraft(workflowRoot: string, project: string, mapId: number, parentId: number) {
@@ -215,8 +223,14 @@ export function reparentMapDraft(workflowRoot: string, project: string, mapId: n
   const info = context.mapInfos[mapId];
   if (!info) throw new Error(mapInfoNotFound(mapId));
   const next = { ...info, parentId, order: nextMapOrder(context.mapInfos, parentId) };
-  writeStagedProjectJson(workflowRoot, project, projectDataRelativePath(project, 'MapInfos.json'), upsertMapInfo(context.mapInfos, next));
-  return { mapId, info: next, staging: getProjectStagingStatus(workflowRoot, project) };
+  const write = writeProjectJson(
+    workflowRoot,
+    project,
+    projectDataRelativePath(project, 'MapInfos.json'),
+    upsertMapInfo(context.mapInfos, next),
+    context.mapInfosSourceHash,
+  );
+  return { mapId, info: next, write };
 }
 
 export function moveMapDraft(
@@ -256,7 +270,13 @@ export function moveMapDraft(
   }
 
   const ordered = normalizeMapTreeOrder(infos, new Map([[parentId, siblings]]));
-  writeStagedProjectJson(workflowRoot, project, projectDataRelativePath(project, 'MapInfos.json'), ordered);
+  const write = writeProjectJson(
+    workflowRoot,
+    project,
+    projectDataRelativePath(project, 'MapInfos.json'),
+    ordered,
+    context.mapInfosSourceHash,
+  );
   return {
     mapId,
     targetMapId,
@@ -264,7 +284,7 @@ export function moveMapDraft(
     oldParentId,
     parentId,
     maps: buildMapIndex(workflowRoot, project).maps,
-    staging: getProjectStagingStatus(workflowRoot, project),
+    write,
   };
 }
 
@@ -308,7 +328,7 @@ export function searchProjectEvents(
 
   for (const mapInfo of maps) {
     if (truncated) break;
-    const mapFile = getMapFileForRead(workflowRoot, project, mapInfo.id);
+    const mapFile = resolveMapFileForRead(project, mapInfo.id);
     if (!mapFile || !fs.existsSync(mapFile)) {
       if (mapId !== undefined) throw new Error(mapNotFound(mapInfo.id));
       continue;
@@ -345,14 +365,16 @@ export function searchProjectEvents(
 export function duplicateMapDraft(workflowRoot: string, project: string, sourceMapId: number, parentId: number) {
   const context = readProjectData(workflowRoot, project);
   const sourceInfo = context.mapInfos[sourceMapId];
-  const sourceFile = getMapFileForRead(workflowRoot, project, sourceMapId);
+  const sourceFile = resolveMapFileForRead(project, sourceMapId);
   if (!sourceInfo || !fs.existsSync(sourceFile)) throw new Error(mapNotFound(sourceMapId));
   const mapId = nextMapId(context.mapInfos);
   const map = readJson(sourceFile) as any;
   const info = createMapInfo(mapId, { ...map, name: `${sourceInfo.name || `Map${sourceMapId}`} Copy`, parentId }, context.mapInfos);
-  writeStagedProjectJson(workflowRoot, project, projectDataRelativePath(project, 'MapInfos.json'), upsertMapInfo(context.mapInfos, info));
-  writeStagedProjectJson(workflowRoot, project, mapRelativePath(project, mapId), map);
-  return { mapId, sourceMapId, info, staging: getProjectStagingStatus(workflowRoot, project) };
+  const write = writeProjectFilesAtomically(workflowRoot, project, [
+    jsonMutation(projectDataRelativePath(project, 'MapInfos.json'), upsertMapInfo(context.mapInfos, info), context.mapInfosSourceHash),
+    jsonMutation(mapRelativePath(project, mapId), map, readProjectFileVersion(project, mapRelativePath(project, mapId)).sha256),
+  ]);
+  return { mapId, sourceMapId, info, write };
 }
 
 export function deleteMapDraft(workflowRoot: string, project: string, mapId: number) {
@@ -361,9 +383,12 @@ export function deleteMapDraft(workflowRoot: string, project: string, mapId: num
   if (context.mapInfos.filter(Boolean).some((info: any) => info.parentId === mapId)) throw new Error(mapHasChildMaps());
   const infos = context.mapInfos.slice();
   infos[mapId] = null;
-  writeStagedProjectJson(workflowRoot, project, projectDataRelativePath(project, 'MapInfos.json'), infos);
-  deleteStagedProjectFile(workflowRoot, project, mapRelativePath(project, mapId));
-  return { mapId, deleted: true, staging: getProjectStagingStatus(workflowRoot, project) };
+  const mapPath = mapRelativePath(project, mapId);
+  const write = writeProjectFilesAtomically(workflowRoot, project, [
+    jsonMutation(projectDataRelativePath(project, 'MapInfos.json'), infos, context.mapInfosSourceHash),
+    { relativePath: mapPath, delete: true, expectedSourceHash: readProjectFileVersion(project, mapPath).sha256 },
+  ]);
+  return { mapId, deleted: true, write };
 }
 
 export function postMapTiles(workflowRoot: string, project: string, mapId: number, edits: TileEdit[]) {
@@ -371,7 +396,7 @@ export function postMapTiles(workflowRoot: string, project: string, mapId: numbe
   if (writesExtendedTiles) {
     const runtime = inspectManagedUnlimitedTilesets(workflowRoot, project);
     if (!runtime.valid) {
-      throw new Error('[UNLIMITED_TILESETS_RUNTIME_INVALID] Enable and stage the managed unlimited tilesets runtime before painting extended tiles.');
+      throw new Error('[UNLIMITED_TILESETS_RUNTIME_INVALID] Enable the managed unlimited tilesets runtime before painting extended tiles.');
     }
     const state = readExtendedTilesetPaintState(workflowRoot, project, mapId);
     const descriptors = state.descriptors;
@@ -380,16 +405,16 @@ export function postMapTiles(workflowRoot: string, project: string, mapId: numbe
     }
     validateExtendedTilesetResources(workflowRoot, project, descriptors, state.tileSize);
   }
-  const staged = withStagedMapMutation(
+  const written = withProjectMapMutation(
     workflowRoot,
     project,
     mapId,
     (target) => applyBrushEdit({ project: target.project, mapId, edits }),
   );
   return {
-    ...staged.result,
-    effectiveMapRevision: fileRevision(getMapFileForRead(workflowRoot, project, mapId)),
-    staging: staged.staging,
+    ...written.result,
+    effectiveMapRevision: fileRevision(resolveMapFileForRead(project, mapId)),
+    write: written.write,
   };
 }
 
@@ -398,7 +423,7 @@ function readExtendedTilesetPaintState(
   project: string,
   mapId: number,
 ): { descriptors: ReturnType<typeof buildExtendedTilesetDescriptors>; tileSize: number } {
-  const mapFile = getMapFileForRead(workflowRoot, project, mapId);
+  const mapFile = resolveMapFileForRead(project, mapId);
   if (!mapFile || !fs.existsSync(mapFile)) throw new Error(mapNotFound(mapId));
   const map = readJson(mapFile) as Record<string, unknown>;
   const tilesetId = Number(map.tilesetId);
@@ -406,7 +431,7 @@ function readExtendedTilesetPaintState(
     throw new Error('[UNLIMITED_TILESETS_DATA_INVALID] The selected map has an invalid tileset id.');
   }
   const dataDir = resolveDataDir(project);
-  const tilesetsFile = getProjectFileForRead(workflowRoot, project, projectDataRelativePath(project, 'Tilesets.json'))
+  const tilesetsFile = resolveProjectFileForRead(project, projectDataRelativePath(project, 'Tilesets.json'))
     || path.join(dataDir, 'Tilesets.json');
   const tilesets = readJson(tilesetsFile);
   const record = Array.isArray(tilesets) ? tilesets[tilesetId] : null;
@@ -439,7 +464,7 @@ export function setSystemPositionDraft(
 ) {
   const positionTarget = validPositionTarget(target);
   const startMapId = validMapId(mapId);
-  const mapFile = getMapFileForRead(workflowRoot, project, startMapId);
+  const mapFile = resolveMapFileForRead(project, startMapId);
   if (!fs.existsSync(mapFile)) throw new Error(mapNotFound(startMapId));
   const map = readJson(mapFile) as { width?: unknown; height?: unknown };
   const width = Number(map.width);
@@ -447,7 +472,7 @@ export function setSystemPositionDraft(
   const startX = validCoordinate(x, width, 'x');
   const startY = validCoordinate(y, height, 'y');
   const systemRelativePath = projectDataRelativePath(project, 'System.json');
-  const systemFile = getProjectFileForRead(workflowRoot, project, systemRelativePath);
+  const systemFile = resolveProjectFileForRead(project, systemRelativePath);
   if (!systemFile) throw new Error(mapSystemJsonMissing());
   const system = readJson(systemFile) as Record<string, unknown>;
   const next = positionTarget === 'player'
@@ -461,14 +486,14 @@ export function setSystemPositionDraft(
           startY,
         },
       };
-  writeStagedProjectJson(workflowRoot, project, systemRelativePath, next);
+  const write = writeProjectJson(workflowRoot, project, systemRelativePath, next, fileRevision(systemFile));
   return {
     target: positionTarget,
     mapId: startMapId,
     x: startX,
     y: startY,
     relativePath: systemRelativePath,
-    staging: getProjectStagingStatus(workflowRoot, project),
+    write,
   };
 }
 
@@ -478,7 +503,7 @@ export interface PackageImportResult {
   failed: Array<{ assetId: string; message: string }>;
   warnings: string[];
   usedSourceHierarchy: boolean;
-  staging: ReturnType<typeof getProjectStagingStatus>;
+  write: ReturnType<typeof writeProjectFilesAtomically>;
 }
 
 export function importMapDraftFromLibrary(workflowRoot: string, project: string, assetId: string, properties: Record<string, unknown> = {}) {
@@ -486,15 +511,14 @@ export function importMapDraftFromLibrary(workflowRoot: string, project: string,
   const context = createLibraryImportContext(workflowRoot, project);
   const warnings: string[] = [];
   const result = importMapDraftEntry(workflowRoot, project, entry, context, properties, warnings);
-  writeStagedProjectJson(workflowRoot, project, projectDataRelativePath(project, 'MapInfos.json'), context.mapInfos);
-  writeStagedProjectJson(workflowRoot, project, projectDataRelativePath(project, 'Tilesets.json'), context.tilesets);
+  const write = commitLibraryImportContext(workflowRoot, project, context);
   return {
     mapId: result.mapId,
     assetId: entry.assetId,
     info: result.info,
     map: { width: result.map.width, height: result.map.height, tilesetId: result.map.tilesetId },
     warnings,
-    staging: getProjectStagingStatus(workflowRoot, project),
+    write,
   };
 }
 
@@ -563,7 +587,6 @@ export function importMapPackageFromLibrary(
         warnings.push(mapTilesetPreimportFailed(sourceMap.tilesetId, (error as Error).message));
       }
     }
-    writeStagedProjectJson(workflowRoot, project, projectDataRelativePath(project, 'Tilesets.json'), context.tilesets);
   }
 
   for (const { entry } of items) {
@@ -616,16 +639,21 @@ export function importMapPackageFromLibrary(
     }
   }
 
-  writeStagedProjectJson(workflowRoot, project, projectDataRelativePath(project, 'MapInfos.json'), context.mapInfos);
-  writeStagedProjectJson(workflowRoot, project, projectDataRelativePath(project, 'Tilesets.json'), context.tilesets);
-
   if (includeEvents && idMap.size > 0) {
     let remapped = false;
     for (const mapId of mapIds) {
-      if (remapTransferMapIdsInStagedMap(workflowRoot, project, mapId, idMap)) remapped = true;
+      const map = context.maps.get(mapId);
+      if (!map) continue;
+      const next = remapTransferMapIdsInMapData(map, idMap);
+      if (next !== map) {
+        context.maps.set(mapId, next);
+        remapped = true;
+      }
     }
     if (remapped) warnings.push(mapPackageTransferIdsRemapped());
   }
+
+  const write = commitLibraryImportContext(workflowRoot, project, context);
 
   return {
     mapIds,
@@ -633,7 +661,7 @@ export function importMapPackageFromLibrary(
     failed,
     warnings,
     usedSourceHierarchy: Boolean(sourceInfos),
-    staging: getProjectStagingStatus(workflowRoot, project),
+    write,
   };
 }
 
@@ -679,10 +707,14 @@ function importMapDraftEntry(
     map = resizeMapData(map, normalized.width, normalized.height);
   }
   if (!includeEvents) map = { ...map, events: blankMapEvents() };
-  copyParallaxIfAvailable(workflowRoot, project, entry, map, warnings);
+  copyParallaxIfAvailable(workflowRoot, project, entry, context, map, warnings);
   const info = createMapInfo(mapId, normalized, context.mapInfos);
   context.mapInfos = upsertMapInfo(context.mapInfos, info);
-  writeStagedProjectJson(workflowRoot, project, mapRelativePath(project, mapId), map);
+  const relativePath = mapRelativePath(project, mapId);
+  context.maps.set(mapId, map);
+  if (!context.mapSourceHashes.has(mapId)) {
+    context.mapSourceHashes.set(mapId, readProjectFileVersion(project, relativePath).sha256);
+  }
   return { mapId, info, map };
 }
 
@@ -691,15 +723,80 @@ export function createPlaytestArtifact(workflowRoot: string, project: string, ma
 }
 
 function readProjectData(workflowRoot: string, project: string) {
-  const dataDir = resolveDataDir(project);
-  const infos = getProjectFileForRead(workflowRoot, project, projectDataRelativePath(project, 'MapInfos.json')) || path.join(dataDir, 'MapInfos.json');
-  const tilesets = getProjectFileForRead(workflowRoot, project, projectDataRelativePath(project, 'Tilesets.json')) || path.join(dataDir, 'Tilesets.json');
-  return { mapInfos: readJson(infos) as any[], tilesets: readJson(tilesets) as any[] };
+  void workflowRoot;
+  const infos = readProjectJson<any[]>(project, projectDataRelativePath(project, 'MapInfos.json'));
+  const tilesets = readProjectJson<any[]>(project, projectDataRelativePath(project, 'Tilesets.json'));
+  return {
+    mapInfos: infos.value,
+    tilesets: tilesets.value,
+    mapInfosSourceHash: infos.file.version.sha256,
+    tilesetsSourceHash: tilesets.file.version.sha256,
+  };
 }
 
 function createLibraryImportContext(workflowRoot: string, project: string): LibraryImportContext {
   const data = readProjectData(workflowRoot, project);
-  return { engine: inspectRmmvProject(project).engine, ...data, tilesetRegistry: new Map() };
+  return {
+    engine: inspectRmmvProject(project).engine,
+    ...data,
+    tilesetRegistry: new Map(),
+    maps: new Map(),
+    mapSourceHashes: new Map(),
+    fileMutations: new Map(),
+  };
+}
+
+function commitLibraryImportContext(
+  workflowRoot: string,
+  project: string,
+  context: LibraryImportContext,
+) {
+  const mutations: ProjectFileMutation[] = [
+    jsonMutation(
+      projectDataRelativePath(project, 'MapInfos.json'),
+      context.mapInfos,
+      context.mapInfosSourceHash,
+    ),
+    jsonMutation(
+      projectDataRelativePath(project, 'Tilesets.json'),
+      context.tilesets,
+      context.tilesetsSourceHash,
+    ),
+  ];
+  for (const [mapId, map] of context.maps) {
+    mutations.push(jsonMutation(
+      mapRelativePath(project, mapId),
+      map,
+      context.mapSourceHashes.get(mapId) ?? null,
+    ));
+  }
+  mutations.push(...context.fileMutations.values());
+  return writeProjectFilesAtomically(workflowRoot, project, mutations);
+}
+
+function jsonMutation(
+  relativePath: string,
+  value: unknown,
+  expectedSourceHash: string | null,
+): ProjectFileMutation {
+  return {
+    relativePath,
+    content: Buffer.from(`${JSON.stringify(value, null, 2)}\n`, 'utf8'),
+    expectedSourceHash,
+  };
+}
+
+function registerProjectBufferMutation(
+  project: string,
+  context: LibraryImportContext,
+  relativePath: string,
+  content: Buffer,
+): void {
+  context.fileMutations.set(relativePath, {
+    relativePath,
+    content,
+    expectedSourceHash: readProjectFileVersion(project, relativePath).sha256,
+  });
 }
 
 function validateImportedMapEvents(map: unknown, engine: RpgMakerEngine): void {
@@ -979,7 +1076,7 @@ function projectImageRelativePath(
   name: string,
 ): string | null {
   for (const relative of projectImageCandidates(project, directory, name)) {
-    if (getProjectFileForRead(workflowRoot, project, relative)) return relative;
+    if (resolveProjectFileForRead(project, relative)) return relative;
   }
   return null;
 }
@@ -994,7 +1091,7 @@ function projectImageCandidates(project: string, directory: 'parallaxes', name: 
 
 function projectTilesetImageRelativePath(workflowRoot: string, project: string, name: string): string | null {
   for (const relative of projectTilesetImageCandidates(project, name)) {
-    if (getProjectFileForRead(workflowRoot, project, relative)) return relative;
+    if (resolveProjectFileForRead(project, relative)) return relative;
   }
   return null;
 }
@@ -1052,21 +1149,6 @@ function resolvePackageParentId(
   if (!sourceParent) return anchorParentId;
   const mapped = idMap.get(sourceParent);
   return mapped == null ? anchorParentId : mapped;
-}
-
-function remapTransferMapIdsInStagedMap(
-  workflowRoot: string,
-  project: string,
-  mapId: number,
-  idMap: Map<number, number>,
-): boolean {
-  const mapFile = getMapFileForRead(workflowRoot, project, mapId);
-  if (!mapFile || !fs.existsSync(mapFile)) return false;
-  const map = readJson(mapFile) as any;
-  const next = remapTransferMapIdsInMapData(map, idMap);
-  if (next === map) return false;
-  writeStagedProjectJson(workflowRoot, project, mapRelativePath(project, mapId), next);
-  return true;
 }
 
 function remapTransferMapIdsInMapData(map: any, idMap: Map<number, number>): any {
@@ -1249,7 +1331,7 @@ function ensureImportedTileset(
   if (compatible != null) {
     const existing = context.tilesets[compatible];
     if (existing) {
-      copyTilesetImages(workflowRoot, project, entryForAssets, existing, originalNames, warnings);
+      copyTilesetImages(workflowRoot, project, context, entryForAssets, existing, originalNames, warnings);
     }
     context.tilesetRegistry.set(registryKey, compatible);
     return compatible;
@@ -1261,7 +1343,7 @@ function ensureImportedTileset(
     id,
     name: String(source.name || entry.map?.tilesetName || `Imported Tileset ${id}`),
   };
-  copyTilesetImages(workflowRoot, project, entryForAssets, imported, originalNames, warnings);
+  copyTilesetImages(workflowRoot, project, context, entryForAssets, imported, originalNames, warnings);
   context.tilesets = context.tilesets.slice();
   context.tilesets[id] = imported;
   context.tilesetRegistry.set(registryKey, id);
@@ -1284,6 +1366,7 @@ const CRITICAL_TILESET_SLOTS = [0, 1, 2, 3];
 function copyTilesetImages(
   workflowRoot: string,
   project: string,
+  context: LibraryImportContext,
   entry: Record<string, any>,
   tileset: Record<string, any>,
   originalNames: string[],
@@ -1297,7 +1380,7 @@ function copyTilesetImages(
     const relative = projectTilesetImageWritePath(project, destName);
     const source = resolveLibraryAssetPath(entry, 'tilesets', originalName, workflowRoot);
     if (source) {
-      writeStagedProjectBuffer(workflowRoot, project, relative, fs.readFileSync(source));
+      registerProjectBufferMutation(project, context, relative, fs.readFileSync(source));
     } else if (CRITICAL_TILESET_SLOTS.includes(index)) {
       throw new Error(mapCriticalTilesetImageMissing(originalName));
     } else {
@@ -1314,13 +1397,20 @@ function blankMapEvents(): null[] {
   return [null];
 }
 
-function copyParallaxIfAvailable(workflowRoot: string, project: string, entry: Record<string, any>, map: any, warnings: string[]) {
+function copyParallaxIfAvailable(
+  workflowRoot: string,
+  project: string,
+  entry: Record<string, any>,
+  context: LibraryImportContext,
+  map: any,
+  warnings: string[],
+) {
   if (!map.parallaxName) return;
   const gameRoot = inspectRmmvProject(project).resourceRootRelative;
   const relative = `${gameRoot ? `${gameRoot}/` : ''}img/parallaxes/${map.parallaxName}.png`;
-  if (getProjectFileForRead(workflowRoot, project, relative)) return;
+  if (resolveProjectFileForRead(project, relative)) return;
   const source = resolveLibraryAssetPath(entry, 'parallaxes', map.parallaxName, workflowRoot);
-  if (source) writeStagedProjectBuffer(workflowRoot, project, relative, fs.readFileSync(source));
+  if (source) registerProjectBufferMutation(project, context, relative, fs.readFileSync(source));
   else warnings.push(mapParallaxImageMissing(map.parallaxName));
 }
 

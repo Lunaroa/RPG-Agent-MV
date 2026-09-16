@@ -8,7 +8,7 @@ import type { RpgMakerEngine } from '../rmmv/rpg-maker-engine.ts';
 import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import {
   cleanupIsolatedProject,
-  prepareIsolatedStagedProject,
+  prepareIsolatedProject,
   verifyIsolatedSourceState,
   type IsolatedProjectPreparation,
 } from './isolated-project-preparation.ts';
@@ -49,7 +49,7 @@ export function prepareUiDesignerGamePreviewProject(
   // snapshot is captured. Migration is an intentional source-project write;
   // the later integrity check must only detect changes made during preparation.
   const projectGlobalData = readProjectUiDesignerGlobalData(project);
-  const isolated = prepareIsolatedStagedProject(workflowRoot, project, {
+  const isolated = prepareIsolatedProject(workflowRoot, project, {
     temporaryPrefix: 'rmmv-agent-ui-preview-',
     ...(dependencies.temporaryProjectPath ? { temporaryProjectPath: dependencies.temporaryProjectPath } : {}),
     ...(dependencies.ownershipChallenge ? { ownershipChallenge: dependencies.ownershipChallenge } : {}),
@@ -105,7 +105,6 @@ export function prepareUiDesignerGamePreviewProject(
     const stable = verifyIsolatedSourceState(workflowRoot, isolated);
     if (!stable.sourceUnchanged) throw new UiDesignerGamePreviewPreparationError('Source project content changed while preparing UI preview.');
     if (!stable.savesUnchanged) throw new UiDesignerGamePreviewPreparationError('Source project save content changed while preparing UI preview.');
-    if (!stable.stagingUnchanged) throw new UiDesignerGamePreviewPreparationError(`Staged project content changed while preparing UI preview.${stable.stagingError ? ` ${stable.stagingError}` : ''}`);
 
     const executable = layout.engine === 'rpg-maker-mv' ? path.join(isolated.temporaryProject, 'Game.exe') : undefined;
     if (layout.engine === 'rpg-maker-mv' && (!executable || !isFile(executable))) {

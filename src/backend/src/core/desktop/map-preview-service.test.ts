@@ -38,7 +38,6 @@ function preparation(sourceProject: string, temporaryProject: string): IsolatedP
     ownership: ownership.ownership,
     sourceFingerprint: 'source-fingerprint',
     saveFingerprint: 'save-fingerprint',
-    staging: { files: [], digest: 'staging-digest' },
     savesExcluded: true,
   };
 }

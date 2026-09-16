@@ -6,27 +6,14 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 
 import { bootstrapDatabase } from "../db/bootstrap.ts";
 import { closeDatabase } from "../db/pool.ts";
-import {
-  applyProjectStaging,
-  deleteStagedProjectFile,
-  getDatabaseStagingOperation,
-  getProjectFileForRead,
-  getProjectStagingStatus,
-  listDatabaseStagingOperations,
-  writeStagedProjectJson,
-} from "../desktop/staging-service.ts";
-import { STAGING_ERROR_CODES, StagingError } from "../desktop/staging-errors.ts";
-import { readJson, writeJson } from "./json.ts";
 import { createDefaultRmmvDatabaseEntry } from "./database-schema.ts";
 import {
-  applyRmmvDatabaseChanges,
-  discardRmmvDatabaseChanges,
+  commitRmmvDatabaseChanges,
   dryRunRmmvDatabaseChanges,
-  preflightRmmvDatabaseProjectApply,
-  stageRmmvDatabaseChanges,
   validateEffectiveRmmvDatabaseState,
   type RmmvDatabaseChange,
 } from "./database-changes.ts";
+import { readJson, writeJson } from "./json.ts";
 
 describe("controlled RMMV database changes", { concurrency: false }, () => {
   let workflowRoot: string;
@@ -100,6 +87,7 @@ describe("controlled RMMV database changes", { concurrency: false }, () => {
     const plan = dryRunRmmvDatabaseChanges(workflowRoot, project, {
       changes: [{ op: "reset", table: "skills", id: 1 }],
     });
+
     assert.equal(plan.validation.ok, false);
     assert.ok(plan.validation.issues.some((issue) =>
       issue.code === "DB_REFERENCE_MISSING"
@@ -107,7 +95,7 @@ describe("controlled RMMV database changes", { concurrency: false }, () => {
     ));
   });
 
-  test("stages an approved plan without writing source and discard removes only its drafts", () => {
+  test("commits an approved plan directly to the project", () => {
     const changes: RmmvDatabaseChange[] = [{
       op: "patch",
       table: "items",
@@ -115,103 +103,88 @@ describe("controlled RMMV database changes", { concurrency: false }, () => {
       patches: [{ op: "replace", path: "/name", value: "Updated Item" }],
     }];
     const plan = dryRunRmmvDatabaseChanges(workflowRoot, project, { changes });
-    const staged = stageRmmvDatabaseChanges(workflowRoot, project, {
+
+    const committed = commitRmmvDatabaseChanges(workflowRoot, project, {
       changes,
       planHash: plan.planHash,
-      sessionId: "session-example",
     });
 
-    assert.match(staged.operationId, /^db:/);
-    assert.equal(staged.planHash, plan.planHash);
-    assert.equal((readJson(path.join(dataDir, "Items.json")) as Array<Record<string, unknown> | null>)[1]!.name, "Item");
-    const effective = getProjectFileForRead(workflowRoot, project, "www/data/Items.json");
-    assert.ok(effective);
-    assert.equal((readJson(effective) as Array<Record<string, unknown> | null>)[1]!.name, "Updated Item");
-    const operation = getDatabaseStagingOperation(workflowRoot, project, staged.operationId);
-    assert.equal(operation?.planHash, plan.planHash);
-    assert.equal(operation?.sessionId, "session-example");
-
-    const discarded = discardRmmvDatabaseChanges(workflowRoot, project, staged.operationId);
-    assert.equal(discarded.discarded, true);
-    assert.equal(listDatabaseStagingOperations(workflowRoot, project).length, 0);
-    assert.equal((readJson(path.join(dataDir, "Items.json")) as Array<Record<string, unknown> | null>)[1]!.name, "Item");
+    assert.equal(committed.planHash, plan.planHash);
+    assert.deepEqual(committed.files, ["www/data/Items.json"]);
+    assert.equal((readJson(path.join(dataDir, "Items.json")) as Array<Record<string, unknown> | null>)[1]!.name, "Updated Item");
   });
 
-  test("rejects a stale plan hash before staging any operation", () => {
+  test("commits a validated multi-file plan atomically", () => {
+    const changes: RmmvDatabaseChange[] = [
+      {
+        op: "create",
+        table: "skills",
+        patches: [{ op: "replace", path: "/name", value: "Second Skill" }],
+      },
+      {
+        op: "patch",
+        table: "classes",
+        id: 1,
+        patches: [{ op: "add", path: "/learnings/-", value: { level: 2, note: "", skillId: 2 } }],
+      },
+      { op: "type.rename", field: "skillTypes", id: 1, name: "Arcana" },
+    ];
+    const plan = dryRunRmmvDatabaseChanges(workflowRoot, project, { changes });
+
+    const committed = commitRmmvDatabaseChanges(workflowRoot, project, {
+      changes,
+      planHash: plan.planHash,
+    });
+
+    assert.deepEqual(committed.files.map((file) => path.basename(file)).sort(), [
+      "Classes.json",
+      "Skills.json",
+      "System.json",
+    ]);
+    assert.equal((readJson(path.join(dataDir, "Skills.json")) as Array<Record<string, unknown> | null>)[2]!.name, "Second Skill");
+    const system = readJson(path.join(dataDir, "System.json")) as Record<string, unknown>;
+    assert.equal((system.skillTypes as unknown[])[1], "Arcana");
+  });
+
+  test("rejects a stale plan before overwriting an external change", () => {
     const changes: RmmvDatabaseChange[] = [{
       op: "patch",
       table: "items",
       id: 1,
-      patches: [{ op: "replace", path: "/name", value: "Updated Item" }],
+      patches: [{ op: "replace", path: "/name", value: "Agent Value" }],
     }];
     const plan = dryRunRmmvDatabaseChanges(workflowRoot, project, { changes });
     const itemsFile = path.join(dataDir, "Items.json");
     const items = readJson(itemsFile) as Array<Record<string, unknown> | null>;
-    items[1]!.note = "External change";
+    items[1]!.name = "External Value";
     writeJson(itemsFile, items);
 
     assert.throws(
-      () => stageRmmvDatabaseChanges(workflowRoot, project, { changes, planHash: plan.planHash }),
+      () => commitRmmvDatabaseChanges(workflowRoot, project, { changes, planHash: plan.planHash }),
       /planHash is stale/i,
     );
-    assert.equal(listDatabaseStagingOperations(workflowRoot, project).length, 0);
+    assert.equal((readJson(itemsFile) as Array<Record<string, unknown> | null>)[1]!.name, "External Value");
   });
 
-  test("applies exactly one approved operation after revalidating its complete staged state", () => {
-    const changes: RmmvDatabaseChange[] = [{
-      op: "patch",
-      table: "items",
-      id: 1,
-      patches: [{ op: "replace", path: "/name", value: "Applied Item" }],
-    }];
+  test("does not write a plan with semantic validation errors", () => {
+    const skillFile = path.join(dataDir, "Skills.json");
+    const before = fs.readFileSync(skillFile);
+    const changes: RmmvDatabaseChange[] = [{ op: "reset", table: "skills", id: 1 }];
     const plan = dryRunRmmvDatabaseChanges(workflowRoot, project, { changes });
-    const staged = stageRmmvDatabaseChanges(workflowRoot, project, { changes, planHash: plan.planHash });
 
-    const applied = applyRmmvDatabaseChanges(workflowRoot, project, staged.operationId);
-    assert.equal(applied.applied, true);
-    assert.equal((readJson(path.join(dataDir, "Items.json")) as Array<Record<string, unknown> | null>)[1]!.name, "Applied Item");
-    assert.equal(listDatabaseStagingOperations(workflowRoot, project).length, 0);
+    assert.equal(plan.validation.ok, false);
+    assert.throws(
+      () => commitRmmvDatabaseChanges(workflowRoot, project, { changes, planHash: plan.planHash }),
+      /validation error/i,
+    );
+    assert.deepEqual(fs.readFileSync(skillFile), before);
   });
 
-  test("applies disjoint staged operations individually in reverse order", () => {
-    const itemChanges: RmmvDatabaseChange[] = [{
-      op: "patch",
-      table: "items",
-      id: 1,
-      patches: [{ op: "replace", path: "/name", value: "Applied Item" }],
-    }];
-    const itemPlan = dryRunRmmvDatabaseChanges(workflowRoot, project, { changes: itemChanges });
-    const itemOperation = stageRmmvDatabaseChanges(workflowRoot, project, {
-      changes: itemChanges,
-      planHash: itemPlan.planHash,
-    });
-
-    const skillChanges: RmmvDatabaseChange[] = [{
-      op: "patch",
-      table: "skills",
-      id: 1,
-      patches: [{ op: "replace", path: "/name", value: "Applied Skill" }],
-    }];
-    const skillPlan = dryRunRmmvDatabaseChanges(workflowRoot, project, { changes: skillChanges });
-    const skillOperation = stageRmmvDatabaseChanges(workflowRoot, project, {
-      changes: skillChanges,
-      planHash: skillPlan.planHash,
-    });
-
-    applyRmmvDatabaseChanges(workflowRoot, project, skillOperation.operationId);
-    applyRmmvDatabaseChanges(workflowRoot, project, itemOperation.operationId);
-
-    assert.equal((readJson(path.join(dataDir, "Skills.json")) as Array<Record<string, unknown> | null>)[1]!.name, "Applied Skill");
-    assert.equal((readJson(path.join(dataDir, "Items.json")) as Array<Record<string, unknown> | null>)[1]!.name, "Applied Item");
-    assert.equal(listDatabaseStagingOperations(workflowRoot, project).length, 0);
-  });
-
-  test("allows unrelated legacy semantic errors throughout dry-run, stage, and apply", () => {
+  test("allows unrelated legacy semantic warnings during direct save", () => {
     const systemFile = path.join(dataDir, "System.json");
     const system = readJson(systemFile) as Record<string, unknown>;
     ((system.sounds as Array<Record<string, unknown>>)[0]).pitch = 200;
     writeJson(systemFile, system);
-
     const changes: RmmvDatabaseChange[] = [{
       op: "patch",
       table: "items",
@@ -219,199 +192,21 @@ describe("controlled RMMV database changes", { concurrency: false }, () => {
       patches: [{ op: "replace", path: "/name", value: "Legacy-Compatible Item" }],
     }];
     const plan = dryRunRmmvDatabaseChanges(workflowRoot, project, { changes });
+
     assert.equal(plan.validation.ok, true);
-    const staged = stageRmmvDatabaseChanges(workflowRoot, project, { changes, planHash: plan.planHash });
-    applyRmmvDatabaseChanges(workflowRoot, project, staged.operationId);
-
+    commitRmmvDatabaseChanges(workflowRoot, project, { changes, planHash: plan.planHash });
     assert.equal((readJson(path.join(dataDir, "Items.json")) as Array<Record<string, unknown> | null>)[1]!.name, "Legacy-Compatible Item");
-
-    const secondChanges: RmmvDatabaseChange[] = [{
-      op: "patch",
-      table: "items",
-      id: 1,
-      patches: [{ op: "replace", path: "/name", value: "Desktop Legacy-Compatible Item" }],
-    }];
-    const secondPlan = dryRunRmmvDatabaseChanges(workflowRoot, project, { changes: secondChanges });
-    const second = stageRmmvDatabaseChanges(workflowRoot, project, {
-      changes: secondChanges,
-      planHash: secondPlan.planHash,
-    });
-    applyProjectStaging(workflowRoot, project, {
-      expectedOperationIds: [second.operationId],
-      validate: () => preflightRmmvDatabaseProjectApply(workflowRoot, project),
-    });
-    assert.equal((readJson(path.join(dataDir, "Items.json")) as Array<Record<string, unknown> | null>)[1]!.name, "Desktop Legacy-Compatible Item");
   });
 
-  test("requires the confirmed Agent operation set for desktop Apply All", () => {
-    const changes: RmmvDatabaseChange[] = [{
-      op: "patch",
-      table: "items",
-      id: 1,
-      patches: [{ op: "replace", path: "/name", value: "Desktop Applied Item" }],
-    }];
-    const plan = dryRunRmmvDatabaseChanges(workflowRoot, project, { changes });
-    const staged = stageRmmvDatabaseChanges(workflowRoot, project, { changes, planHash: plan.planHash });
-
-    assert.throws(
-      () => applyProjectStaging(workflowRoot, project, { expectedOperationIds: [] }),
-      /operation set changed/i,
-    );
-    const applied = applyProjectStaging(workflowRoot, project, {
-      expectedOperationIds: [staged.operationId],
-      validate: () => preflightRmmvDatabaseProjectApply(workflowRoot, project),
-    });
-    assert.equal(applied.applied, true);
-    assert.equal((readJson(path.join(dataDir, "Items.json")) as Array<Record<string, unknown> | null>)[1]!.name, "Desktop Applied Item");
-  });
-
-  test("allows an unrelated staged apply when a pre-existing map file is missing", () => {
-    const changes: RmmvDatabaseChange[] = [{
-      op: "patch",
-      table: "items",
-      id: 1,
-      patches: [{ op: "replace", path: "/name", value: "Applied With Legacy Missing Map" }],
-    }];
-    const plan = dryRunRmmvDatabaseChanges(workflowRoot, project, { changes });
-    const staged = stageRmmvDatabaseChanges(workflowRoot, project, { changes, planHash: plan.planHash });
+  test("tolerates declared maps whose files are already missing during inspection", () => {
     const mapInfos = readJson(path.join(dataDir, "MapInfos.json")) as unknown[];
     mapInfos.push({ id: 2, name: "Missing Map", parentId: 0, order: 2, expanded: true });
-    writeJson(path.join(dataDir, "MapInfos.json"), mapInfos);
-
-    const applied = applyProjectStaging(workflowRoot, project, {
-      expectedOperationIds: [staged.operationId],
-      validate: () => preflightRmmvDatabaseProjectApply(workflowRoot, project),
-    });
-
-    assert.equal(applied.applied, true);
-    assert.equal((readJson(path.join(dataDir, "Items.json")) as Array<Record<string, unknown> | null>)[1]!.name, "Applied With Legacy Missing Map");
-    assert.equal(fs.existsSync(path.join(dataDir, "Map002.json")), false);
-  });
-
-  test("tolerates declared maps whose files were deleted during inspection", () => {
-    const mapInfos = readJson(path.join(dataDir, "MapInfos.json")) as unknown[];
-    mapInfos.push({ id: 2, name: "Deleted Map", parentId: 0, order: 2, expanded: true });
     writeJson(path.join(dataDir, "MapInfos.json"), mapInfos);
 
     const result = validateEffectiveRmmvDatabaseState(workflowRoot, project);
 
     assert.equal(fs.existsSync(path.join(dataDir, "Map002.json")), false);
     assert.ok(result, "inspection must succeed instead of throwing for the missing map");
-  });
-
-  test("blocks a staged deletion of a declared map before the transaction starts", () => {
-    const mapFile = path.join(dataDir, "Map001.json");
-    const sourceBefore = fs.readFileSync(mapFile);
-    deleteStagedProjectFile(workflowRoot, project, "www/data/Map001.json");
-
-    assert.throws(
-      () => applyProjectStaging(workflowRoot, project, {
-        expectedOperationIds: [],
-        validate: () => preflightRmmvDatabaseProjectApply(workflowRoot, project),
-      }),
-      (error: unknown) => error instanceof StagingError
-        && error.code === STAGING_ERROR_CODES.rmmvMapPreflight
-        && (error.details as { transactionStarted?: boolean })?.transactionStarted === false,
-    );
-    assert.deepEqual(fs.readFileSync(mapFile), sourceBefore);
-    assert.equal(getProjectStagingStatus(workflowRoot, project).files.length, 1);
-  });
-
-  test("blocks a touched map that transfers into an unreadable declared map", () => {
-    const mapInfos = readJson(path.join(dataDir, "MapInfos.json")) as unknown[];
-    mapInfos.push({ id: 2, name: "Missing Map", parentId: 0, order: 2, expanded: true });
-    writeJson(path.join(dataDir, "MapInfos.json"), mapInfos);
-    const map = readJson(path.join(dataDir, "Map001.json")) as Record<string, unknown>;
-    map.events = [null, {
-      id: 1,
-      name: "Gate",
-      x: 0,
-      y: 0,
-      pages: [{ conditions: {}, image: {}, list: [
-        { code: 201, indent: 0, parameters: [0, 2, 0, 0, 2, 0] },
-        { code: 0, indent: 0, parameters: [] },
-      ] }],
-    }];
-    writeStagedProjectJson(workflowRoot, project, "www/data/Map001.json", map);
-
-    let thrown: unknown;
-    try {
-      applyProjectStaging(workflowRoot, project, {
-        expectedOperationIds: [],
-        validate: () => preflightRmmvDatabaseProjectApply(workflowRoot, project),
-      });
-    } catch (error) {
-      thrown = error;
-    }
-    assert.ok(thrown instanceof StagingError);
-    assert.equal(thrown.code, STAGING_ERROR_CODES.rmmvMapPreflight);
-    const details = thrown.details as {
-      missingMaps?: Array<{ mapId: number; reason: string; relationSources: string[] }>;
-    };
-    assert.deepEqual(details.missingMaps, [{
-      mapId: 2,
-      relativePath: "www/data/Map002.json",
-      reason: "missing",
-      error: "Required RMMV project file is missing: www/data/Map002.json",
-      relationSources: ["www/data/Map001.json"],
-    }]);
-    assert.equal(getProjectStagingStatus(workflowRoot, project).files.length, 1);
-    assert.deepEqual((readJson(path.join(dataDir, "Map001.json")) as Record<string, unknown>).events, [null]);
-  });
-
-  test("allows unrelated source changes made after staging", () => {
-    const changes: RmmvDatabaseChange[] = [{
-      op: "patch",
-      table: "items",
-      id: 1,
-      patches: [{ op: "replace", path: "/name", value: "Blocked Item" }],
-    }];
-    const plan = dryRunRmmvDatabaseChanges(workflowRoot, project, { changes });
-    const staged = stageRmmvDatabaseChanges(workflowRoot, project, { changes, planHash: plan.planHash });
-    const actorsFile = path.join(dataDir, "Actors.json");
-    const actors = readJson(actorsFile) as Array<Record<string, unknown> | null>;
-    actors[1]!.nickname = "External change";
-    writeJson(actorsFile, actors);
-
-    const applied = applyRmmvDatabaseChanges(workflowRoot, project, staged.operationId);
-    assert.equal(applied.applied, true);
-    assert.equal((readJson(path.join(dataDir, "Items.json")) as Array<Record<string, unknown> | null>)[1]!.name, "Blocked Item");
-  });
-
-  test("blocks apply when a changed input makes the staged operation semantically invalid", () => {
-    const changes: RmmvDatabaseChange[] = [{ op: "reset", table: "skills", id: 3 }];
-    const plan = dryRunRmmvDatabaseChanges(workflowRoot, project, { changes });
-    const staged = stageRmmvDatabaseChanges(workflowRoot, project, { changes, planHash: plan.planHash });
-
-    const classesFile = path.join(dataDir, "Classes.json");
-    const classes = readJson(classesFile) as Array<Record<string, unknown> | null>;
-    (classes[1]!.learnings as Array<Record<string, unknown>>).push({ level: 2, note: "", skillId: 3 });
-    writeJson(classesFile, classes);
-
-    assert.throws(
-      () => applyRmmvDatabaseChanges(workflowRoot, project, staged.operationId),
-      /semantic revalidation/i,
-    );
-    assert.ok(getDatabaseStagingOperation(workflowRoot, project, staged.operationId));
-  });
-
-  test("does not claim a file that already contains a user draft", () => {
-    const items = readJson(path.join(dataDir, "Items.json")) as Array<Record<string, unknown> | null>;
-    items[1]!.name = "User Draft";
-    writeStagedProjectJson(workflowRoot, project, "www/data/Items.json", items);
-    const changes: RmmvDatabaseChange[] = [{
-      op: "patch",
-      table: "items",
-      id: 1,
-      patches: [{ op: "replace", path: "/name", value: "Agent Draft" }],
-    }];
-    const plan = dryRunRmmvDatabaseChanges(workflowRoot, project, { changes });
-
-    assert.throws(
-      () => stageRmmvDatabaseChanges(workflowRoot, project, { changes, planHash: plan.planHash }),
-      /unowned staging draft/i,
-    );
-    assert.equal(listDatabaseStagingOperations(workflowRoot, project).length, 0);
   });
 });
 

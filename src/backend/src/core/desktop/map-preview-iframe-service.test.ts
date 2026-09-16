@@ -9,7 +9,7 @@ import type { UiRuntimeSceneExport } from '../../../../contract/ui-designer.ts';
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { MapPreviewIframeService } from './map-preview-iframe-service.ts';
-import { getProjectFileForRead, writeStagedProjectJson } from './staging-service.ts';
+import { writeProjectJson } from './project-file-service.ts';
 
 test('keeps one isolated iframe runtime warm across suspend and resume', async () => {
   const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-workflow-'));
@@ -178,17 +178,17 @@ test('embeds UI runtime scenes without changing the project plugin configuration
 
   try {
     await bootstrapDatabase(workflowRoot, { importLegacyJson: false });
-    writeStagedProjectJson(workflowRoot, project, 'data/ui-scenes/Scene_Map.mzui', {
+    writeProjectJson(workflowRoot, project, 'data/ui-scenes/Scene_Map.mzui', {
       ...uiRuntimeScene(),
-      meta: { ...uiRuntimeScene().meta, description: 'staged scene' },
+      meta: { ...uiRuntimeScene().meta, description: 'saved scene' },
     });
-    writeStagedProjectJson(workflowRoot, project, 'data/GlobalUI.json', { menuList: ['Staged'] });
+    writeProjectJson(workflowRoot, project, 'data/GlobalUI.json', { menuList: ['Saved'] });
     await service.start(project, 1);
     const harness = fs.readFileSync(path.join(isolatedRoot, 'js', 'rpg-agent-preview-iframe.js'), 'utf8');
     assert.match(harness, /"sceneName":"Scene_Map"/);
-    assert.match(harness, /"description":"staged scene"/);
+    assert.match(harness, /"description":"saved scene"/);
     assert.doesNotMatch(harness, /"sceneName":"Scene_Unused"/);
-    assert.match(harness, /"menuList":\["Staged"\]/);
+    assert.match(harness, /"menuList":\["Saved"\]/);
     assert.doesNotMatch(harness, /"menuList":\["Source"\]/);
     assert.match(harness, /runtime\.registerScene\(sceneName, scene\.meta\.sceneBase, scene\)/);
     assert.equal(fs.readFileSync(pluginsPath, 'utf8'), pluginsSource);
@@ -286,7 +286,7 @@ test('retargets a freshly started preview to a newer map without another registr
   }
 });
 
-test('serves the project directly and only generates the app shell and staged overlays', async () => {
+test('serves the project directly and only generates the app shell', async () => {
   const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-workflow-'));
   const project = createMZProject(workflowRoot);
   let captured: { resourceRoot?: string; options?: { fallback?: { root: string; prefixes: readonly string[] }; deniedPaths?: readonly string[] } } = {};
@@ -301,7 +301,7 @@ test('serves the project directly and only generates the app shell and staged ov
 
   try {
     await bootstrapDatabase(workflowRoot, { importLegacyJson: false });
-    writeStagedProjectJson(workflowRoot, project, 'data/Map001.json', {
+    writeProjectJson(workflowRoot, project, 'data/Map001.json', {
       width: 21,
       height: 15,
       tilesetId: 1,
@@ -311,24 +311,22 @@ test('serves the project directly and only generates the app shell and staged ov
     await service.start(project, 1);
     const appDir = captured.resourceRoot!;
 
-    // No project copy: only the generated shell plus the staged draft overlay.
+    // No project copy: only the generated shell lives in the owned directory.
     // The ownership marker sits in the isolated root alongside the app files.
     const appFiles = listRelativeFiles(appDir);
     const markers = appFiles.filter((entry) => /^\.rpg-agent-isolation-[a-f0-9]{20}\.json$/.test(entry));
     assert.equal(markers.length, 1);
     assert.deepEqual(appFiles.filter((entry) => !markers.includes(entry)), [
-      'data/Map001.json',
       'index.html',
       'js/main.js',
       'js/rpg-agent-preview-iframe.js',
       'js/rpg-agent-preview-marker.js',
     ]);
-    assert.equal(JSON.parse(fs.readFileSync(path.join(appDir, 'data', 'Map001.json'), 'utf8')).width, 21);
     assert.equal(captured.options?.fallback?.root, fs.realpathSync.native(project));
     assert.deepEqual([...(captured.options?.fallback?.prefixes ?? [])], ['']);
     assert.equal(captured.options?.deniedPaths?.includes('save/'), true);
     assert.equal(captured.options?.deniedPaths?.includes('.git/'), true);
-    // Staged map geometry wins over the untouched source file.
+    // Directly saved map geometry is used by the preview.
     assert.equal(service.current().session?.mapPixelWidth, 21 * 48);
 
     await service.stop();
@@ -398,127 +396,6 @@ test('restarts an unfinished iframe map load when a newer map is selected', asyn
     assert.equal(service.current().session?.status, 'resuming');
     assert.equal(service.current().session?.operationId, 2);
     await service.stop();
-  } finally {
-    service.shutdownSync();
-    closeDatabase();
-    fs.rmSync(workflowRoot, { recursive: true, force: true });
-  }
-});
-
-test('returns structured staging conflicts before creating a cold preview session', { concurrency: false }, async () => {
-  const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-staging-conflict-'));
-  const project = createMZProject(workflowRoot);
-  let registeredRoots = 0;
-  const service = new MapPreviewIframeService(workflowRoot, {
-    registerPreviewRoot() {
-      registeredRoots += 1;
-      return 'rpg-agent-preview://unused/index.html';
-    },
-    unregisterPreviewRoot() {},
-    verifyFrameIsolation: () => true,
-  });
-
-  try {
-    await bootstrapDatabase(workflowRoot, { importLegacyJson: false });
-    const sourceMap = path.join(project, 'data', 'Map001.json');
-    writeStagedProjectJson(workflowRoot, project, 'data/Map001.json', {
-      width: 21,
-      height: 15,
-      tilesetId: 1,
-      events: [null],
-      data: [],
-    });
-    fs.writeFileSync(sourceMap, JSON.stringify({
-      width: 22,
-      height: 15,
-      tilesetId: 1,
-      events: [null],
-      data: [],
-    }), 'utf8');
-
-    const result = await service.start(project, 1);
-
-    assert.equal(result.session, undefined);
-    assert.equal(result.preflightFailure?.code, 'staging-conflict');
-    assert.equal(result.preflightFailure?.stage, 'staging-preflight');
-    assert.equal(result.preflightFailure?.conflictCount, 1);
-    assert.deepEqual(result.preflightFailure?.conflicts, [{
-      relativePath: 'data/Map001.json',
-      reasons: ['SOURCE_HASH_CHANGED'],
-    }]);
-    assert.equal(service.current().session, undefined);
-    assert.equal(registeredRoots, 0);
-    assert.equal(JSON.parse(fs.readFileSync(sourceMap, 'utf8')).width, 22);
-    const draft = getProjectFileForRead(workflowRoot, project, 'data/Map001.json');
-    assert.ok(draft);
-    assert.equal(JSON.parse(fs.readFileSync(draft, 'utf8')).width, 21);
-  } finally {
-    service.shutdownSync();
-    closeDatabase();
-    fs.rmSync(workflowRoot, { recursive: true, force: true });
-  }
-});
-
-test('keeps a successful warm preview untouched when staging becomes conflicted', { concurrency: false }, async () => {
-  const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-warm-conflict-'));
-  const project = createMZProject(workflowRoot);
-  const commands: MapPreviewRuntimeCommand[] = [];
-  let isolatedRoot = '';
-  let registeredUrl = '';
-  const service = new MapPreviewIframeService(workflowRoot, {
-    onCommand: (command) => commands.push(command),
-    registerPreviewRoot(key, resourceRoot) {
-      isolatedRoot = resourceRoot;
-      registeredUrl = `rpg-agent-preview://${key}/index.html`;
-      return registeredUrl;
-    },
-    unregisterPreviewRoot() {},
-    verifyFrameIsolation: () => true,
-  });
-
-  try {
-    await bootstrapDatabase(workflowRoot, { importLegacyJson: false });
-    await service.start(project, 1);
-    await waitForPreviewStatus(service, 'starting');
-    const starting = service.current().session!;
-    const identity = injectedIdentity(isolatedRoot);
-    service.handleRuntimeEvent(runtimeEvent(identity, starting, 'ready'));
-    const running = service.current().session!;
-    const commandCount = commands.length;
-
-    writeStagedProjectJson(workflowRoot, project, 'data/Map002.json', {
-      width: 16,
-      height: 10,
-      tilesetId: 1,
-      events: [null],
-      data: [],
-    });
-    fs.writeFileSync(path.join(project, 'data', 'Map002.json'), JSON.stringify({
-      width: 17,
-      height: 10,
-      tilesetId: 1,
-      events: [null],
-      data: [],
-    }), 'utf8');
-
-    const result = await service.resume({
-      project,
-      mapId: 2,
-      forceReload: true,
-      overrides: { switches: {}, variables: {}, selfSwitches: {} },
-    });
-
-    assert.equal(result.preflightFailure?.code, 'staging-conflict');
-    assert.deepEqual(result.preflightFailure?.conflicts, [{
-      relativePath: 'data/Map002.json',
-      reasons: ['SOURCE_HASH_CHANGED'],
-    }]);
-    assert.equal(result.session?.sessionId, running.sessionId);
-    assert.equal(result.session?.status, 'running');
-    assert.equal(result.session?.operationId, running.operationId);
-    assert.equal(result.session?.mapId, running.mapId);
-    assert.equal(result.session?.iframeUrl, registeredUrl);
-    assert.equal(commands.length, commandCount);
   } finally {
     service.shutdownSync();
     closeDatabase();

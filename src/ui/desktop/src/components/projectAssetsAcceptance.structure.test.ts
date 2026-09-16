@@ -107,7 +107,7 @@ describe('database switch and variable acceptance structure', () => {
     compileVue('components/editor/ImageAssetPickerDialog.vue');
   });
 
-  test('places switches and variables after common events and reuses managed staging APIs', () => {
+  test('places switches and variables after common events and reuses managed direct-save APIs', () => {
     const source = read('views/DatabaseView.vue');
     assert.match(source, /'CommonEvents',\s*\n\s*'Switches', 'Variables',\s*\n\s*\.\.\.DATABASE_DOCUMENT_PAGES/);
     assert.match(source, /openManaged\(systemNamedKind\(\), entry\.id\)/);

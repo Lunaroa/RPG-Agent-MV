@@ -6,12 +6,7 @@ import { normalizeUiRuntimeSceneGeometry } from '../../../../contract/ui-designe
 import { canonicalUiRuntimeSceneExport } from '../../../../contract/ui-designer-script.ts';
 import { inspectRmmvProject } from '../rmmv/rmmv-layout.ts';
 import type { RpgMakerEngine } from '../rmmv/rpg-maker-engine.ts';
-import {
-  snapshotProjectStaging,
-  type IsolatedStagingSnapshot,
-} from './isolated-project-preparation.ts';
 import { writeMapPreviewIframeAppShell } from './map-preview-iframe-harness.ts';
-import { getProjectFileForRead } from './staging-service.ts';
 import { validateUiRuntimeSceneExport } from './ui-designer-validation.ts';
 import {
   attestOwnedIsolatedProject,
@@ -29,23 +24,21 @@ export class MapPreviewAppPreparationError extends Error {}
  */
 export const MAP_PREVIEW_PASSTHROUGH_PREFIXES = [''] as const;
 
-/** Denied on top of staged deletions so the live project's private state never leaves disk. */
+/** Private project state that the preview protocol must never expose. */
 export const MAP_PREVIEW_DENIED_PREFIXES = ['save/', '.git/'] as const;
 
 export interface MapPreviewAppPreparation {
   engine: RpgMakerEngine;
   sourceProject: string;
-  /** Serve-direct root: everything not generated or staged is read from here. */
+  /** Serve-direct root: every project resource is read from here. */
   resourceRoot: string;
-  /** Generated preview app (harness shell + staged overlays); primary protocol root. */
+  /** Generated preview app and harness shell; primary protocol root. */
   appDirectory: string;
   ownership: IsolatedProjectOwnership;
   screenWidth: number;
   screenHeight: number;
   tileSize: number;
-  staging: IsolatedStagingSnapshot;
   uiRuntime: MapPreviewUiRuntimePayload;
-  /** Resource-root-relative staged deletions the protocol must 404. */
   deniedPaths: string[];
 }
 
@@ -54,28 +47,22 @@ export interface MapPreviewUiRuntimePayload {
   globalData: unknown;
 }
 
-export interface MapPreviewAppPreparationDependencies {
-  getEffectiveFile: typeof getProjectFileForRead;
-}
-
 /**
  * Serve-direct map preview preparation: builds only the tiny generated app
- * (injected index.html, marker, optionally injected js/main.js) plus staged
- * draft overlays, and serves every other project resource through the preview
- * protocol's pass-through root. No project copy and no project fingerprint, so
- * starting a preview stays cheap on multi-gigabyte projects.
+ * (injected index.html, marker, optionally injected js/main.js) and serves
+ * project resources through the preview protocol's pass-through root. No
+ * project copy and no project fingerprint, so starting a preview stays cheap
+ * on multi-gigabyte projects.
  */
 export function prepareMapPreviewApp(
-  workflowRoot: string,
+  _workflowRoot: string,
   projectInput: string,
-  dependencies: Partial<MapPreviewAppPreparationDependencies> = {},
 ): MapPreviewAppPreparation {
   const project = fs.realpathSync.native(path.resolve(projectInput));
   const manifest = inspectRmmvProject(project);
   if (!manifest.editable || !manifest.runnableStructure) {
     throw new MapPreviewAppPreparationError(`The RPG Maker project is not runnable: ${manifest.missingRequired.join(', ')}`);
   }
-  const getEffectiveFile = dependencies.getEffectiveFile || getProjectFileForRead;
   const resourceRoot = fs.realpathSync.native(path.resolve(manifest.resourceRoot));
   const ownershipChallenge = createOwnedEmptyIsolatedProject(project, {
     temporaryPrefix: 'rpg-agent-map-preview-app-',
@@ -93,37 +80,14 @@ export function prepareMapPreviewApp(
   };
 
   try {
-    const staging = snapshotProjectStaging(workflowRoot, project);
-    const deniedPaths: string[] = [];
-    for (const entry of staging.files) {
-      assertAppOwnership();
-      const rootRelative = resourceRootRelative(project, resourceRoot, entry.relativePath);
-      if (!rootRelative) continue;
-      if (entry.delete) {
-        deniedPaths.push(rootRelative);
-        continue;
-      }
-      const draft = getEffectiveFile(workflowRoot, project, entry.relativePath);
-      if (!draft || !isFile(draft)) throw new MapPreviewAppPreparationError(`Staged draft is missing: ${entry.relativePath}`);
-      const target = confinedAppPath(appDirectory, rootRelative);
-      ownedWrite(() => fs.mkdirSync(path.dirname(target), { recursive: true }));
-      ownedWrite(() => fs.copyFileSync(draft, target));
-    }
-
-    // The app shell rewrites index.html (and js/main.js for dynamic-plugin
-    // engines) from their effective contents, so staged drafts stay honored.
+    // The app shell rewrites index.html and js/main.js only inside the owned
+    // preview directory.
     ownedWrite(() => writeMapPreviewIframeAppShell(
       appDirectory,
-      readEffectiveText(workflowRoot, project, resourceRoot, getEffectiveFile, 'index.html'),
-      readEffectiveText(workflowRoot, project, resourceRoot, getEffectiveFile, 'js/main.js'),
+      readProjectText(resourceRoot, 'index.html'),
+      readProjectText(resourceRoot, 'js/main.js'),
     ));
-    const uiRuntime = buildMapPreviewUiRuntimePayload(
-      workflowRoot,
-      project,
-      resourceRoot,
-      getEffectiveFile,
-      staging,
-    );
+    const uiRuntime = buildMapPreviewUiRuntimePayload(resourceRoot);
     // Warm map syncs target the app data directory; keep it resolvable even
     // before the first synced map lands.
     ownedWrite(() => fs.mkdirSync(path.join(appDirectory, 'data'), { recursive: true }));
@@ -138,9 +102,8 @@ export function prepareMapPreviewApp(
       screenWidth: manifest.screenWidth,
       screenHeight: manifest.screenHeight,
       tileSize: manifest.tileSize,
-      staging,
       uiRuntime,
-      deniedPaths,
+      deniedPaths: [],
     };
   } catch (error) {
     try { cleanupOwnedIsolatedProject(ownershipChallenge); } catch { /* Retain an unattested app. */ }
@@ -156,24 +119,11 @@ export function cleanupMapPreviewApp(preparation: MapPreviewAppPreparation): voi
   });
 }
 
-function buildMapPreviewUiRuntimePayload(
-  workflowRoot: string,
-  project: string,
-  resourceRoot: string,
-  getEffectiveFile: typeof getProjectFileForRead,
-  staging: IsolatedStagingSnapshot,
-): MapPreviewUiRuntimePayload {
+function buildMapPreviewUiRuntimePayload(resourceRoot: string): MapPreviewUiRuntimePayload {
   const sceneDirectoryRelative = 'data/ui-scenes';
-  const mapSceneFileName = effectiveMapUiSceneFileName(project, resourceRoot, staging, sceneDirectoryRelative);
+  const mapSceneFileName = mapUiSceneFileName(resourceRoot, sceneDirectoryRelative);
   const scenes = mapSceneFileName ? [mapSceneFileName].map((fileName) => {
-    const file = effectiveOptionalResourceFile(
-      workflowRoot,
-      project,
-      resourceRoot,
-      getEffectiveFile,
-      staging,
-      `${sceneDirectoryRelative}/${fileName}`,
-    );
+    const file = optionalResourceFile(resourceRoot, `${sceneDirectoryRelative}/${fileName}`);
     if (!file) throw new MapPreviewAppPreparationError(`UI scene is missing: ${fileName}`);
     let value: unknown;
     try { value = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); }
@@ -200,14 +150,7 @@ function buildMapPreviewUiRuntimePayload(
 
   let globalData: unknown = {};
   if (scenes.length) {
-    const globalFile = effectiveOptionalResourceFile(
-      workflowRoot,
-      project,
-      resourceRoot,
-      getEffectiveFile,
-      staging,
-      'data/GlobalUI.json',
-    );
+    const globalFile = optionalResourceFile(resourceRoot, 'data/GlobalUI.json');
     if (globalFile) {
       try { globalData = JSON.parse(fs.readFileSync(globalFile, 'utf8').replace(/^\uFEFF/, '')); }
       catch (error) {
@@ -221,19 +164,10 @@ function buildMapPreviewUiRuntimePayload(
   return { scenes, globalData };
 }
 
-function effectiveMapUiSceneFileName(
-  project: string,
+function mapUiSceneFileName(
   resourceRoot: string,
-  staging: IsolatedStagingSnapshot,
   sceneDirectoryRelative: string,
 ): string | null {
-  const targetRelative = `${sceneDirectoryRelative}/Scene_Map.mzui`.toLowerCase();
-  for (const entry of staging.files) {
-    const rootRelative = resourceRootRelative(project, resourceRoot, entry.relativePath);
-    if (!rootRelative || rootRelative.toLowerCase() !== targetRelative) continue;
-    return entry.delete ? null : path.posix.basename(rootRelative);
-  }
-
   const sourceDirectory = path.join(resourceRoot, ...sceneDirectoryRelative.split('/'));
   if (!fs.existsSync(sourceDirectory)) return null;
   const directoryStat = fs.lstatSync(sourceDirectory);
@@ -249,57 +183,21 @@ function effectiveMapUiSceneFileName(
   return entry.name;
 }
 
-function effectiveOptionalResourceFile(
-  workflowRoot: string,
-  project: string,
+function optionalResourceFile(
   resourceRoot: string,
-  getEffectiveFile: typeof getProjectFileForRead,
-  staging: IsolatedStagingSnapshot,
   rootRelative: string,
 ): string | null {
-  const projectRelative = normalizeRelative(path.relative(project, path.join(resourceRoot, ...rootRelative.split('/'))));
-  const staged = staging.files.find((entry) => normalizeRelative(entry.relativePath).toLowerCase() === projectRelative.toLowerCase());
-  if (staged?.delete) return null;
-  const effective = getEffectiveFile(workflowRoot, project, projectRelative);
-  if (effective && isFile(effective)) return effective;
   const source = path.join(resourceRoot, ...rootRelative.split('/'));
   return isFile(source) ? source : null;
 }
 
-function readEffectiveText(
-  workflowRoot: string,
-  project: string,
+function readProjectText(
   resourceRoot: string,
-  getEffectiveFile: typeof getProjectFileForRead,
   rootRelative: string,
 ): string {
-  const projectRelative = normalizeRelative(path.relative(project, path.join(resourceRoot, ...rootRelative.split('/'))));
-  const file = getEffectiveFile(workflowRoot, project, projectRelative)
-    || path.join(resourceRoot, ...rootRelative.split('/'));
+  const file = path.join(resourceRoot, ...rootRelative.split('/'));
   if (!isFile(file)) throw new MapPreviewAppPreparationError(`Required project file is missing: ${rootRelative}`);
   return fs.readFileSync(file, 'utf8');
-}
-
-/** Project-relative staged path -> resource-root-relative path, or null when outside the root. */
-function resourceRootRelative(project: string, resourceRoot: string, projectRelative: string): string | null {
-  const absolute = path.resolve(project, ...normalizeRelative(projectRelative).split('/'));
-  const relative = normalizeRelative(path.relative(resourceRoot, absolute));
-  if (!relative || relative.startsWith('../') || path.isAbsolute(relative)) return null;
-  return relative;
-}
-
-function confinedAppPath(appDirectory: string, relative: string): string {
-  const base = path.resolve(appDirectory);
-  const target = path.resolve(base, ...relative.split('/'));
-  const relation = path.relative(base, target);
-  if (!relation || relation.startsWith('..') || path.isAbsolute(relation)) {
-    throw new MapPreviewAppPreparationError(`Unsafe preview overlay path: ${relative}`);
-  }
-  return target;
-}
-
-function normalizeRelative(value: string): string {
-  return value.replace(/\\/g, '/').replace(/^\.\//, '');
 }
 
 function isFile(filePath: string): boolean {

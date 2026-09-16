@@ -7,12 +7,7 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 import { bootstrapDatabase } from '../db/bootstrap.ts';
 import { closeDatabase } from '../db/pool.ts';
 import { readJson, writeJson } from '../rmmv/json.ts';
-import {
-  applyProjectStaging,
-  getProjectFileForRead,
-  getProjectStagingStatus,
-  stageProjectFilesAtomically,
-} from './staging-service.ts';
+import { writeProjectFilesAtomically } from './project-file-service.ts';
 import {
   addPluginConfigurationEntry,
   deletePluginFile,
@@ -226,7 +221,6 @@ describe('plugin management service', { concurrency: false }, () => {
         rawObject: '{"mode":"safe"}',
       },
     ), /must be preserved unchanged/);
-    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
     assert.equal(
       sourcePluginArray(fixture.project)[0].parameters.rawJson,
       '{"enabled":true}',
@@ -348,21 +342,18 @@ describe('plugin management service', { concurrency: false }, () => {
     assert.deepEqual(choiceList?.item?.options, [{ label: 'One', value: 'one' }, { label: 'Two', value: 'two' }]);
   });
 
-  test('disables a plugin through staging without mutating source plugins.js', () => {
+  test('disables a plugin by saving plugins.js directly', () => {
     const result = setPluginEnabled(fixture.root, fixture.project, 1, false);
 
     assert.equal(result.plugins.find((plugin) => plugin.name === 'QuestLog')?.status, false);
-    assert.equal(sourcePluginStatus(fixture.project, 'QuestLog'), true);
-    const staged = readJsonPluginArray(getProjectFileForRead(fixture.root, fixture.project, 'www/js/plugins.js')!);
-    assert.equal(staged.find((plugin) => plugin.name === 'QuestLog')?.status, false);
-    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).files.some((file) => file.relativePath === 'www/js/plugins.js'), true);
+    assert.equal(sourcePluginStatus(fixture.project, 'QuestLog'), false);
   });
 
-  test('reorders plugins through staged plugins.js', () => {
+  test('reorders plugins by saving plugins.js directly', () => {
     const result = reorderPlugins(fixture.root, fixture.project, [2, 1, 0]);
 
     assert.deepEqual(result.plugins.map((plugin) => plugin.name), ['OldPlugin', 'QuestLog', 'CoreFix']);
-    assert.deepEqual(sourcePluginArray(fixture.project).map((plugin) => plugin.name), ['CoreFix', 'QuestLog', 'OldPlugin']);
+    assert.deepEqual(sourcePluginArray(fixture.project).map((plugin) => plugin.name), ['OldPlugin', 'QuestLog', 'CoreFix']);
   });
 
   test('reorders duplicate separator entries by configuration index', () => {
@@ -385,7 +376,7 @@ describe('plugin management service', { concurrency: false }, () => {
       'OldPlugin',
     ]);
     assert.deepEqual(
-      readJsonPluginArray(getProjectFileForRead(fixture.root, fixture.project, 'www/js/plugins.js')!)
+      sourcePluginArray(fixture.project)
         .map((plugin) => [plugin.name, plugin.description]),
       [
         ['CoreFix', ''],
@@ -395,24 +386,31 @@ describe('plugin management service', { concurrency: false }, () => {
         ['OldPlugin', ''],
       ],
     );
-    assert.deepEqual(sourcePluginArray(fixture.project), sourceEntries);
+    assert.deepEqual(sourcePluginArray(fixture.project).map((plugin) => [plugin.name, plugin.description]), [
+      ['CoreFix', ''],
+      ['------ Section ------', 'Second divider'],
+      ['QuestLog', ''],
+      ['------ Section ------', 'First divider'],
+      ['OldPlugin', ''],
+    ]);
   });
 
-  test('rejects invalid configuration index orders without staging', () => {
+  test('rejects invalid configuration index orders without changing plugins.js', () => {
+    const before = fs.readFileSync(path.join(fixture.project, 'www', 'js', 'plugins.js'));
     assert.throws(
       () => reorderPlugins(fixture.root, fixture.project, [0, 1, 1]),
       /duplicate configuration index: 1/,
     );
-    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
+    assert.deepEqual(fs.readFileSync(path.join(fixture.project, 'www', 'js', 'plugins.js')), before);
 
     assert.throws(
       () => reorderPlugins(fixture.root, fixture.project, [0, 1, 3]),
       /invalid configuration index: 3/,
     );
-    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
+    assert.deepEqual(fs.readFileSync(path.join(fixture.project, 'www', 'js', 'plugins.js')), before);
   });
 
-  test('updates plugin parameters through staged plugins.js', () => {
+  test('updates plugin parameters by saving plugins.js directly', () => {
     const result = updatePluginParameters(fixture.root, fixture.project, 0, {
       speed: '2',
       mode: 'safe',
@@ -420,7 +418,7 @@ describe('plugin management service', { concurrency: false }, () => {
 
     const coreFix = result.plugins.find((plugin) => plugin.name === 'CoreFix');
     assert.deepEqual(coreFix?.parameters, { speed: '2', mode: 'safe' });
-    assert.deepEqual(sourcePluginArray(fixture.project).find((plugin) => plugin.name === 'CoreFix')?.parameters, { speed: '1' });
+    assert.deepEqual(sourcePluginArray(fixture.project).find((plugin) => plugin.name === 'CoreFix')?.parameters, { speed: '2', mode: 'safe' });
   });
 
   test('validates missing plugin files, duplicate names, and non-object parameters', () => {
@@ -448,15 +446,10 @@ describe('plugin management service', { concurrency: false }, () => {
     assert.ok(result.issues.some((issue) => issue.code === 'plugins-js-missing'));
   });
 
-  test('applies staged plugin configuration back to source only on apply', () => {
+  test('saves plugin configuration to source immediately after confirmation', () => {
     setPluginEnabled(fixture.root, fixture.project, 1, false);
 
-    assert.equal(sourcePluginStatus(fixture.project, 'QuestLog'), true);
-    const applied = applyProjectStaging(fixture.root, fixture.project);
-
-    assert.equal(applied.applied, true);
     assert.equal(sourcePluginStatus(fixture.project, 'QuestLog'), false);
-    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
   });
 
   test('installs nested MZ plugin names under js/plugins subfolders', () => {
@@ -470,7 +463,7 @@ describe('plugin management service', { concurrency: false }, () => {
 
     assert.equal(installed.name, 'tools/SamplePlugin');
     assert.equal(installed.relativePath, 'www/js/plugins/tools/SamplePlugin.js');
-    assert.ok(getProjectFileForRead(fixture.root, fixture.project, 'www/js/plugins/tools/SamplePlugin.js'));
+    assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'js', 'plugins', 'tools', 'SamplePlugin.js')), true);
     assert.equal(
       installed.configuration?.plugins.some((plugin) => plugin.name === 'tools/SamplePlugin'),
       true,
@@ -492,15 +485,15 @@ describe('plugin management service', { concurrency: false }, () => {
       installed.installed.map((entry) => entry.name).sort(),
       ['RootPlugin', 'tools/NestedPlugin'],
     );
-    assert.ok(getProjectFileForRead(fixture.root, fixture.project, 'www/js/plugins/RootPlugin.js'));
-    assert.ok(getProjectFileForRead(fixture.root, fixture.project, 'www/js/plugins/tools/NestedPlugin.js'));
+    assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'js', 'plugins', 'RootPlugin.js')), true);
+    assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'js', 'plugins', 'tools', 'NestedPlugin.js')), true);
     assert.equal(
       installed.configuration.plugins.some((plugin) => plugin.name === 'tools/NestedPlugin'),
       true,
     );
   });
 
-  test('installs and deletes plugin files through staging', () => {
+  test('installs and deletes plugin files through one direct atomic save', () => {
     const external = path.join(fixture.root, 'external', 'NewPlugin.js');
     fs.mkdirSync(path.dirname(external), { recursive: true });
     fs.writeFileSync(external, '/* new plugin */', 'utf8');
@@ -508,18 +501,15 @@ describe('plugin management service', { concurrency: false }, () => {
     const installed = installPluginFile(fixture.root, fixture.project, external);
     assert.equal(installed.relativePath, 'www/js/plugins/NewPlugin.js');
     assert.equal(installed.configuration?.plugins.find((plugin) => plugin.name === 'NewPlugin')?.status, false);
-    assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'js', 'plugins', 'NewPlugin.js')), false);
-    assert.ok(getProjectFileForRead(fixture.root, fixture.project, 'www/js/plugins/NewPlugin.js'));
-    assert.equal(sourcePluginArray(fixture.project).some((plugin) => plugin.name === 'NewPlugin'), false);
+    assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'js', 'plugins', 'NewPlugin.js')), true);
+    assert.equal(sourcePluginArray(fixture.project).some((plugin) => plugin.name === 'NewPlugin'), true);
 
     const deleted = deletePluginFile(fixture.root, fixture.project, 'OldPlugin');
     assert.equal(deleted.relativePath, 'www/js/plugins/OldPlugin.js');
     assert.equal(deleted.configuration?.plugins.some((plugin) => plugin.name === 'OldPlugin'), false);
-    assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'js', 'plugins', 'OldPlugin.js')), true);
-    assert.equal(getProjectFileForRead(fixture.root, fixture.project, 'www/js/plugins/OldPlugin.js'), null);
-    assert.equal(sourcePluginArray(fixture.project).some((plugin) => plugin.name === 'OldPlugin'), true);
+    assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'js', 'plugins', 'OldPlugin.js')), false);
+    assert.equal(sourcePluginArray(fixture.project).some((plugin) => plugin.name === 'OldPlugin'), false);
 
-    applyProjectStaging(fixture.root, fixture.project);
     assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'js', 'plugins', 'NewPlugin.js')), true);
     assert.equal(fs.existsSync(path.join(fixture.project, 'www', 'js', 'plugins', 'OldPlugin.js')), false);
     assert.equal(sourcePluginStatus(fixture.project, 'NewPlugin'), false);
@@ -529,22 +519,20 @@ describe('plugin management service', { concurrency: false }, () => {
   test('adds and removes configuration entries without copying or deleting plugin files', () => {
     const looseFile = path.join(fixture.project, 'www', 'js', 'plugins', 'LoosePlugin.js');
     fs.writeFileSync(looseFile, '/* loose plugin */', 'utf8');
-    const sourceBefore = fs.readFileSync(path.join(fixture.project, 'www', 'js', 'plugins.js'), 'utf8');
-
     const added = addPluginConfigurationEntry(fixture.root, fixture.project, 'LoosePlugin');
     assert.equal(added.plugins.at(-1)?.name, 'LoosePlugin');
     assert.equal(added.plugins.at(-1)?.status, false);
-    assert.equal(fs.readFileSync(path.join(fixture.project, 'www', 'js', 'plugins.js'), 'utf8'), sourceBefore);
+    assert.equal(sourcePluginArray(fixture.project).some((plugin) => plugin.name === 'LoosePlugin'), true);
     assert.equal(fs.existsSync(looseFile), true);
 
     const removed = removePluginConfigurationEntry(fixture.root, fixture.project, added.plugins.length - 1);
     assert.equal(removed.plugins.some((plugin) => plugin.name === 'LoosePlugin'), false);
     assert.equal(removed.pluginFiles.some((file) => file.name === 'LoosePlugin' && file.exists), true);
     assert.equal(fs.existsSync(looseFile), true);
-    assert.equal(fs.readFileSync(path.join(fixture.project, 'www', 'js', 'plugins.js'), 'utf8'), sourceBefore);
+    assert.equal(sourcePluginArray(fixture.project).some((plugin) => plugin.name === 'LoosePlugin'), false);
   });
 
-  test('rejects newly introduced dependency conflicts before staging', () => {
+  test('rejects newly introduced dependency conflicts before direct save', () => {
     fs.writeFileSync(path.join(fixture.project, 'www', 'js', 'plugins', 'BasePlugin.js'), `/*:
  * @plugindesc Base.
  */`, 'utf8');
@@ -562,28 +550,25 @@ describe('plugin management service', { concurrency: false }, () => {
       () => setPluginEnabled(fixture.root, fixture.project, 1, true),
       /PLUGIN_DEPENDENCY_CONFLICT.*requires enabled base plugin BasePlugin/,
     );
-    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
+    assert.equal(sourcePluginStatus(fixture.project, 'DependentPlugin'), false);
 
     setPluginEnabled(fixture.root, fixture.project, 0, true);
     setPluginEnabled(fixture.root, fixture.project, 1, true);
-    applyProjectStaging(fixture.root, fixture.project);
     assert.throws(
       () => reorderPlugins(fixture.root, fixture.project, [1, 0]),
       /PLUGIN_DEPENDENCY_CONFLICT.*must be ordered after base plugin BasePlugin/,
     );
-    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
+    assert.deepEqual(sourcePluginArray(fixture.project).map((plugin) => plugin.name), ['BasePlugin', 'DependentPlugin']);
   });
 
-  test('allows disabling a missing plugin but rejects enabling it without staging', () => {
+  test('allows disabling a missing plugin but rejects enabling it', () => {
     fs.rmSync(path.join(fixture.project, 'www', 'js', 'plugins', 'OldPlugin.js'));
     setPluginEnabled(fixture.root, fixture.project, 2, false);
-    applyProjectStaging(fixture.root, fixture.project);
 
     assert.throws(
       () => setPluginEnabled(fixture.root, fixture.project, 2, true),
       /PLUGIN_FILE_MISSING.*OldPlugin/,
     );
-    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
     assert.equal(sourcePluginStatus(fixture.project, 'OldPlugin'), false);
   });
 
@@ -599,7 +584,7 @@ describe('plugin management service', { concurrency: false }, () => {
     assert.equal(questLog?.description, 'Quest UI');
     assert.deepEqual(questLog?.parameters, { visible: 'true' });
     assert.equal(
-      fs.readFileSync(getProjectFileForRead(fixture.root, fixture.project, 'www/js/plugins/QuestLog.js')!, 'utf8'),
+      fs.readFileSync(path.join(fixture.project, 'www', 'js', 'plugins', 'QuestLog.js'), 'utf8'),
       '/* replacement quest */',
     );
     assert.equal(sourcePluginStatus(fixture.project, 'QuestLog'), true);
@@ -664,10 +649,10 @@ describe('plugin management service', { concurrency: false }, () => {
       () => addPluginConfigurationEntry(fixture.root, fixture.project, 'CoreFix'),
       /Plugin configuration already exists: CoreFix/,
     );
-    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
+    assert.equal(sourcePluginArray(fixture.project).filter((plugin) => plugin.name === 'CoreFix').length, 1);
   });
 
-  test('does not expose force deletion and rolls back every draft when an atomic stage fails', () => {
+  test('does not expose force deletion and rolls back every file when an atomic direct save fails', () => {
     assert.throws(
       () => deletePluginFile(fixture.root, fixture.project, 'QuestLog', { force: true }),
       /force/i,
@@ -677,18 +662,17 @@ describe('plugin management service', { concurrency: false }, () => {
     const configRelative = 'www/js/plugins.js';
     const sourcePlugin = fs.readFileSync(path.join(fixture.project, ...pluginRelative.split('/')));
     const sourceConfig = fs.readFileSync(path.join(fixture.project, ...configRelative.split('/')));
-    assert.throws(() => stageProjectFilesAtomically(fixture.root, fixture.project, [
+    assert.throws(() => writeProjectFilesAtomically(fixture.root, fixture.project, [
       { relativePath: pluginRelative, content: Buffer.from('replacement') },
       { relativePath: configRelative, content: Buffer.from('replacement config') },
-    ], undefined, {
+    ], {
       beforeMutation: ({ index }) => {
-        if (index === 1) throw new Error('injected second draft failure');
+        if (index === 1) throw new Error('injected second file failure');
       },
-    }), /injected second draft failure/);
+    }), /injected second file failure/);
 
-    assert.equal(getProjectStagingStatus(fixture.root, fixture.project).staged, false);
-    assert.deepEqual(fs.readFileSync(getProjectFileForRead(fixture.root, fixture.project, pluginRelative)!), sourcePlugin);
-    assert.deepEqual(fs.readFileSync(getProjectFileForRead(fixture.root, fixture.project, configRelative)!), sourceConfig);
+    assert.deepEqual(fs.readFileSync(path.join(fixture.project, ...pluginRelative.split('/'))), sourcePlugin);
+    assert.deepEqual(fs.readFileSync(path.join(fixture.project, ...configRelative.split('/'))), sourceConfig);
   });
 });
 

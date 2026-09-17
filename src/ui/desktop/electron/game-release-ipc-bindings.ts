@@ -8,6 +8,7 @@ import type {
   AndroidToolchainInstallRequest,
   GameReleaseCredentialKind,
   GameBuildRequest,
+  GameManifestSigningSaveRequest,
   GameReleasePublishRequest,
   GameReleaseSaveRequest,
   GameReleaseProjectSettings,
@@ -17,11 +18,13 @@ import type { GameReleaseCredentialStore, GameReleaseCredentialValue } from './g
 const CHANNELS = [
   'gameRelease:status',
   'gameRelease:save',
+  'gameRelease:testUpdateIndex',
   'gameBuild:getSettings',
   'gameBuild:listAndroidIconCandidates',
   'gameBuild:saveSettings',
   'gameBuild:preflight',
   'gameBuild:build',
+  'gameBuild:cancel',
   'gameBuild:listEncryptionKeys',
   'gameBuild:generateEncryptionKey',
   'gameBuild:importEncryptionKey',
@@ -39,6 +42,7 @@ const CHANNELS = [
 interface GameReleaseModule {
   readGameReleaseStatus(workflowRoot: string, project: string): unknown;
   saveGameReleaseConfig(workflowRoot: string, project: string, request: GameReleaseSaveRequest): unknown;
+  testGameReleaseUpdateIndex(value: unknown): Promise<unknown>;
 }
 
 interface GameBuildModule {
@@ -47,7 +51,15 @@ interface GameBuildModule {
   saveGameBuildSettings(project: string, value: unknown): unknown;
   preflightGameBuild(workflowRoot: string, project: string, input: { presetId: string; releaseConfig?: unknown }): unknown;
   buildGame(workflowRoot: string, project: string, request: GameBuildRequest): Promise<unknown>;
+  startGameBuildWorker(
+    workflowRoot: string,
+    project: string,
+    request: GameBuildRequest,
+    onProgress: (event: unknown) => void,
+  ): { result: Promise<unknown>; cancel: () => void };
 }
+
+const activeBuilds = new Map<string, { senderId: number; cancel: () => void }>();
 
 interface GameEncryptionModule {
   listGameEncryptionKeys(project: string): unknown;
@@ -110,6 +122,10 @@ export function registerGameReleaseIpcHandlers(
       dependencies.serialize(request) as GameReleaseSaveRequest,
     ),
   ));
+  ipcMain.handle('gameRelease:testUpdateIndex', async (_event, value: unknown, project?: string) => {
+    dependencies.resolveProject(project);
+    return dependencies.serialize(await dependencies.release.testGameReleaseUpdateIndex(dependencies.serialize(value)));
+  });
   ipcMain.handle('gameBuild:getSettings', (_event, project?: string) => dependencies.serialize(
     dependencies.build.readGameBuildSettings(dependencies.resolveProject(project)),
   ));
@@ -129,18 +145,42 @@ export function registerGameReleaseIpcHandlers(
       dependencies.serialize(input) as { presetId: string; releaseConfig?: unknown },
     ),
   ));
-  ipcMain.handle('gameBuild:build', async (_event, request: GameBuildRequest, project?: string) => {
+  ipcMain.handle('gameBuild:build', async (event, request: GameBuildRequest, project?: string) => {
     const resolvedProject = dependencies.resolveProject(project);
     const plain = dependencies.serialize(request) as GameBuildRequest;
+    plain.operationId ||= crypto.randomUUID();
+    if (activeBuilds.has(plain.operationId)) throw new Error('A packaging operation with this id is already running.');
+    if ([...activeBuilds.values()].some((active) => active.senderId === event.sender.id)) {
+      throw new Error('This window already has a packaging operation in progress.');
+    }
     const settings = dependencies.build.readGameBuildSettings(resolvedProject) as GameReleaseProjectSettings;
     const preset = settings.presets.find((candidate) => candidate.id === plain.presetId);
     if (!preset) throw new Error('The selected packaging preset no longer exists.');
     resolveSigningCredential(dependencies.credentials, preset, plain);
-    return dependencies.serialize(await dependencies.build.buildGame(
+    const handle = dependencies.build.startGameBuildWorker(
       dependencies.workflowRoot,
       resolvedProject,
       plain,
-    ));
+      (progress) => {
+        if (!event.sender.isDestroyed()) event.sender.send('gameBuild:progress', dependencies.serialize(progress));
+      },
+    );
+    activeBuilds.set(plain.operationId, { senderId: event.sender.id, cancel: handle.cancel });
+    const cancelOnDestroyed = () => handle.cancel();
+    event.sender.once('destroyed', cancelOnDestroyed);
+    try {
+      return dependencies.serialize(await handle.result);
+    } finally {
+      event.sender.removeListener('destroyed', cancelOnDestroyed);
+      activeBuilds.delete(plain.operationId);
+    }
+  });
+  ipcMain.handle('gameBuild:cancel', (event, operationId: string) => {
+    const id = String(operationId || '');
+    const active = activeBuilds.get(id);
+    if (!active || active.senderId !== event.sender.id) return { canceled: false };
+    active.cancel();
+    return { canceled: true };
   });
   ipcMain.handle('gameBuild:listEncryptionKeys', (_event, project?: string) => dependencies.serialize(
     dependencies.encryption.listGameEncryptionKeys(dependencies.resolveProject(project)),
@@ -191,16 +231,78 @@ export function registerGameReleaseIpcHandlers(
   ipcMain.handle('gameBuild:forgetCredential', (_event, kind: GameReleaseCredentialKind, credentialId: string) => ({
     removed: dependencies.credentials.forget(kind, String(credentialId || '')),
   }));
-  ipcMain.handle('gameBuild:createManifestSigningIdentity', () => {
+  ipcMain.handle('gameBuild:createManifestSigningIdentity', (_event, request: GameManifestSigningSaveRequest, project?: string) => {
+    const resolvedProject = dependencies.resolveProject(project);
+    const plain = dependencies.serialize(request) as GameManifestSigningSaveRequest;
+    if (!plain?.releaseConfig || !plain?.settings) throw new Error('Release configuration and packaging settings are required.');
+    const previousRelease = dependencies.release.readGameReleaseStatus(dependencies.workflowRoot, resolvedProject) as {
+      config: GameManifestSigningSaveRequest['releaseConfig'];
+      sourceHash: string | null;
+    };
+    const previousSettings = dependencies.build.readGameBuildSettings(resolvedProject) as GameReleaseProjectSettings;
+    const previousCredentialId = previousSettings.manifestSigningCredentialId;
     const credentialId = `manifest-signing-${crypto.randomUUID()}`;
     const identity = dependencies.manifestSigning.createGameManifestSigningIdentity(credentialId);
-    dependencies.credentials.save('manifest-signing', credentialId, { privateKey: identity.privateKey });
-    return dependencies.serialize({
-      credentialId: identity.credentialId,
+    const nextReleaseConfig = dependencies.serialize(plain.releaseConfig) as GameManifestSigningSaveRequest['releaseConfig'];
+    nextReleaseConfig.update.manifestSignature = {
+      enabled: true,
       algorithm: identity.algorithm,
       keyId: identity.keyId,
       publicKey: identity.publicKey,
-    });
+    };
+    const nextSettings = dependencies.serialize(plain.settings) as GameReleaseProjectSettings;
+    nextSettings.manifestSigningCredentialId = credentialId;
+    let savedRelease: unknown;
+    let releaseWritten = false;
+    let settingsWritten = false;
+    try {
+      savedRelease = dependencies.release.saveGameReleaseConfig(dependencies.workflowRoot, resolvedProject, {
+        config: nextReleaseConfig,
+        expectedSourceHash: plain.releaseExpectedSourceHash,
+        installRuntimePlugins: true,
+      });
+      releaseWritten = true;
+      const savedSettings = dependencies.build.saveGameBuildSettings(resolvedProject, nextSettings) as GameReleaseProjectSettings;
+      settingsWritten = true;
+      dependencies.credentials.save('manifest-signing', credentialId, { privateKey: identity.privateKey });
+      if (previousCredentialId && previousCredentialId !== credentialId) {
+        dependencies.credentials.forget('manifest-signing', previousCredentialId);
+      }
+      return dependencies.serialize({
+        identity: {
+          credentialId: identity.credentialId,
+          algorithm: identity.algorithm,
+          keyId: identity.keyId,
+          publicKey: identity.publicKey,
+        },
+        release: savedRelease,
+        settings: savedSettings,
+      });
+    } catch (error) {
+      dependencies.credentials.forget('manifest-signing', credentialId);
+      const rollbackFailures: string[] = [];
+      if (settingsWritten) {
+        try {
+          dependencies.build.saveGameBuildSettings(resolvedProject, previousSettings);
+        } catch (rollbackError) {
+          rollbackFailures.push(`packaging settings: ${errorMessage(rollbackError)}`);
+        }
+      }
+      if (releaseWritten) {
+        try {
+          const current = dependencies.release.readGameReleaseStatus(dependencies.workflowRoot, resolvedProject) as { sourceHash: string | null };
+          dependencies.release.saveGameReleaseConfig(dependencies.workflowRoot, resolvedProject, {
+            config: previousRelease.config,
+            expectedSourceHash: current.sourceHash,
+            installRuntimePlugins: true,
+          });
+        } catch (rollbackError) {
+          rollbackFailures.push(`release configuration: ${errorMessage(rollbackError)}`);
+        }
+      }
+      const rollbackDetail = rollbackFailures.length ? ` Rollback failed for ${rollbackFailures.join('; ')}.` : '';
+      throw new Error(`Could not save the manifest signing identity.${rollbackDetail}`, { cause: error });
+    }
   });
   ipcMain.handle('gameBuild:createAndroidKeystore', async (event, request: AndroidKeystoreCreateRequest, project?: string) => {
     const resolvedProject = dependencies.resolveProject(project);
@@ -330,6 +432,12 @@ function normalizeUploadCredential(
   return { token: value.token };
 }
 
+function errorMessage(value: unknown): string {
+  return value instanceof Error ? value.message : String(value);
+}
+
 export function cleanupGameReleaseIpcHandlers(ipcMain: IpcMain): void {
+  for (const active of activeBuilds.values()) active.cancel();
+  activeBuilds.clear();
   for (const channel of CHANNELS) ipcMain.removeHandler(channel);
 }

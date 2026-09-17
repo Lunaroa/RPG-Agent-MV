@@ -13,6 +13,14 @@ describe('UI control click command modifiers', () => {
       normalizeUiControlCommand({ type: 'navigate', target: 'ui-designer' }).target,
       'ui-designer',
     );
+    assert.equal(
+      normalizeUiControlCommand({ type: 'navigate', target: 'game-version' }).target,
+      'game-version',
+    );
+    assert.equal(
+      normalizeUiControlCommand({ type: 'navigate', target: 'game-packaging' }).target,
+      'game-packaging',
+    );
   });
 
   test('keeps a legal ctrl modifier on click after normalization', () => {

@@ -188,6 +188,7 @@ contextBridge.exposeInMainWorld('api', {
   gameRelease: {
     status: (project?: string) => ipcRenderer.invoke('gameRelease:status', project),
     save: (request: unknown, project?: string) => ipcRenderer.invoke('gameRelease:save', request, project),
+    testUpdateIndex: (value: unknown, project?: string) => ipcRenderer.invoke('gameRelease:testUpdateIndex', value, project),
   },
 
   gameBuild: {
@@ -196,6 +197,12 @@ contextBridge.exposeInMainWorld('api', {
     saveSettings: (settings: unknown, project?: string) => ipcRenderer.invoke('gameBuild:saveSettings', settings, project),
     preflight: (input: unknown, project?: string) => ipcRenderer.invoke('gameBuild:preflight', input, project),
     build: (request: unknown, project?: string) => ipcRenderer.invoke('gameBuild:build', request, project),
+    cancel: (operationId: string) => ipcRenderer.invoke('gameBuild:cancel', operationId),
+    onProgress: (callback: (event: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, progress: unknown) => callback(progress);
+      ipcRenderer.on('gameBuild:progress', handler);
+      return () => ipcRenderer.removeListener('gameBuild:progress', handler);
+    },
     listEncryptionKeys: (project?: string) => ipcRenderer.invoke('gameBuild:listEncryptionKeys', project),
     generateEncryptionKey: (id: string, project?: string) => ipcRenderer.invoke('gameBuild:generateEncryptionKey', id, project),
     importEncryptionKey: (id: string, encodedKey: string, project?: string) =>
@@ -207,7 +214,8 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('gameBuild:getCredentialStatus', kind, credentialId),
     forgetCredential: (kind: string, credentialId: string) =>
       ipcRenderer.invoke('gameBuild:forgetCredential', kind, credentialId),
-    createManifestSigningIdentity: () => ipcRenderer.invoke('gameBuild:createManifestSigningIdentity'),
+    createManifestSigningIdentity: (request: unknown, project?: string) =>
+      ipcRenderer.invoke('gameBuild:createManifestSigningIdentity', request, project),
     createAndroidKeystore: (request: unknown, project?: string) =>
       ipcRenderer.invoke('gameBuild:createAndroidKeystore', request, project),
     selectOutputDirectory: (initialPath?: string) => ipcRenderer.invoke('gameBuild:selectOutputDirectory', initialPath),

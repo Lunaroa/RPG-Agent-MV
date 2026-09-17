@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 
@@ -10,42 +10,78 @@ import type {
   SaveCompatibilityKind,
 } from '@contract/game-release'
 import { gameRelease } from '../api/client'
-import { useI18n } from '../i18n'
+import { useI18n, type MessageKey } from '../i18n'
 import { useProjectStore } from '../stores/project'
+import { cloneDraft } from '../utils/clone-draft'
+import { registerProductPluginLifecycleGuard } from '../utils/productPluginLifecycle'
+import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
 
 const projectStore = useProjectStore()
-const { t } = useI18n()
+const { language, t } = useI18n()
 const loading = ref(false)
 const saving = ref(false)
+const testingUpdateIndex = ref(false)
 const error = ref('')
+const updateIndexMessage = ref('')
 const advanced = ref(false)
 const status = ref<GameReleaseStatus | null>(null)
 const form = ref<GameReleaseConfig | null>(null)
+const savedForm = ref<GameReleaseConfig | null>(null)
+let unregisterLifecycle: (() => void) | null = null
+let loadRequestId = 0
 
 const saveKinds: SaveCompatibilityKind[] = ['legacy', 'older', 'same', 'newer', 'differentChannel']
 const actions: SaveCompatibilityAction[] = ['allow', 'warn', 'block', 'callback']
 const hasProject = computed(() => Boolean(projectStore.currentProject))
 const insecureUpdateUrl = computed(() => form.value?.update.indexUrl.trim().startsWith('http:'))
+const dirty = computed(() => Boolean(
+  form.value
+  && savedForm.value
+  && JSON.stringify(form.value) !== JSON.stringify(savedForm.value),
+))
 
 watch(() => projectStore.currentProject, () => void load(), { immediate: true })
 
-async function load() {
+onMounted(() => {
+  unregisterLifecycle = registerProductPluginLifecycleGuard('game-version', {
+    isDirty: () => dirty.value,
+    save: () => save(false),
+    discard: discardDraft,
+  })
+})
+
+onUnmounted(() => {
+  unregisterLifecycle?.()
+  unregisterLifecycle = null
+})
+
+async function load(): Promise<boolean> {
+  const requestId = ++loadRequestId
   const project = projectStore.currentProject
   status.value = null
   form.value = null
+  savedForm.value = null
   error.value = ''
-  if (!project) return
+  updateIndexMessage.value = ''
+  saving.value = false
+  testingUpdateIndex.value = false
+  if (!project) return true
   loading.value = true
   try {
     const next = await gameRelease.status(project)
-    if (projectStore.currentProject !== project) return
+    if (requestId !== loadRequestId || projectStore.currentProject !== project) return false
     status.value = next
-    form.value = structuredClone(next.config)
+    form.value = cloneDraft(next.config)
+    savedForm.value = cloneDraft(next.config)
     advanced.value = next.config.update.enabled
+    return true
   } catch (cause) {
-    error.value = errorText(cause)
+    if (requestId === loadRequestId && projectStore.currentProject === project) {
+      error.value = operationError('gameVersion.error.load', cause)
+    }
+    return false
   } finally {
-    if (projectStore.currentProject === project) loading.value = false
+    if (requestId === loadRequestId && projectStore.currentProject === project) loading.value = false
   }
 }
 
@@ -81,40 +117,83 @@ function setCheckOnStart(enabled: boolean) {
   if (!enabled) form.value.update.backgroundDownload = false
 }
 
-async function save() {
+async function save(confirmWrite = true): Promise<boolean> {
+  const requestId = loadRequestId
   const project = projectStore.currentProject
-  if (!project || !form.value || !status.value) return
-  try {
-    await ElMessageBox.confirm(
-      t('gameVersion.confirm.detail'),
-      t('gameVersion.confirm.title'),
-      { confirmButtonText: t('gameVersion.save'), cancelButtonText: t('ui.cancel'), type: 'warning' },
-    )
-  } catch {
-    return
+  if (!project || !form.value || !status.value || saving.value || testingUpdateIndex.value) return false
+  const draft = cloneDraft(form.value)
+  const expectedSourceHash = status.value.sourceHash
+  if (confirmWrite) {
+    try {
+      await ElMessageBox.confirm(
+        t('gameVersion.confirm.detail'),
+        t('gameVersion.confirm.title'),
+        { confirmButtonText: t('gameVersion.save'), cancelButtonText: t('ui.cancel'), type: 'warning' },
+      )
+    } catch {
+      return false
+    }
   }
+  if (requestId !== loadRequestId || projectStore.currentProject !== project) return false
   saving.value = true
   error.value = ''
   try {
     const saved = await gameRelease.save({
-      config: structuredClone(form.value),
-      expectedSourceHash: status.value.sourceHash,
+      config: draft,
+      expectedSourceHash,
       installRuntimePlugins: true,
     }, project)
-    if (projectStore.currentProject !== project) return
+    if (requestId !== loadRequestId || projectStore.currentProject !== project) return false
     status.value = saved
-    form.value = structuredClone(saved.config)
+    form.value = cloneDraft(saved.config)
+    savedForm.value = cloneDraft(saved.config)
     ElMessage.success(t('gameVersion.saved'))
+    return true
   } catch (cause) {
-    error.value = errorText(cause)
-    ElMessage.error(error.value)
+    if (requestId === loadRequestId && projectStore.currentProject === project) {
+      error.value = operationError('gameVersion.error.save', cause)
+      ElMessage.error(error.value)
+    }
+    return false
   } finally {
-    if (projectStore.currentProject === project) saving.value = false
+    if (requestId === loadRequestId && projectStore.currentProject === project) saving.value = false
   }
 }
 
-function errorText(value: unknown): string {
-  return value instanceof Error ? value.message : String(value)
+function discardDraft(): boolean {
+  if (savedForm.value) form.value = cloneDraft(savedForm.value)
+  error.value = ''
+  updateIndexMessage.value = ''
+  return true
+}
+
+async function testUpdateIndex() {
+  const requestId = loadRequestId
+  const project = projectStore.currentProject
+  if (!project || !form.value || testingUpdateIndex.value || saving.value) return
+  testingUpdateIndex.value = true
+  error.value = ''
+  updateIndexMessage.value = ''
+  try {
+    const tested = await gameRelease.testUpdateIndex(cloneDraft(form.value), project)
+    if (requestId !== loadRequestId || projectStore.currentProject !== project) return
+    updateIndexMessage.value = tested.latestVersion
+      ? t('gameVersion.indexTestAvailable', { version: tested.latestVersion })
+      : t('gameVersion.indexTestCurrent')
+    ElMessage.success(t('gameVersion.indexTestPassed'))
+  } catch (cause) {
+    if (requestId === loadRequestId && projectStore.currentProject === project) {
+      error.value = operationError('gameVersion.error.indexTest', cause)
+      ElMessage.error(error.value)
+    }
+  } finally {
+    if (requestId === loadRequestId && projectStore.currentProject === project) testingUpdateIndex.value = false
+  }
+}
+
+function operationError(key: MessageKey, value: unknown): string {
+  const detail = formatUserFacingErrorMessage(value, 'general', language.value)
+  return t(key, { message: detail })
 }
 </script>
 
@@ -128,7 +207,7 @@ function errorText(value: unknown): string {
       <el-button
         type="primary"
         :loading="saving"
-        :disabled="!form || loading"
+        :disabled="!form || loading || testingUpdateIndex"
         data-ui-id="game-version-save"
         @click="save"
       >
@@ -138,10 +217,11 @@ function errorText(value: unknown): string {
 
     <div v-if="!hasProject" class="empty-state">{{ t('gameVersion.noProject') }}</div>
     <div v-else-if="loading" class="empty-state"><el-icon class="is-loading"><Loading /></el-icon></div>
-    <el-alert v-else-if="error" :title="error" type="error" :closable="false" show-icon />
+    <el-alert v-else-if="error && !form" :title="error" type="error" :closable="false" show-icon />
 
     <el-scrollbar v-else-if="form" class="page-scroll">
-      <el-form label-position="top" class="release-form" @submit.prevent>
+      <el-form label-position="top" class="release-form" :disabled="saving || testingUpdateIndex" @submit.prevent>
+        <el-alert v-if="error" class="page-error" :title="error" type="error" show-icon @close="error = ''" />
         <section class="form-section form-section-primary">
           <el-form-item :label="t('gameVersion.version')">
             <el-input v-model="form.version" data-ui-id="game-version-value" placeholder="1.0.0-beta.1" />
@@ -191,7 +271,15 @@ function errorText(value: unknown): string {
           </el-button>
           <div v-if="form.update.enabled && advanced" class="advanced-fields">
             <el-form-item :label="t('gameVersion.indexUrl')">
-              <el-input v-model="form.update.indexUrl" data-ui-id="game-version-index-url" placeholder="https://example.com/releases.json" />
+              <div class="index-url-line">
+                <el-input v-model="form.update.indexUrl" data-ui-id="game-version-index-url" placeholder="https://example.com/releases.json" />
+                <el-button
+                  :loading="testingUpdateIndex"
+                  :disabled="!form.update.indexUrl.trim()"
+                  data-ui-id="game-version-test-index"
+                  @click="testUpdateIndex"
+                >{{ t('gameVersion.testIndex') }}</el-button>
+              </div>
             </el-form-item>
             <el-alert
               v-if="insecureUpdateUrl"
@@ -200,19 +288,25 @@ function errorText(value: unknown): string {
               :closable="false"
               show-icon
             />
-            <div class="inline-options">
-              <el-checkbox
-                :model-value="form.update.checkOnStart"
-                @update:model-value="setCheckOnStart(Boolean($event))"
-              >{{ t('gameVersion.checkOnStart') }}</el-checkbox>
-              <el-checkbox
-                v-model="form.update.backgroundDownload"
-                :disabled="!form.update.checkOnStart"
-              >{{ t('gameVersion.backgroundDownload') }}</el-checkbox>
-              <el-radio-group v-model="form.update.policy">
-                <el-radio-button value="optional">{{ t('gameVersion.optionalUpdate') }}</el-radio-button>
-                <el-radio-button value="required">{{ t('gameVersion.requiredUpdate') }}</el-radio-button>
-              </el-radio-group>
+            <el-alert v-if="updateIndexMessage" :title="updateIndexMessage" type="success" show-icon @close="updateIndexMessage = ''" />
+            <p class="runtime-note">{{ t('gameVersion.runtimeUpdateNote') }}</p>
+            <div class="update-options">
+              <div class="update-toggle-list">
+                <el-checkbox
+                  :model-value="form.update.checkOnStart"
+                  @update:model-value="setCheckOnStart(Boolean($event))"
+                >{{ t('gameVersion.checkOnStart') }}</el-checkbox>
+                <el-checkbox
+                  v-model="form.update.backgroundDownload"
+                  :disabled="!form.update.checkOnStart"
+                >{{ t('gameVersion.backgroundDownload') }}</el-checkbox>
+              </div>
+              <el-form-item class="update-policy" :label="t('gameVersion.updatePolicy')">
+                <el-radio-group v-model="form.update.policy">
+                  <el-radio value="optional">{{ t('gameVersion.optionalUpdate') }}</el-radio>
+                  <el-radio value="required">{{ t('gameVersion.requiredUpdate') }}</el-radio>
+                </el-radio-group>
+              </el-form-item>
             </div>
           </div>
         </section>
@@ -253,6 +347,7 @@ h2 { font-size: 14px; color: var(--app-ink); }
 .source-path { margin-top: 4px; color: var(--app-ink-muted); font: 11px var(--app-font-mono); }
 .page-scroll { min-height: 0; flex: 1; }
 .release-form { width: min(760px, calc(100% - 40px)); margin: 20px auto 36px; }
+.page-error { margin-bottom: 14px; }
 .form-section { padding: 18px; margin-bottom: 14px; border: 1px solid var(--app-border); border-radius: var(--app-radius-lg); background: var(--app-bg-elevated); }
 .form-section-primary { display: grid; grid-template-columns: 1.15fr .75fr 1fr; gap: 14px; }
 .form-section-primary :deep(.el-form-item) { margin-bottom: 0; }
@@ -264,7 +359,14 @@ h2 { font-size: 14px; color: var(--app-ink); }
 .switch-row span { display: block; margin-top: 4px; color: var(--app-ink-muted); font-size: 12px; }
 .advanced-toggle { margin-top: 8px; padding-left: 0; }
 .advanced-fields { margin-top: 10px; display: grid; gap: 10px; }
-.inline-options { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.index-url-line { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.runtime-note { color: var(--app-ink-muted); font-size: 12px; line-height: 1.5; }
+.update-options { display: grid; grid-template-columns: minmax(0, 1fr) minmax(210px, auto); gap: 14px 24px; align-items: start; }
+.update-toggle-list { min-width: 0; display: grid; gap: 8px; }
+.update-toggle-list :deep(.el-checkbox) { height: auto; margin-right: 0; white-space: normal; }
+.update-policy { margin-bottom: 0; }
+.update-policy :deep(.el-form-item__content), .update-policy :deep(.el-radio-group) { display: grid; gap: 8px; }
+.update-policy :deep(.el-radio) { height: auto; margin-right: 0; white-space: normal; }
 .managed-changes { padding: 14px 18px; border-radius: var(--app-radius-lg); background: var(--app-accent-soft); }
 .managed-changes h2 { margin-bottom: 8px; }
 .managed-change { display: flex; justify-content: space-between; gap: 16px; padding: 5px 0; color: var(--app-ink-soft); font-size: 12px; }
@@ -273,6 +375,6 @@ h2 { font-size: 14px; color: var(--app-ink); }
 
 @media (max-width: 900px) {
   .form-section-primary, .policy-row { grid-template-columns: 1fr; }
-  .inline-options { align-items: flex-start; flex-direction: column; }
+  .update-options { grid-template-columns: 1fr; }
 }
 </style>

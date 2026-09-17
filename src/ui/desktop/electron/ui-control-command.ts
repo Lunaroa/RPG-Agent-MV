@@ -51,6 +51,8 @@ const ALLOWED_TARGETS = new Set([
   'console-settings',
   'plugin-marketplace',
   'ui-designer',
+  'game-version',
+  'game-packaging',
 ]);
 
 const ALLOWED_COMMAND_TYPES = new Set<UiControlCommandType>([

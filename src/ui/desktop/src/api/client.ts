@@ -58,11 +58,13 @@ import type {
   AndroidKeystoreCreateResult,
   GameReleaseCredentialKind,
   GameReleaseCredentialStatus,
+  GameBuildProgressEvent,
   GameBuildPreflightResult,
   GameBuildRequest,
   GameBuildResult,
   GameEncryptionKeySummary,
-  GameManifestSigningIdentitySummary,
+  GameManifestSigningSaveRequest,
+  GameManifestSigningSaveResult,
   GameReleaseConfig,
   GameReleasePublishRequest,
   GameReleasePublishResult,
@@ -70,6 +72,7 @@ import type {
   GameReleaseSaveRequest,
   GameReleaseSaveResult,
   GameReleaseStatus,
+  GameReleaseUpdateIndexTestResult,
 } from '@contract/game-release';
 
 declare global {
@@ -230,6 +233,7 @@ declare global {
       gameRelease: {
         status(project?: string): Promise<unknown>;
         save(request: unknown, project?: string): Promise<unknown>;
+        testUpdateIndex(value: unknown, project?: string): Promise<unknown>;
       };
       gameBuild: {
         getSettings(project?: string): Promise<unknown>;
@@ -237,6 +241,8 @@ declare global {
         saveSettings(settings: unknown, project?: string): Promise<unknown>;
         preflight(input: unknown, project?: string): Promise<unknown>;
         build(request: unknown, project?: string): Promise<unknown>;
+        cancel(operationId: string): Promise<unknown>;
+        onProgress(callback: (event: unknown) => void): () => void;
         listEncryptionKeys(project?: string): Promise<unknown>;
         generateEncryptionKey(id: string, project?: string): Promise<unknown>;
         importEncryptionKey(id: string, encodedKey: string, project?: string): Promise<unknown>;
@@ -245,7 +251,7 @@ declare global {
         installAndroidToolchain(request: unknown): Promise<unknown>;
         getCredentialStatus(kind?: string, credentialId?: string): Promise<unknown>;
         forgetCredential(kind: string, credentialId: string): Promise<unknown>;
-        createManifestSigningIdentity(): Promise<unknown>;
+        createManifestSigningIdentity(request: unknown, project?: string): Promise<unknown>;
         createAndroidKeystore(request: unknown, project?: string): Promise<unknown>;
         selectOutputDirectory(initialPath?: string): Promise<string | null>;
         reveal(target: string): Promise<{ ok: true }>;
@@ -724,6 +730,9 @@ export const gameRelease = {
   save(request: GameReleaseSaveRequest, project?: string) {
     return desktopApi().gameRelease.save(toPlain(request), project) as Promise<GameReleaseSaveResult>;
   },
+  testUpdateIndex(value: GameReleaseConfig, project?: string) {
+    return desktopApi().gameRelease.testUpdateIndex(toPlain(value), project) as Promise<GameReleaseUpdateIndexTestResult>;
+  },
 };
 
 export const gameBuild = {
@@ -741,6 +750,12 @@ export const gameBuild = {
   },
   build(request: GameBuildRequest, project?: string) {
     return desktopApi().gameBuild.build(toPlain(request), project) as Promise<GameBuildResult>;
+  },
+  cancel(operationId: string) {
+    return desktopApi().gameBuild.cancel(operationId) as Promise<{ canceled: boolean }>;
+  },
+  onProgress(callback: (event: GameBuildProgressEvent) => void) {
+    return desktopApi().gameBuild.onProgress((event) => callback(event as GameBuildProgressEvent));
   },
   listEncryptionKeys(project?: string) {
     return desktopApi().gameBuild.listEncryptionKeys(project) as Promise<GameEncryptionKeySummary[]>;
@@ -766,8 +781,8 @@ export const gameBuild = {
   forgetCredential(kind: GameReleaseCredentialKind, credentialId: string) {
     return desktopApi().gameBuild.forgetCredential(kind, credentialId) as Promise<{ removed: boolean }>;
   },
-  createManifestSigningIdentity() {
-    return desktopApi().gameBuild.createManifestSigningIdentity() as Promise<GameManifestSigningIdentitySummary>;
+  createManifestSigningIdentity(request: GameManifestSigningSaveRequest, project?: string) {
+    return desktopApi().gameBuild.createManifestSigningIdentity(toPlain(request), project) as Promise<GameManifestSigningSaveResult>;
   },
   createAndroidKeystore(request: AndroidKeystoreCreateRequest, project?: string) {
     return desktopApi().gameBuild.createAndroidKeystore(toPlain(request), project) as Promise<AndroidKeystoreCreateResult | null>;

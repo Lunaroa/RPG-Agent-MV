@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, FolderOpened, Plus } from '@element-plus/icons-vue'
 
 import type {
   AndroidBuildConfig,
   AndroidToolchainStatus,
-  GameBuildPreset,
+  GameBuildProgressEvent,
   GameBuildPreflightResult,
   GameBuildResult,
   GameBuildTarget,
@@ -15,18 +15,24 @@ import type {
   GameEncryptionKeySummary,
   GameReleaseConfig,
   GameReleasePublishResult,
+  GameReleasePublicationMetadata,
   GameReleaseProjectSettings,
   GameReleaseStatus,
 } from '@contract/game-release'
 import { gameBuild, gameRelease } from '../api/client'
-import { useI18n } from '../i18n'
+import { useI18n, type MessageKey } from '../i18n'
 import { useProjectStore } from '../stores/project'
+import { cloneDraft } from '../utils/clone-draft'
+import { registerProductPluginLifecycleGuard } from '../utils/productPluginLifecycle'
+import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
 
 const projectStore = useProjectStore()
-const { t } = useI18n()
+const { language, t } = useI18n()
 const loading = ref(false)
 const checking = ref(false)
 const building = ref(false)
+const cancelingBuild = ref(false)
+const buildProgress = ref<GameBuildProgressEvent | null>(null)
 const publishing = ref(false)
 const installingAndroidToolchain = ref(false)
 const creatingAndroidKeystore = ref(false)
@@ -35,6 +41,8 @@ const error = ref('')
 const releaseStatus = ref<GameReleaseStatus | null>(null)
 const release = ref<GameReleaseConfig | null>(null)
 const settings = ref<GameReleaseProjectSettings | null>(null)
+const savedRelease = ref<GameReleaseConfig | null>(null)
+const savedSettings = ref<GameReleaseProjectSettings | null>(null)
 const preflight = ref<GameBuildPreflightResult | null>(null)
 const result = ref<GameBuildResult | null>(null)
 const published = ref<GameReleasePublishResult | null>(null)
@@ -61,6 +69,10 @@ interface PublicationLocaleDraft {
 const publicationDefaultLanguage = ref('zh-CN')
 const publicationLocales = ref<PublicationLocaleDraft[]>([])
 const publicationRequired = ref(false)
+let unregisterLifecycle: (() => void) | null = null
+let unsubscribeBuildProgress: (() => void) | null = null
+let credentialStatusRequestId = 0
+let loadRequestId = 0
 
 const targets: GameBuildTarget[] = ['web', 'windows', 'android']
 const processingCategories: GameContentCategory[] = ['images', 'audio', 'video', 'data', 'javascript', 'ui']
@@ -75,6 +87,16 @@ const hasProject = computed(() => Boolean(projectStore.currentProject))
 const publicationLanguageOptions = computed(() => publicationLocales.value
   .map((entry) => entry.language.trim())
   .filter((language, index, languages) => language && languages.indexOf(language) === index))
+const dirty = computed(() => Boolean(
+  release.value
+  && savedRelease.value
+  && settings.value
+  && savedSettings.value
+  && (
+    JSON.stringify(release.value) !== JSON.stringify(savedRelease.value)
+    || JSON.stringify(settingsForSave()) !== JSON.stringify(savedSettings.value)
+  ),
+))
 
 watch(() => projectStore.currentProject, () => void load(), { immediate: true })
 watch(
@@ -88,11 +110,35 @@ watch(
   () => void refreshCredentialStatus(),
 )
 
-async function load() {
+onMounted(() => {
+  unregisterLifecycle = registerProductPluginLifecycleGuard('game-packaging', {
+    isDirty: () => dirty.value,
+    save: saveDraft,
+    discard: discardDraft,
+  })
+  unsubscribeBuildProgress = gameBuild.onProgress((event) => {
+    if (building.value && event.operationId === buildProgress.value?.operationId) buildProgress.value = event
+  })
+})
+
+onUnmounted(() => {
+  unregisterLifecycle?.()
+  unregisterLifecycle = null
+  unsubscribeBuildProgress?.()
+  unsubscribeBuildProgress = null
+})
+
+async function load(): Promise<boolean> {
+  const requestId = ++loadRequestId
+  credentialStatusRequestId += 1
+  const activeOperationId = building.value ? buildProgress.value?.operationId : null
+  if (activeOperationId) void gameBuild.cancel(activeOperationId).catch(() => undefined)
   const project = projectStore.currentProject
   releaseStatus.value = null
   release.value = null
   settings.value = null
+  savedRelease.value = null
+  savedSettings.value = null
   preflight.value = null
   result.value = null
   published.value = null
@@ -100,7 +146,13 @@ async function load() {
   androidToolchain.value = null
   androidIconCandidates.value = []
   error.value = ''
-  if (!project) return
+  checking.value = false
+  building.value = false
+  cancelingBuild.value = false
+  publishing.value = false
+  creatingManifestSigningIdentity.value = false
+  buildProgress.value = null
+  if (!project) return true
   loading.value = true
   try {
     const [nextRelease, nextSettings, nextKeys, nextToolchain, credentialCapability, nextIconCandidates] = await Promise.all([
@@ -111,26 +163,48 @@ async function load() {
       gameBuild.getCredentialStatus(),
       gameBuild.listAndroidIconCandidates(project),
     ])
-    if (projectStore.currentProject !== project) return
+    if (!isCurrentProjectRequest(project, requestId)) return false
     releaseStatus.value = nextRelease
-    release.value = structuredClone(nextRelease.config)
-    settings.value = structuredClone(nextSettings)
+    release.value = cloneDraft(nextRelease.config)
+    settings.value = cloneDraft(nextSettings)
     encryptionKeys.value = nextKeys
     androidToolchain.value = nextToolchain
     secureCredentialStorageAvailable.value = credentialCapability.available
     androidIconCandidates.value = nextIconCandidates
-    resetPublicationDraft(nextRelease.config.gameId, nextRelease.config.update.defaultLanguage || 'zh-CN')
+    restorePublicationDraft(nextSettings, nextRelease.config.gameId, nextRelease.config.update.defaultLanguage || 'zh-CN')
+    savedRelease.value = cloneDraft(nextRelease.config)
+    savedSettings.value = settingsForSave()
+    return true
   } catch (cause) {
-    error.value = errorText(cause)
+    if (isCurrentProjectRequest(project, requestId)) {
+      error.value = operationError('gamePackaging.error.load', cause)
+    }
+    return false
   } finally {
-    if (projectStore.currentProject === project) loading.value = false
+    if (isCurrentProjectRequest(project, requestId)) loading.value = false
   }
 }
 
-function resetPublicationDraft(gameId: string, language: string) {
-  publicationDefaultLanguage.value = language
-  publicationLocales.value = [{ language, title: gameId, summary: '', maintenance: '' }]
-  publicationRequired.value = false
+function isCurrentProjectRequest(project: string, requestId: number): boolean {
+  return loadRequestId === requestId && projectStore.currentProject === project
+}
+
+function restorePublicationDraft(value: GameReleaseProjectSettings, gameId: string, defaultLanguage: string) {
+  const draft = value.publicationDraft
+  publicationDefaultLanguage.value = draft?.defaultLanguage ?? defaultLanguage
+  publicationLocales.value = cloneDraft(draft?.locales ?? [{ language: defaultLanguage, title: gameId, summary: '', maintenance: '' }])
+  publicationRequired.value = draft?.required ?? false
+}
+
+function settingsForSave(): GameReleaseProjectSettings {
+  if (!settings.value) throw new Error(t('gamePackaging.noProject'))
+  const next = cloneDraft(settings.value)
+  next.publicationDraft = {
+    defaultLanguage: publicationDefaultLanguage.value,
+    locales: cloneDraft(publicationLocales.value),
+    required: publicationRequired.value,
+  }
+  return next
 }
 
 function addPublicationLocale() {
@@ -163,7 +237,7 @@ function selectPreset(id: string) {
 
 function addPreset() {
   if (!settings.value || !activePreset.value) return
-  const copy = structuredClone(activePreset.value)
+  const copy = cloneDraft(activePreset.value)
   copy.id = globalThis.crypto.randomUUID()
   copy.name = t('gamePackaging.newPreset')
   if (copy.android) delete copy.android.signingCredentialId
@@ -194,7 +268,6 @@ function changeTarget(target: GameBuildTarget) {
   preset.target = target
   preset.architecture = target === 'web' ? 'web' : target === 'windows' ? 'x64' : 'per-abi'
   if (target === 'android') preset.android ||= defaultAndroid()
-  else delete preset.android
   preflight.value = null
 }
 
@@ -213,6 +286,9 @@ function defaultAndroid(): AndroidBuildConfig {
 }
 
 async function installAndroidToolchain() {
+  const project = projectStore.currentProject
+  const requestId = loadRequestId
+  if (!project) return
   try {
     await ElMessageBox.confirm(
       t('gamePackaging.androidToolchainConsentDetail'),
@@ -226,24 +302,31 @@ async function installAndroidToolchain() {
   } catch {
     return
   }
+  if (!isCurrentProjectRequest(project, requestId)) return
   installingAndroidToolchain.value = true
   error.value = ''
   try {
-    androidToolchain.value = await gameBuild.installAndroidToolchain({ acceptAndroidSdkLicense: true })
+    const installed = await gameBuild.installAndroidToolchain({ acceptAndroidSdkLicense: true })
+    if (!isCurrentProjectRequest(project, requestId)) return
+    androidToolchain.value = installed
     ElMessage.success(t('gamePackaging.androidToolchainInstalled'))
   } catch (cause) {
-    error.value = errorText(cause)
-    ElMessage.error(error.value)
+    if (isCurrentProjectRequest(project, requestId)) {
+      error.value = errorText(cause)
+      ElMessage.error(error.value)
+    }
   } finally {
-    installingAndroidToolchain.value = false
+    if (isCurrentProjectRequest(project, requestId)) installingAndroidToolchain.value = false
   }
 }
 
 async function selectOutput() {
+  const project = projectStore.currentProject
+  const requestId = loadRequestId
   const preset = activePreset.value
-  if (!preset) return
+  if (!project || !preset) return
   const selected = await gameBuild.selectOutputDirectory(preset.outputDirectory)
-  if (selected) preset.outputDirectory = selected
+  if (selected && isCurrentProjectRequest(project, requestId)) preset.outputDirectory = selected
 }
 
 function ensureUpload(enabled: boolean) {
@@ -272,10 +355,10 @@ function ensureCredentialReferences() {
 }
 
 async function refreshCredentialStatus() {
+  const requestId = ++credentialStatusRequestId
   const preset = activePreset.value
   try {
     const capability = await gameBuild.getCredentialStatus()
-    secureCredentialStorageAvailable.value = capability.available
     const [signing, upload, manifestSigning] = await Promise.all([
       preset?.android?.signingCredentialId
         ? gameBuild.getCredentialStatus('android-signing', preset.android.signingCredentialId)
@@ -287,10 +370,13 @@ async function refreshCredentialStatus() {
         ? gameBuild.getCredentialStatus('manifest-signing', settings.value.manifestSigningCredentialId)
         : Promise.resolve(null),
     ])
+    if (requestId !== credentialStatusRequestId) return
+    secureCredentialStorageAvailable.value = capability.available
     signingCredentialRemembered.value = Boolean(signing?.exists)
     uploadCredentialRemembered.value = Boolean(upload?.exists)
     manifestSigningCredentialRemembered.value = Boolean(manifestSigning?.exists)
   } catch {
+    if (requestId !== credentialStatusRequestId) return
     secureCredentialStorageAvailable.value = false
     signingCredentialRemembered.value = false
     uploadCredentialRemembered.value = false
@@ -299,14 +385,17 @@ async function refreshCredentialStatus() {
 }
 
 async function forgetCredential(kind: 'android-signing' | 'upload' | 'manifest-signing') {
+  const project = projectStore.currentProject
+  const requestId = loadRequestId
   const preset = activePreset.value
   const id = kind === 'android-signing'
     ? preset?.android?.signingCredentialId
     : kind === 'upload'
       ? preset?.upload?.credentialId
       : settings.value?.manifestSigningCredentialId
-  if (!id) return
+  if (!project || !id) return
   await gameBuild.forgetCredential(kind, id)
+  if (!isCurrentProjectRequest(project, requestId)) return
   if (kind === 'android-signing') {
     rememberSigningCredential.value = false
     signingCredentialRemembered.value = false
@@ -333,7 +422,9 @@ async function setManifestSigning(enabled: boolean) {
 }
 
 async function createManifestSigningIdentity() {
-  if (!release.value || !settings.value) return
+  const project = projectStore.currentProject
+  const requestId = loadRequestId
+  if (!project || !release.value || !releaseStatus.value || !settings.value) return
   if (!release.value.update.enabled) {
     ElMessage.error(t('gamePackaging.enableUpdatesBeforeSigning'))
     return
@@ -342,6 +433,9 @@ async function createManifestSigningIdentity() {
     ElMessage.error(t('gamePackaging.secureStorageUnavailable'))
     return
   }
+  const releaseConfig = cloneDraft(release.value)
+  const releaseExpectedSourceHash = releaseStatus.value.sourceHash
+  const settingsDraft = settingsForSave()
   try {
     await ElMessageBox.confirm(
       t('gamePackaging.manifestSigningCreateWarning'),
@@ -355,27 +449,37 @@ async function createManifestSigningIdentity() {
   } catch {
     return
   }
+  if (!isCurrentProjectRequest(project, requestId)) return
   creatingManifestSigningIdentity.value = true
+  error.value = ''
   try {
-    const identity = await gameBuild.createManifestSigningIdentity()
-    settings.value.manifestSigningCredentialId = identity.credentialId
-    release.value.update.manifestSignature = {
-      enabled: true,
-      algorithm: identity.algorithm,
-      keyId: identity.keyId,
-      publicKey: identity.publicKey,
-    }
+    const saved = await gameBuild.createManifestSigningIdentity({
+      releaseConfig,
+      releaseExpectedSourceHash,
+      settings: settingsDraft,
+    }, project)
+    if (!isCurrentProjectRequest(project, requestId)) return
+    releaseStatus.value = saved.release
+    release.value = cloneDraft(saved.release.config)
+    savedRelease.value = cloneDraft(saved.release.config)
+    settings.value = cloneDraft(saved.settings)
+    restorePublicationDraft(saved.settings, saved.release.config.gameId, saved.release.config.update.defaultLanguage || 'zh-CN')
+    savedSettings.value = settingsForSave()
     manifestSigningCredentialRemembered.value = true
     ElMessage.success(t('gamePackaging.manifestSigningCreated'))
   } catch (cause) {
-    ElMessage.error(errorText(cause))
+    if (isCurrentProjectRequest(project, requestId)) {
+      error.value = operationError('gamePackaging.error.manifestSigning', cause)
+      ElMessage.error(error.value)
+    }
   } finally {
-    creatingManifestSigningIdentity.value = false
+    if (isCurrentProjectRequest(project, requestId)) creatingManifestSigningIdentity.value = false
   }
 }
 
 async function createAndroidKeystore() {
   const project = projectStore.currentProject
+  const requestId = loadRequestId
   const android = activePreset.value?.android
   if (!project || !android) return
   ensureCredentialReferences()
@@ -392,6 +496,7 @@ async function createAndroidKeystore() {
   } catch {
     return
   }
+  if (!isCurrentProjectRequest(project, requestId)) return
   creatingAndroidKeystore.value = true
   try {
     const created = await gameBuild.createAndroidKeystore({
@@ -400,14 +505,14 @@ async function createAndroidKeystore() {
       keyPassword: signingKeyPassword.value,
       commonName: android.displayName.trim() || release.value?.gameId || 'Game',
     }, project)
-    if (!created) return
+    if (!created || !isCurrentProjectRequest(project, requestId)) return
     android.keystorePath = created.path
     android.keyAlias = created.alias
     ElMessage.success(t('gamePackaging.keystoreCreated'))
   } catch (cause) {
-    ElMessage.error(errorText(cause))
+    if (isCurrentProjectRequest(project, requestId)) ElMessage.error(errorText(cause))
   } finally {
-    creatingAndroidKeystore.value = false
+    if (isCurrentProjectRequest(project, requestId)) creatingAndroidKeystore.value = false
   }
 }
 
@@ -424,6 +529,7 @@ function processingChanged() {
 
 async function generateEncryptionKey() {
   const project = projectStore.currentProject
+  const requestId = loadRequestId
   if (!project) return
   try {
     const { value } = await ElMessageBox.prompt(
@@ -431,17 +537,21 @@ async function generateEncryptionKey() {
       t('gamePackaging.generateEncryptionKey'),
       { inputPattern: /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$/, inputErrorMessage: t('gamePackaging.invalidKeyName') },
     )
+    if (!isCurrentProjectRequest(project, requestId)) return
     const key = await gameBuild.generateEncryptionKey(value, project)
-    encryptionKeys.value = await gameBuild.listEncryptionKeys(project)
+    const nextKeys = await gameBuild.listEncryptionKeys(project)
+    if (!isCurrentProjectRequest(project, requestId)) return
+    encryptionKeys.value = nextKeys
     if (activePreset.value) activePreset.value.processing.encryptionKeyId = key.id
     ElMessage.success(t('gamePackaging.encryptionKeyCreated'))
   } catch (cause) {
-    if (cause !== 'cancel' && cause !== 'close') ElMessage.error(errorText(cause))
+    if (isCurrentProjectRequest(project, requestId) && cause !== 'cancel' && cause !== 'close') ElMessage.error(errorText(cause))
   }
 }
 
 async function importEncryptionKey() {
   const project = projectStore.currentProject
+  const requestId = loadRequestId
   if (!project) return
   try {
     const name = await ElMessageBox.prompt(
@@ -454,53 +564,128 @@ async function importEncryptionKey() {
       t('gamePackaging.importEncryptionKey'),
       { inputType: 'password' },
     )
+    if (!isCurrentProjectRequest(project, requestId)) return
     const key = await gameBuild.importEncryptionKey(name.value, material.value, project)
-    encryptionKeys.value = await gameBuild.listEncryptionKeys(project)
+    const nextKeys = await gameBuild.listEncryptionKeys(project)
+    if (!isCurrentProjectRequest(project, requestId)) return
+    encryptionKeys.value = nextKeys
     if (activePreset.value) activePreset.value.processing.encryptionKeyId = key.id
     ElMessage.success(t('gamePackaging.encryptionKeyImported'))
   } catch (cause) {
-    if (cause !== 'cancel' && cause !== 'close') ElMessage.error(errorText(cause))
+    if (isCurrentProjectRequest(project, requestId) && cause !== 'cancel' && cause !== 'close') ElMessage.error(errorText(cause))
   }
 }
 
-async function persistSettings(): Promise<void> {
-  const project = projectStore.currentProject
+async function persistSettings(project = projectStore.currentProject, requestId = loadRequestId): Promise<void> {
   if (!project || !settings.value) throw new Error(t('gamePackaging.noProject'))
   ensureCredentialReferences()
-  settings.value = await gameBuild.saveSettings(structuredClone(settings.value), project)
+  const saved = await gameBuild.saveSettings(settingsForSave(), project)
+  if (!isCurrentProjectRequest(project, requestId)) throw new Error('The active project changed while saving packaging settings.')
+  settings.value = cloneDraft(saved)
+  restorePublicationDraft(settings.value, release.value?.gameId || 'Game', release.value?.update.defaultLanguage || 'zh-CN')
+  savedSettings.value = settingsForSave()
+}
+
+async function persistRelease(project = projectStore.currentProject, requestId = loadRequestId): Promise<void> {
+  if (!project || !release.value || !releaseStatus.value) throw new Error(t('gamePackaging.noProject'))
+  const saved = await gameRelease.save({
+    config: cloneDraft(release.value),
+    expectedSourceHash: releaseStatus.value.sourceHash,
+    installRuntimePlugins: true,
+  }, project)
+  if (!isCurrentProjectRequest(project, requestId)) throw new Error('The active project changed while saving the release configuration.')
+  releaseStatus.value = saved
+  release.value = cloneDraft(saved.config)
+  savedRelease.value = cloneDraft(saved.config)
+}
+
+async function saveDraft(): Promise<boolean> {
+  const project = projectStore.currentProject
+  const requestId = loadRequestId
+  if (!project) return false
+  try {
+    await persistSettings(project, requestId)
+    await persistRelease(project, requestId)
+    return true
+  } catch (cause) {
+    if (isCurrentProjectRequest(project, requestId)) {
+      error.value = operationError('gamePackaging.error.save', cause)
+      ElMessage.error(error.value)
+    }
+    return false
+  }
+}
+
+function discardDraft(): boolean {
+  if (!savedRelease.value || !savedSettings.value) return false
+  release.value = cloneDraft(savedRelease.value)
+  settings.value = cloneDraft(savedSettings.value)
+  restorePublicationDraft(savedSettings.value, savedRelease.value.gameId, savedRelease.value.update.defaultLanguage || 'zh-CN')
+  preflight.value = null
+  result.value = null
+  published.value = null
+  error.value = ''
+  return true
 }
 
 async function runPreflight(): Promise<GameBuildPreflightResult | null> {
+  if (checking.value || building.value || publishing.value) return null
   const project = projectStore.currentProject
+  const requestId = loadRequestId
   const preset = activePreset.value
   if (!project || !preset || !release.value) return null
   checking.value = true
   error.value = ''
   result.value = null
   try {
-    await persistSettings()
+    await persistSettings(project, requestId)
     const checked = await gameBuild.preflight({
       presetId: preset.id,
-      releaseConfig: structuredClone(release.value),
+      releaseConfig: cloneDraft(release.value),
     }, project)
-    if (projectStore.currentProject !== project) return null
+    if (!isCurrentProjectRequest(project, requestId)) return null
     preflight.value = checked
     if (checked.ok) ElMessage.success(t('gamePackaging.checkPassed'))
     return checked
   } catch (cause) {
-    error.value = errorText(cause)
-    ElMessage.error(error.value)
+    if (isCurrentProjectRequest(project, requestId)) {
+      error.value = operationError('gamePackaging.error.check', cause)
+      ElMessage.error(error.value)
+    }
     return null
   } finally {
-    if (projectStore.currentProject === project) checking.value = false
+    if (isCurrentProjectRequest(project, requestId)) checking.value = false
   }
 }
 
 async function build() {
+  if (checking.value || building.value || publishing.value) return
   const project = projectStore.currentProject
+  const requestId = loadRequestId
   const preset = activePreset.value
   if (!project || !preset || !release.value || !releaseStatus.value) return
+  if (preset.upload?.enabled) {
+    if (!(settings.value?.publicationDirectory || '').trim()) {
+      error.value = t('gamePackaging.publicationDirectoryRequired')
+      ElMessage.error(error.value)
+      return
+    }
+    if (!collectPublicationMetadata()) return
+    if (preset.upload.authorization === 'basic'
+      && !uploadCredentialRemembered.value
+      && (!uploadUsername.value.trim() || !uploadPassword.value)) {
+      error.value = t('gamePackaging.uploadCredentialRequired')
+      ElMessage.error(error.value)
+      return
+    }
+    if (preset.upload.authorization === 'bearer' && !uploadCredentialRemembered.value && !uploadToken.value) {
+      error.value = t('gamePackaging.uploadCredentialRequired')
+      ElMessage.error(error.value)
+      return
+    }
+  }
   const checked = await runPreflight()
+  if (!isCurrentProjectRequest(project, requestId)) return
   if (!checked || !checked.ok) return
   if (checked.managedChanges.length) {
     try {
@@ -512,17 +697,23 @@ async function build() {
     } catch {
       return
     }
+    if (!isCurrentProjectRequest(project, requestId)) return
   }
   const conflict = await chooseConflict(checked)
+  if (!isCurrentProjectRequest(project, requestId)) return
   if (!conflict) return
   building.value = true
+  cancelingBuild.value = false
   error.value = ''
   published.value = null
+  const operationId = globalThis.crypto.randomUUID()
+  buildProgress.value = { operationId, stage: 'preflight', percent: 0 }
   try {
     const built = await gameBuild.build({
+      operationId,
       presetId: preset.id,
       outputConflict: conflict,
-      releaseConfig: structuredClone(release.value),
+      releaseConfig: cloneDraft(release.value),
       releaseExpectedSourceHash: releaseStatus.value.sourceHash,
       confirmManagedChanges: true,
       ...(preset.android?.signing === 'release' ? {
@@ -533,40 +724,115 @@ async function build() {
         rememberSigningCredential: rememberSigningCredential.value,
       } : {}),
     }, project)
+    if (!isCurrentProjectRequest(project, requestId)) return
     result.value = built
     if (built.status === 'success') {
       ElMessage.success(t('gamePackaging.buildSucceeded'))
       const nextStatus = await gameRelease.status(project)
+      if (!isCurrentProjectRequest(project, requestId)) return
       releaseStatus.value = nextStatus
-      release.value = structuredClone(nextStatus.config)
-      settings.value = structuredClone(await gameBuild.getSettings(project))
+      release.value = cloneDraft(nextStatus.config)
+      savedRelease.value = cloneDraft(nextStatus.config)
+      const nextSettings = await gameBuild.getSettings(project)
+      if (!isCurrentProjectRequest(project, requestId)) return
+      settings.value = cloneDraft(nextSettings)
+      restorePublicationDraft(settings.value, nextStatus.config.gameId, nextStatus.config.update.defaultLanguage || 'zh-CN')
+      savedSettings.value = settingsForSave()
       signingStorePassword.value = ''
       signingKeyPassword.value = ''
       await refreshCredentialStatus()
+      if (!isCurrentProjectRequest(project, requestId)) return
       if (preset.upload?.enabled && built.releaseId) await publishRelease(built.releaseId)
     } else if (built.status === 'failed') {
       error.value = built.error || t('gamePackaging.buildFailed')
       ElMessage.error(error.value)
+    } else {
+      ElMessage.info(t('gamePackaging.buildCanceled'))
     }
   } catch (cause) {
-    error.value = errorText(cause)
-    ElMessage.error(error.value)
+    if (isCurrentProjectRequest(project, requestId)) {
+      error.value = operationError('gamePackaging.error.build', cause)
+      ElMessage.error(error.value)
+    }
   } finally {
-    building.value = false
+    if (isCurrentProjectRequest(project, requestId)) {
+      building.value = false
+      cancelingBuild.value = false
+    }
+  }
+}
+
+async function cancelBuild() {
+  const operationId = buildProgress.value?.operationId
+  if (!operationId || cancelingBuild.value) return
+  cancelingBuild.value = true
+  try {
+    await gameBuild.cancel(operationId)
+  } catch (cause) {
+    error.value = operationError('gamePackaging.error.cancelBuild', cause)
+    ElMessage.error(error.value)
+    cancelingBuild.value = false
   }
 }
 
 async function selectPublicationDirectory() {
-  if (!settings.value) return
+  const project = projectStore.currentProject
+  const requestId = loadRequestId
+  if (!project || !settings.value) return
   const selected = await gameBuild.selectOutputDirectory(settings.value.publicationDirectory)
-  if (selected) settings.value.publicationDirectory = selected
+  if (selected && isCurrentProjectRequest(project, requestId) && settings.value) settings.value.publicationDirectory = selected
 }
 
 async function publishRelease(releaseId = result.value?.releaseId) {
+  if (publishing.value || building.value || checking.value) return
   const project = projectStore.currentProject
+  const requestId = loadRequestId
   const preset = activePreset.value
-  const publicationDirectory = settings.value?.publicationDirectory
-  if (!project || !preset || !releaseId || !publicationDirectory) return
+  const publicationDirectory = (settings.value?.publicationDirectory || '').trim()
+  if (!project || !preset || !releaseId) return
+  if (!publicationDirectory) {
+    error.value = t('gamePackaging.publicationDirectoryRequired')
+    ElMessage.error(error.value)
+    return
+  }
+  const metadata = collectPublicationMetadata()
+  if (!metadata) return
+  publishing.value = true
+  error.value = ''
+  try {
+    await persistSettings(project, requestId)
+    const nextPublished = await gameBuild.publish({
+      releaseId,
+      publishDirectory: publicationDirectory,
+      metadata,
+      updateLatest: true,
+      ...(preset.upload?.enabled ? {
+        upload: cloneDraft(preset.upload),
+        uploadCredential: {
+          ...(uploadUsername.value ? { username: uploadUsername.value } : {}),
+          ...(uploadPassword.value ? { password: uploadPassword.value } : {}),
+          ...(uploadToken.value ? { token: uploadToken.value } : {}),
+        },
+        rememberUploadCredential: rememberUploadCredential.value,
+      } : {}),
+    }, project)
+    if (!isCurrentProjectRequest(project, requestId)) return
+    published.value = nextPublished
+    ElMessage.success(preset.upload?.enabled ? t('gamePackaging.uploadSucceeded') : t('gamePackaging.publishSucceeded'))
+    uploadPassword.value = ''
+    uploadToken.value = ''
+    await refreshCredentialStatus()
+  } catch (cause) {
+    if (isCurrentProjectRequest(project, requestId)) {
+      error.value = operationError('gamePackaging.error.publish', cause)
+      ElMessage.error(error.value)
+    }
+  } finally {
+    if (isCurrentProjectRequest(project, requestId)) publishing.value = false
+  }
+}
+
+function collectPublicationMetadata(): GameReleasePublicationMetadata | null {
   const title: Record<string, string> = {}
   const summary: Record<string, string> = {}
   const maintenance: Record<string, string> = {}
@@ -575,12 +841,12 @@ async function publishRelease(releaseId = result.value?.releaseId) {
     if (!language || !entry.title.trim() || !entry.summary.trim()) {
       error.value = t('gamePackaging.publicationMetadataRequired')
       ElMessage.error(error.value)
-      return
+      return null
     }
     if (title[language] !== undefined) {
       error.value = t('gamePackaging.publicationDuplicateLanguage')
       ElMessage.error(error.value)
-      return
+      return null
     }
     title[language] = entry.title.trim()
     summary[language] = entry.summary.trim()
@@ -590,47 +856,19 @@ async function publishRelease(releaseId = result.value?.releaseId) {
   if (!defaultLanguage || title[defaultLanguage] === undefined) {
     error.value = t('gamePackaging.publicationDefaultLanguageMissing')
     ElMessage.error(error.value)
-    return
+    return null
   }
   if (!Object.keys(title).length) {
     error.value = t('gamePackaging.publicationMetadataRequired')
     ElMessage.error(error.value)
-    return
+    return null
   }
-  publishing.value = true
-  error.value = ''
-  try {
-    await persistSettings()
-    published.value = await gameBuild.publish({
-      releaseId,
-      publishDirectory: publicationDirectory,
-      metadata: {
-        defaultLanguage,
-        title,
-        summary,
-        required: publicationRequired.value,
-        maintenance: Object.keys(maintenance).length ? maintenance : null,
-      },
-      updateLatest: true,
-      ...(preset.upload?.enabled ? {
-        upload: structuredClone(preset.upload),
-        uploadCredential: {
-          ...(uploadUsername.value ? { username: uploadUsername.value } : {}),
-          ...(uploadPassword.value ? { password: uploadPassword.value } : {}),
-          ...(uploadToken.value ? { token: uploadToken.value } : {}),
-        },
-        rememberUploadCredential: rememberUploadCredential.value,
-      } : {}),
-    }, project)
-    ElMessage.success(preset.upload?.enabled ? t('gamePackaging.uploadSucceeded') : t('gamePackaging.publishSucceeded'))
-    uploadPassword.value = ''
-    uploadToken.value = ''
-    await refreshCredentialStatus()
-  } catch (cause) {
-    error.value = errorText(cause)
-    ElMessage.error(error.value)
-  } finally {
-    publishing.value = false
+  return {
+    defaultLanguage,
+    title,
+    summary,
+    required: publicationRequired.value,
+    maintenance: Object.keys(maintenance).length ? maintenance : null,
   }
 }
 
@@ -655,7 +893,11 @@ function revealResult() {
 }
 
 function errorText(value: unknown): string {
-  return value instanceof Error ? value.message : String(value)
+  return formatUserFacingErrorMessage(value, 'general', language.value)
+}
+
+function operationError(key: MessageKey, value: unknown): string {
+  return t(key, { message: errorText(value) })
 }
 </script>
 
@@ -670,24 +912,37 @@ function errorText(value: unknown): string {
         <el-button :loading="checking" :disabled="!activePreset || building" data-ui-id="game-packaging-check" @click="runPreflight">
           {{ t('gamePackaging.check') }}
         </el-button>
-        <el-button type="primary" :loading="building" :disabled="!activePreset || checking" data-ui-id="game-packaging-build" @click="build">
+        <el-button v-if="!building" type="primary" :disabled="!activePreset || checking" data-ui-id="game-packaging-build" @click="build">
           {{ t('gamePackaging.build') }}
+        </el-button>
+        <el-button v-else type="danger" plain :loading="cancelingBuild" data-ui-id="game-packaging-cancel" @click="cancelBuild">
+          {{ cancelingBuild ? t('gamePackaging.cancelingBuild') : t('gamePackaging.cancelBuild') }}
         </el-button>
       </div>
     </header>
+
+    <div v-if="building && buildProgress" class="build-progress" data-ui-id="game-packaging-progress">
+      <span>{{ t(`gamePackaging.progress.${buildProgress.stage}`) }}</span>
+      <el-progress :percentage="buildProgress.percent" :show-text="true" />
+    </div>
 
     <div v-if="!hasProject" class="empty-state">{{ t('gamePackaging.noProject') }}</div>
     <div v-else-if="loading" class="empty-state">{{ t('gamePackaging.loading') }}</div>
     <el-alert v-else-if="error && !settings" :title="error" type="error" :closable="false" show-icon />
 
     <el-scrollbar v-else-if="settings && release && activePreset" class="page-scroll">
-      <div class="packaging-form">
+      <div
+        class="packaging-form"
+        :inert="building || checking || publishing || creatingManifestSigningIdentity ? true : undefined"
+        :aria-busy="building || checking || publishing || creatingManifestSigningIdentity"
+      >
+        <el-alert v-if="error" class="page-error" :title="error" type="error" show-icon @close="error = ''" />
         <section class="preset-bar">
           <el-select :model-value="activePreset.id" data-ui-id="game-packaging-preset" @update:model-value="selectPreset(String($event))">
             <el-option v-for="preset in settings.presets" :key="preset.id" :value="preset.id" :label="preset.name" />
           </el-select>
-          <el-button :icon="Plus" circle :title="t('gamePackaging.addPreset')" @click="addPreset" />
-          <el-button :icon="Delete" circle :disabled="settings.presets.length <= 1" :title="t('gamePackaging.deletePreset')" @click="removePreset" />
+          <el-button :icon="Plus" circle :title="t('gamePackaging.addPreset')" data-ui-id="game-packaging-add-preset" @click="addPreset" />
+          <el-button :icon="Delete" circle :disabled="settings.presets.length <= 1" :title="t('gamePackaging.deletePreset')" data-ui-id="game-packaging-delete-preset" @click="removePreset" />
         </section>
 
         <section class="form-section main-grid">
@@ -906,18 +1161,17 @@ function errorText(value: unknown): string {
           <ul v-if="preflight.warnings.length"><li v-for="item in preflight.warnings" :key="item">{{ item }}</li></ul>
         </section>
 
-        <section v-if="result?.status === 'success'" class="build-result">
+        <section v-if="result?.status === 'success'" class="build-result" data-ui-id="game-packaging-build-result">
           <div><h2>{{ t('gamePackaging.buildSucceeded') }}</h2><code>{{ result.outputPath }}</code></div>
           <div class="result-actions">
             <el-button @click="revealResult">{{ t('gamePackaging.showOutput') }}</el-button>
-            <el-button type="primary" :loading="publishing" @click="publishRelease()">{{ activePreset.upload?.enabled ? t('gamePackaging.publishAndUpload') : t('gamePackaging.publishLocal') }}</el-button>
+            <el-button type="primary" :loading="publishing" data-ui-id="game-packaging-publish" @click="publishRelease()">{{ activePreset.upload?.enabled ? t('gamePackaging.publishAndUpload') : t('gamePackaging.publishLocal') }}</el-button>
           </div>
         </section>
-        <section v-if="published" class="build-result">
+        <section v-if="published" class="build-result" data-ui-id="game-packaging-publish-result">
           <div><h2>{{ t('gamePackaging.publishSucceeded') }}</h2><code>{{ published.releaseDirectory }}</code></div>
           <el-button @click="gameBuild.reveal(published.releaseDirectory)">{{ t('gamePackaging.showOutput') }}</el-button>
         </section>
-        <el-alert v-else-if="error" :title="error" type="error" :closable="false" show-icon />
       </div>
     </el-scrollbar>
   </main>
@@ -931,8 +1185,11 @@ h1 { font-size: 18px; color: var(--app-ink); }
 h2 { font-size: 14px; color: var(--app-ink); }
 .page-header p { margin-top: 4px; color: var(--app-ink-muted); font-size: 12px; }
 .header-actions, .preset-bar { display: flex; align-items: center; gap: 8px; }
+.build-progress { padding: 8px 20px; display: grid; grid-template-columns: minmax(150px, auto) minmax(180px, 1fr); align-items: center; gap: 14px; border-bottom: 1px solid var(--app-border); color: var(--app-ink-soft); font-size: 12px; }
+.build-progress :deep(.el-progress) { min-width: 0; }
 .page-scroll { flex: 1; min-height: 0; }
 .packaging-form { width: min(860px, calc(100% - 40px)); margin: 20px auto 40px; display: grid; gap: 14px; }
+.page-error { margin-bottom: 0; }
 .preset-bar :deep(.el-select) { width: 260px; }
 .form-section { padding: 18px; border: 1px solid var(--app-border); border-radius: var(--app-radius-lg); background: var(--app-bg-elevated); }
 .main-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 14px; }
@@ -962,4 +1219,5 @@ h2 { font-size: 14px; color: var(--app-ink); }
 .build-result code { display: block; margin-top: 7px; color: var(--app-ink-soft); font-size: 11px; word-break: break-all; }
 .empty-state { flex: 1; display: grid; place-items: center; color: var(--app-ink-muted); }
 @media (max-width: 960px) { .main-grid, .processing-grid, .android-grid, .upload-grid, .publication-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 640px) { .build-progress { grid-template-columns: 1fr; } }
 </style>

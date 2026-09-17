@@ -59,6 +59,19 @@ export default defineConfig({
           },
         },
       },
+      {
+        entry: '../../backend/src/core/desktop/game-build-worker.ts',
+        vite: {
+          build: {
+            rollupOptions: {
+              external: ['electron'],
+              output: {
+                entryFileNames: 'game-build-worker.js',
+              },
+            },
+          },
+        },
+      },
     ]),
   ],
   resolve: {

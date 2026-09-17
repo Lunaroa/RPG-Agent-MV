@@ -39,6 +39,21 @@ describe('translate', () => {
       'Failed to open documentation: missing',
     );
   });
+
+  it('interpolates release workflow errors instead of exposing placeholders', () => {
+    assert.equal(
+      translate('gameVersion.error.indexTest', 'zh-CN', { message: '连接被拒绝' }),
+      '更新清单测试失败：连接被拒绝',
+    );
+    assert.equal(
+      translate('gamePackaging.error.publish', 'en-US', { message: 'missing metadata' }),
+      'The release could not be published: missing metadata',
+    );
+    assert.equal(
+      translate('gameVersion.indexTestAvailable', 'zh-CN', { version: '1.2.3-beta.1' }),
+      '服务器当前发布版本：1.2.3-beta.1',
+    );
+  });
 });
 
 describe('PRODUCT_LANGUAGE_OPTIONS', () => {

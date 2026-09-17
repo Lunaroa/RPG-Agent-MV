@@ -207,9 +207,17 @@ export interface GameBuildReport {
   artifacts: GameBuildArtifact[];
   files: GameBuildFileManifestEntry[];
   deletedFiles: string[];
+  contentChanges?: GameBuildContentChanges;
   warnings: string[];
   failedStage?: string;
   error?: string;
+}
+
+export interface GameBuildContentChanges {
+  baseReleaseId: string;
+  added: string[];
+  modified: string[];
+  deleted: string[];
 }
 
 export interface GameBuildPreflightResult {
@@ -268,6 +276,7 @@ export interface GameBuildResult {
   reportPath?: string;
   artifacts: GameBuildArtifact[];
   warnings: string[];
+  contentChanges?: GameBuildContentChanges;
   failedStage?: string;
   error?: string;
 }

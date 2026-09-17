@@ -122,6 +122,7 @@ test('builds file deltas against an exact report and records deletions', async (
     });
     assert.equal(baseline.status, 'success', baseline.error);
     fs.writeFileSync(path.join(project, 'data', 'Map001.json'), '{"changed":true}\n', 'utf8');
+    fs.writeFileSync(path.join(project, 'data', 'Map002.json'), '{"added":true}\n', 'utf8');
     fs.rmSync(path.join(project, 'img', 'pictures', 'unused.png'));
 
     const delta: GameBuildPreset = {
@@ -140,9 +141,14 @@ test('builds file deltas against an exact report and records deletions', async (
     assert.equal(result.status, 'success', result.error);
     assert.ok(result.outputPath?.endsWith('-2'));
     assert.equal(fs.existsSync(path.join(result.outputPath!, 'data', 'Map001.json')), true);
+    assert.equal(fs.existsSync(path.join(result.outputPath!, 'data', 'Map002.json')), true);
     assert.equal(fs.existsSync(path.join(result.outputPath!, 'index.html')), false);
+    assert.ok(result.contentChanges?.added.includes('data/Map002.json'));
+    assert.ok(result.contentChanges?.modified.includes('data/Map001.json'));
+    assert.ok(result.contentChanges?.deleted.includes('img/pictures/unused.png'));
     const report = readGameBuildReport(project, result.releaseId!);
     assert.deepEqual(report.deletedFiles, ['img/pictures/unused.png']);
+    assert.deepEqual(report.contentChanges, result.contentChanges);
     assert.equal(report.baseReleaseId, baseline.releaseId);
     assert.equal(path.dirname(result.outputPath!), output);
   });

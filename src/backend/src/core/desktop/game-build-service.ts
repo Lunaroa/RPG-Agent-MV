@@ -29,6 +29,7 @@ import {
   applyContentProcessing,
   preflightContentProcessing,
 } from './game-content-processing-service.ts';
+import { compareGameBuildContent } from './game-build-content-changes.ts';
 import { readGameEncryptionKey } from './game-encryption-key-service.ts';
 import {
   assertOutputLocation,
@@ -336,6 +337,9 @@ export async function buildGame(
     const deletedFiles = base
       ? [...base.files.keys()].filter((file) => !targetDigest.files.some((entry) => entry.path === file)).sort()
       : [];
+    const contentChanges = base
+      ? compareGameBuildContent(base.report.releaseId, targetDigest.files, base.files, preset.target)
+      : undefined;
 
     let androidOutput: AndroidBuildOutput | null = null;
     if (preset.target === 'android') {
@@ -501,6 +505,7 @@ export async function buildGame(
       artifacts,
       files: targetDigest.files,
       deletedFiles,
+      ...(contentChanges ? { contentChanges } : {}),
       warnings: verified.warnings,
     };
     const reportPath = releaseReportPath(project, releaseId);
@@ -523,6 +528,7 @@ export async function buildGame(
       reportPath,
       artifacts,
       warnings: report.warnings,
+      ...(contentChanges ? { contentChanges } : {}),
     };
   } catch (error) {
     if (stagingRoot) cleanupStaging(stagingRoot);

@@ -21,6 +21,7 @@ test('version view exposes index validation and keeps update controls in a respo
   assert.match(versionView, /:disabled="saving \|\| testingUpdateIndex"/);
   assert.match(versionView, /class="update-policy"/);
   assert.match(versionView, /\.update-options \{ display: grid;/);
+  assert.match(versionView, /gameVersion\.pendingFilesNote/);
 });
 
 test('packaging view validates publication data before preflight and preserves Android drafts', () => {
@@ -34,6 +35,10 @@ test('packaging view validates publication data before preflight and preserves A
   assert.match(packagingView, /data-ui-id="game-packaging-publish"/);
   assert.match(packagingView, /data-ui-id="game-packaging-publish-result"/);
   assert.match(packagingView, /gameBuild\.onProgress/);
+  assert.match(packagingView, /data-ui-id="game-packaging-content-changes"/);
+  assert.match(packagingView, /result\.contentChanges/);
+  assert.match(packagingView, /gamePackaging\.contentChangesAfterBuild/);
+  assert.match(packagingView, /if \(loading\.value \|\| checking\.value \|\| building\.value \|\| publishing\.value\) return/);
   assert.match(packagingView, /let loadRequestId = 0/);
   assert.match(packagingView, /isCurrentProjectRequest\(project, requestId\)/);
   assert.match(packagingView, /:inert="building \|\| checking \|\| publishing \|\| creatingManifestSigningIdentity \? true : undefined"/);

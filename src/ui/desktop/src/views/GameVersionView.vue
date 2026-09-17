@@ -313,6 +313,7 @@ function operationError(key: MessageKey, value: unknown): string {
 
         <section v-if="status?.managedChanges.length" class="managed-changes">
           <h2>{{ t('gameVersion.pendingFiles') }}</h2>
+          <p>{{ t('gameVersion.pendingFilesNote') }}</p>
           <div v-for="change in status.managedChanges" :key="change.relativePath" class="managed-change">
             <code>{{ change.relativePath }}</code>
             <span>{{ change.kind === 'create' ? t('gameVersion.create') : t('gameVersion.update') }}</span>
@@ -369,6 +370,7 @@ h2 { font-size: 14px; color: var(--app-ink); }
 .update-policy :deep(.el-radio) { height: auto; margin-right: 0; white-space: normal; }
 .managed-changes { padding: 14px 18px; border-radius: var(--app-radius-lg); background: var(--app-accent-soft); }
 .managed-changes h2 { margin-bottom: 8px; }
+.managed-changes p { margin-bottom: 8px; color: var(--app-ink-muted); font-size: 12px; line-height: 1.5; }
 .managed-change { display: flex; justify-content: space-between; gap: 16px; padding: 5px 0; color: var(--app-ink-soft); font-size: 12px; }
 .managed-change code { overflow: hidden; text-overflow: ellipsis; color: var(--app-ink); }
 .empty-state { flex: 1; display: grid; place-items: center; color: var(--app-ink-muted); }

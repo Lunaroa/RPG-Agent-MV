@@ -83,6 +83,15 @@ const activePreset = computed(() => {
     || settings.value.presets[0]
     || null
 })
+const contentChangeGroups = computed(() => {
+  const changes = result.value?.contentChanges
+  if (!changes) return []
+  return ([
+    { kind: 'added', paths: changes.added },
+    { kind: 'modified', paths: changes.modified },
+    { kind: 'deleted', paths: changes.deleted },
+  ] as const).filter((group) => group.paths.length > 0)
+})
 const hasProject = computed(() => Boolean(projectStore.currentProject))
 const publicationLanguageOptions = computed(() => publicationLocales.value
   .map((entry) => entry.language.trim())
@@ -108,6 +117,15 @@ watch(
     settings.value?.manifestSigningCredentialId,
   ],
   () => void refreshCredentialStatus(),
+)
+watch(
+  () => JSON.stringify({ release: release.value, preset: activePreset.value }),
+  () => {
+    if (loading.value || checking.value || building.value || publishing.value) return
+    preflight.value = null
+    result.value = null
+    published.value = null
+  },
 )
 
 onMounted(() => {
@@ -1159,6 +1177,27 @@ function operationError(key: MessageKey, value: unknown): string {
           <h2>{{ preflight.ok ? t('gamePackaging.checkPassed') : t('gamePackaging.checkFailed') }}</h2>
           <ul v-if="preflight.blockers.length"><li v-for="item in preflight.blockers" :key="item">{{ item }}</li></ul>
           <ul v-if="preflight.warnings.length"><li v-for="item in preflight.warnings" :key="item">{{ item }}</li></ul>
+          <p v-if="preflight.ok && preflight.preset.packageType !== 'full'" class="section-note">
+            {{ t('gamePackaging.contentChangesAfterBuild') }}
+          </p>
+        </section>
+
+        <section
+          v-if="result?.status === 'success' && result.contentChanges"
+          class="content-changes"
+          data-ui-id="game-packaging-content-changes"
+        >
+          <h2>{{ t('gamePackaging.contentChanges') }}</h2>
+          <p>{{ t('gamePackaging.contentChangesBase', { releaseId: result.contentChanges.baseReleaseId }) }}</p>
+          <p v-if="contentChangeGroups.length === 0" class="content-changes-empty">
+            {{ t('gamePackaging.contentChangesNone') }}
+          </p>
+          <div v-else class="content-change-groups">
+            <div v-for="group in contentChangeGroups" :key="group.kind" class="content-change-group">
+              <h3>{{ t(`gamePackaging.contentChanges.${group.kind}`, { count: group.paths.length }) }}</h3>
+              <code v-for="relativePath in group.paths" :key="relativePath">{{ relativePath }}</code>
+            </div>
+          </div>
         </section>
 
         <section v-if="result?.status === 'success'" class="build-result" data-ui-id="game-packaging-build-result">
@@ -1215,6 +1254,14 @@ h2 { font-size: 14px; color: var(--app-ink); }
 .check-result.is-ok, .build-result { border-color: var(--el-color-success-light-5); background: var(--el-color-success-light-9); }
 .check-result.is-error { border-color: var(--el-color-danger-light-5); background: var(--el-color-danger-light-9); }
 .check-result ul { margin: 8px 0 0; padding-left: 20px; color: var(--app-ink-soft); font-size: 12px; line-height: 1.6; }
+.content-changes { padding: 16px 18px; border: 1px solid var(--app-border); border-radius: var(--app-radius-lg); background: var(--app-bg-elevated); }
+.content-changes > p { margin-top: 6px; color: var(--app-ink-muted); font-size: 12px; }
+.content-change-groups { max-height: 300px; margin-top: 12px; overflow: auto; display: grid; gap: 12px; }
+.content-change-group { display: grid; gap: 4px; }
+.content-change-group h3 { margin: 0; color: var(--app-ink-soft); font-size: 12px; font-weight: 600; }
+.content-change-group code { color: var(--app-ink); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.content-change-group h3 + code { margin-top: 2px; }
+.content-changes > .content-changes-empty { color: var(--el-color-success); }
 .build-result { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .build-result code { display: block; margin-top: 7px; color: var(--app-ink-soft); font-size: 11px; word-break: break-all; }
 .empty-state { flex: 1; display: grid; place-items: center; color: var(--app-ink-muted); }

@@ -12,6 +12,7 @@ import {
   preflightGameBuild,
   readGameBuildReport,
   saveGameBuildSettings,
+  startGameBuildWorker,
 } from './game-build-service.ts';
 
 test('lists explicit Android icon candidates without guessing among multiple files', () => {
@@ -86,6 +87,26 @@ test('records a failed build report when build preflight blocks the request', as
     assert.equal(report.status, 'failed');
     assert.equal(report.failedStage, 'preflight');
     assert.match(report.error || '', /preset channel/i);
+  });
+});
+
+test('still writes a failure report when the saved release configuration is corrupt', async () => {
+  await withProject(async ({ workflowRoot, project, preset }) => {
+    saveGameBuildSettings(project, { presets: [preset], selectedPresetId: preset.id });
+    fs.writeFileSync(path.join(project, 'data', 'RPGAgentRelease.json'), '{not-json', 'utf8');
+    const result = await buildGame(workflowRoot, project, {
+      presetId: preset.id,
+      outputConflict: 'overwrite',
+      confirmManagedChanges: true,
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.failedStage, 'preflight');
+    assert.ok(result.releaseId);
+    assert.ok(result.reportPath);
+    const report = readGameBuildReport(project, result.releaseId!);
+    assert.equal(report.status, 'failed');
+    assert.match(report.error || '', /cannot be read/i);
+    assert.ok(report.warnings.some((warning) => /recovered release metadata/i.test(warning)));
   });
 });
 
@@ -174,6 +195,82 @@ test('builds a runnable Windows directory with an external update launcher and e
   } finally {
     fs.rmSync(workflowRoot, { recursive: true, force: true });
   }
+});
+
+test('runs packaging in a worker and reports ordered progress without blocking the caller', async () => {
+  await withProject(async ({ workflowRoot, project, release, preset }) => {
+    saveGameBuildSettings(project, { presets: [preset], selectedPresetId: preset.id });
+    const progress: Array<{ stage: string; percent: number }> = [];
+    let ticks = 0;
+    const timer = setInterval(() => { ticks += 1; }, 2);
+    try {
+      const handle = startGameBuildWorker(workflowRoot, project, {
+        operationId: 'worker-build-test',
+        presetId: preset.id,
+        outputConflict: 'overwrite',
+        releaseConfig: release,
+        releaseExpectedSourceHash: null,
+        confirmManagedChanges: true,
+      }, (event) => progress.push({ stage: event.stage, percent: event.percent }));
+      const result = await handle.result;
+      assert.equal(result.status, 'success', result.error);
+      assert.ok(ticks > 0);
+      assert.equal(progress.at(-1)?.stage, 'complete');
+      assert.equal(progress.at(-1)?.percent, 100);
+      assert.deepEqual([...progress.map((event) => event.percent)].sort((a, b) => a - b), progress.map((event) => event.percent));
+    } finally {
+      clearInterval(timer);
+    }
+  });
+});
+
+test('cancels a packaging worker and resolves with a canceled result', async () => {
+  await withProject(async ({ workflowRoot, project, output, release, preset }) => {
+    saveGameBuildSettings(project, { presets: [preset], selectedPresetId: preset.id });
+    fs.writeFileSync(path.join(project, 'large-test-asset.bin'), Buffer.alloc(16 * 1024 * 1024, 1));
+    let handle: ReturnType<typeof startGameBuildWorker>;
+    handle = startGameBuildWorker(workflowRoot, project, {
+      operationId: 'worker-cancel-test',
+      presetId: preset.id,
+      outputConflict: 'overwrite',
+      releaseConfig: release,
+      releaseExpectedSourceHash: null,
+      confirmManagedChanges: true,
+    }, (event) => {
+      if (event.stage === 'copy-project') handle.cancel();
+    });
+    const result = await handle.result;
+    assert.equal(result.status, 'canceled');
+    assert.deepEqual(result.artifacts, []);
+    const abandonedStaging = fs.existsSync(output)
+      ? fs.readdirSync(output).filter((entry) => entry.startsWith('.rpg-agent-build-'))
+      : [];
+    assert.deepEqual(abandonedStaging, []);
+  });
+});
+
+test('finishes the report after output publication has crossed the cancellation boundary', async () => {
+  await withProject(async ({ workflowRoot, project, release, preset }) => {
+    saveGameBuildSettings(project, { presets: [preset], selectedPresetId: preset.id });
+    let canceled = false;
+    const result = await buildGame(workflowRoot, project, {
+      presetId: preset.id,
+      outputConflict: 'overwrite',
+      releaseConfig: release,
+      releaseExpectedSourceHash: null,
+      confirmManagedChanges: true,
+    }, {
+      isCanceled: () => canceled,
+      reportProgress: (event) => {
+        if (event.stage === 'write-report') canceled = true;
+      },
+    });
+    assert.equal(result.status, 'success', result.error);
+    assert.ok(result.releaseId);
+    assert.ok(result.outputPath);
+    assert.equal(fs.existsSync(result.outputPath!), true);
+    assert.equal(readGameBuildReport(project, result.releaseId!).status, 'success');
+  });
 });
 
 async function withProject(

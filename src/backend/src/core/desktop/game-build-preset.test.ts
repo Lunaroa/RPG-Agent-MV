@@ -79,3 +79,38 @@ test('validates per-ABI Android release signing without accepting secrets', () =
   assert.deepEqual(preset.android?.abis, ['arm64-v8a', 'x86_64']);
   assert.equal(JSON.stringify(preset).includes('password'), false);
 });
+
+test('keeps inactive Android configuration and an incomplete publication draft when switching targets', () => {
+  const settings = validateGameReleaseProjectSettings({
+    presets: [{
+      id: 'web-release',
+      name: 'Web release',
+      target: 'web',
+      architecture: 'web',
+      channel: 'stable',
+      outputDirectory: 'builds',
+      zip: false,
+      packageType: 'full',
+      processing: { images: 'none', audio: 'none', video: 'none', data: 'none', javascript: 'none', ui: 'none' },
+      android: {
+        applicationId: 'com.example.sample',
+        displayName: 'Sample',
+        versionCode: 3,
+        orientation: 'landscape',
+        minSdk: 23,
+        targetSdk: 35,
+        abis: ['arm64-v8a'],
+        iconRelativePath: 'icon/icon.png',
+        signing: 'debug',
+      },
+    }],
+    selectedPresetId: 'web-release',
+    publicationDraft: {
+      defaultLanguage: 'en-US',
+      locales: [{ language: 'en-US', title: 'Sample', summary: '', maintenance: '' }],
+      required: false,
+    },
+  });
+  assert.equal(settings.presets[0]?.android?.versionCode, 3);
+  assert.equal(settings.publicationDraft?.locales[0]?.summary, '');
+});

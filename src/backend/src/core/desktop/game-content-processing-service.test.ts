@@ -77,6 +77,64 @@ test('minifies JSON compression and fails preflight when a selected key is missi
   }
 });
 
+test('loads encrypted and plain plugins sequentially before starting the game', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-plugin-order-'));
+  const project = path.join(root, 'project');
+  const build = path.join(root, 'build');
+  try {
+    fs.mkdirSync(project, { recursive: true });
+    generateGameEncryptionKey(project, 'release-key');
+    write(build, 'index.html', '<script src="js/plugins.js"></script>\n<script src="js/main.js"></script>');
+    write(build, 'js/plugins.js', 'var $plugins = [];');
+    write(build, 'js/main.js', 'var main = true;');
+    write(build, 'js/plugins/Encrypted.js', 'globalThis.encryptedPlugin = true;');
+    await applyContentProcessing(root, project, build, {
+      images: 'none', audio: 'none', video: 'none', data: 'none', javascript: 'encrypt', ui: 'none',
+      encryptionKeyId: 'release-key',
+    }, 'rpg-maker-mv');
+    const loader = fs.readFileSync(path.join(build, 'js', 'RPGAgentContentLoader.js'), 'utf8');
+    const encrypted = fs.readFileSync(path.join(build, 'js', 'plugins', 'Encrypted.js.rpgagent'));
+    const order: string[] = [];
+    const context = vm.createContext({
+      URL,
+      Blob,
+      Response,
+      TextDecoder,
+      Uint8Array,
+      atob,
+      crypto: crypto.webcrypto,
+      location: { href: 'https://example.test/game/index.html' },
+      console,
+      setTimeout,
+      fetch: async (input: unknown) => {
+        if (String(input).endsWith('Encrypted.js.rpgagent')) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return new Response(encrypted, { status: 200 });
+        }
+        return new Response('', { status: 200 });
+      },
+      document: {
+        createElement: () => ({ type: '', async: true, src: '', onload: null as null | (() => void), onerror: null }),
+        body: {
+          appendChild: (script: { src: string; onload: null | (() => void) }) => {
+            order.push(script.src.startsWith('blob:') ? 'encrypted' : 'plain');
+            setTimeout(() => script.onload?.(), 0);
+          },
+        },
+      },
+      PluginManager: { _path: 'js/plugins/', _errorUrls: [] as string[], loadScript() {} },
+      SceneManager: { run() { order.push('run'); } },
+    });
+    vm.runInContext(loader, context);
+    vm.runInContext("PluginManager.loadScript('Encrypted.js'); PluginManager.loadScript('Plain.js'); SceneManager.run('Boot');", context);
+    await vm.runInContext('RPGAgentContent.pluginsReady()', context);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.deepEqual(order, ['encrypted', 'plain', 'run']);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function decrypt(content: Buffer, key: Buffer): Buffer {
   const magic = Buffer.from('RPGAGENTENC1\n', 'ascii');
   assert.equal(content.subarray(0, magic.length).equals(magic), true);

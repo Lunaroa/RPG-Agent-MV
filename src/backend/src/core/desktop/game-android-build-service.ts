@@ -19,6 +19,7 @@ import {
   sha256File,
   writeJsonAtomically,
 } from './game-build-file-service.ts';
+import { runGameBuildProcess } from './game-build-process-service.ts';
 import { copyAndroidShellProject, assertAndroidShellTemplate } from './game-android-shell-service.ts';
 import {
   ANDROID_TOOLCHAIN_VERSIONS,
@@ -53,7 +54,7 @@ export function preflightAndroidBuild(
     blockers.push(`Install the managed Android toolchain before building. Missing: ${toolchain.missing.join(', ')}.`);
   }
   try {
-    assertAndroidShellTemplate();
+    assertAndroidShellTemplate(workflowRoot);
   } catch (error) {
     blockers.push(message(error));
   }
@@ -116,6 +117,7 @@ export async function buildAndroidApks(input: {
   version: string;
   releaseId: string;
   allowCleartext: boolean;
+  isCanceled?: () => boolean;
 }): Promise<AndroidBuildOutput> {
   const android = input.preset.android;
   if (!android) throw new Error('The Android build configuration is missing.');
@@ -123,7 +125,7 @@ export async function buildAndroidApks(input: {
   if (checked.blockers.length) throw new Error(checked.blockers.join('\n'));
   const toolchain = checked.toolchain;
   const projectDirectory = path.join(path.dirname(input.outputContainer), 'android-gradle-project');
-  copyAndroidShellProject(projectDirectory);
+  copyAndroidShellProject(projectDirectory, input.workflowRoot);
   const verificationDirectory = path.join(projectDirectory, 'gradle');
   fs.mkdirSync(verificationDirectory, { recursive: true });
   fs.copyFileSync(
@@ -167,7 +169,7 @@ export async function buildAndroidApks(input: {
     RPG_AGENT_ANDROID_KEY_ALIAS: signing.alias,
     RPG_AGENT_ANDROID_KEY_PASSWORD: signing.keyPassword,
   };
-  runTool(
+  await runTool(
     toolchain.javaExecutable!,
     [
       '-Dorg.gradle.appname=gradle', '-classpath', toolchain.gradleLauncherJar!, 'org.gradle.launcher.GradleMain',
@@ -176,6 +178,7 @@ export async function buildAndroidApks(input: {
     environment,
     projectDirectory,
     'Android Gradle build',
+    input.isCanceled,
   );
   const outputDirectory = path.join(projectDirectory, 'app', 'build', 'outputs', 'apk', buildType.toLowerCase());
   const metadata = readGradleOutputMetadata(outputDirectory);
@@ -198,14 +201,22 @@ export async function buildAndroidApks(input: {
       `${gameArtifactBaseName(input.gameName, input.version, 'android', entry.abi)}.apk`,
     );
     fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
-    const badging = runTool(toolchain.aapt2Executable!, ['dump', 'badging', destination], environment, projectDirectory, 'APK identity check');
+    const badging = await runTool(
+      toolchain.aapt2Executable!,
+      ['dump', 'badging', destination],
+      environment,
+      projectDirectory,
+      'APK identity check',
+      input.isCanceled,
+    );
     assertApkBadging(badging, android.applicationId, input.version, expectedCode);
-    const verification = runTool(
+    const verification = await runTool(
       toolchain.javaExecutable!,
       ['-Xmx1024M', '-Xss1m', '-jar', toolchain.apkSignerJar!, 'verify', '--verbose', '--print-certs', destination],
       environment,
       projectDirectory,
       'APK signature check',
+      input.isCanceled,
     );
     const certificate = readCertificateSha256(verification);
     if (certificateSha256 && certificateSha256 !== certificate) throw new Error('The ABI APKs were signed by different certificates.');
@@ -282,7 +293,7 @@ function prepareSigning(
       const temporary = `${keystore}.${process.pid}.tmp`;
       const environment = { ...process.env, RPG_AGENT_DEBUG_KEYSTORE_PASSWORD: password };
       try {
-        runTool(keytool, [
+        runToolSync(keytool, [
           '-genkeypair', '-noprompt', '-keystore', temporary, '-storepass:env', 'RPG_AGENT_DEBUG_KEYSTORE_PASSWORD',
           '-keypass:env', 'RPG_AGENT_DEBUG_KEYSTORE_PASSWORD', '-alias', alias, '-keyalg', 'RSA', '-keysize', '2048',
           '-validity', '10000', '-dname', 'CN=RPG Agent MV Debug,O=RPG Agent MV,C=XX',
@@ -301,7 +312,7 @@ function prepareSigning(
   }
   const keystore = path.resolve(android.keystorePath!);
   const alias = android.keyAlias!;
-  runTool(keytool, [
+  runToolSync(keytool, [
     '-list', '-keystore', keystore, '-storepass:env', 'RPG_AGENT_ANDROID_STORE_PASSWORD', '-alias', alias,
   ], { ...process.env, RPG_AGENT_ANDROID_STORE_PASSWORD: storePassword }, toolchain.root, 'Android release signing identity check');
   return { keystore, alias, storePassword, keyPassword };
@@ -388,7 +399,28 @@ function readCertificateSha256(output: string): string {
   return digest;
 }
 
-function runTool(
+async function runTool(
+  executable: string,
+  args: string[],
+  environment: NodeJS.ProcessEnv,
+  cwd: string,
+  label: string,
+  isCanceled?: () => boolean,
+): Promise<string> {
+  const result = await runGameBuildProcess(executable, args, {
+    cwd,
+    env: environment,
+    maxBuffer: 64 * 1024 * 1024,
+    isCanceled,
+  });
+  const output = `${result.stdout || ''}\n${result.stderr || ''}`.trim();
+  if (result.status !== 0) {
+    throw new Error(`${label} failed: ${redactGradleOutput(output) || `exit ${result.status}`}`);
+  }
+  return output;
+}
+
+function runToolSync(
   executable: string,
   args: string[],
   environment: NodeJS.ProcessEnv,
@@ -430,9 +462,10 @@ function readLastSuccessfulBaseVersionCode(project: string, preset: GameBuildPre
         presetId?: unknown;
         runtime?: Record<string, unknown>;
       };
+      const runtime = report.runtime;
       if (report.status !== 'success' || report.target !== 'android' || report.presetId !== preset.id
-        || report.runtime?.androidApplicationId !== preset.android?.applicationId) continue;
-      const value = Number(report.runtime.androidBaseVersionCode);
+        || !runtime || runtime.androidApplicationId !== preset.android?.applicationId) continue;
+      const value = Number(runtime.androidBaseVersionCode);
       if (Number.isSafeInteger(value) && value > maximum) maximum = value;
     } catch {
       // A malformed unrelated history record is handled when that specific report is opened.

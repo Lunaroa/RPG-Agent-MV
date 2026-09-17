@@ -72,6 +72,14 @@ export interface GameReleaseSaveResult extends GameReleaseStatus {
   write: unknown;
 }
 
+export interface GameReleaseUpdateIndexTestResult {
+  ok: true;
+  latestVersion: string | null;
+  latestReleaseId: string | null;
+  releaseCount: number;
+  signed: boolean;
+}
+
 export type GameBuildTarget = 'web' | 'windows' | 'android';
 export type GameBuildPackageType = 'full' | 'file-delta' | 'binary-diff';
 export type GameContentCategory = 'images' | 'audio' | 'video' | 'data' | 'javascript' | 'ui';
@@ -128,6 +136,19 @@ export interface GameBuildPreset {
   upload?: GameBuildUploadConfig;
 }
 
+export interface GameReleasePublicationDraftLocale {
+  language: string;
+  title: string;
+  summary: string;
+  maintenance: string;
+}
+
+export interface GameReleasePublicationDraft {
+  defaultLanguage: string;
+  locales: GameReleasePublicationDraftLocale[];
+  required: boolean;
+}
+
 export interface GameReleaseProjectSettings {
   presets: GameBuildPreset[];
   selectedPresetId?: string;
@@ -135,6 +156,7 @@ export interface GameReleaseProjectSettings {
   androidToolchainRoot?: string;
   lastSuccessfulAndroidVersionCodes?: Record<string, number>;
   manifestSigningCredentialId?: string;
+  publicationDraft?: GameReleasePublicationDraft;
 }
 
 export interface GameBuildArtifact {
@@ -202,6 +224,7 @@ export interface GameBuildPreflightResult {
 }
 
 export interface GameBuildRequest {
+  operationId?: string;
   presetId: string;
   outputConflict: 'overwrite' | 'new-directory' | 'cancel';
   releaseConfig?: GameReleaseConfig;
@@ -217,6 +240,25 @@ export interface GameBuildRequest {
     keyPassword?: string;
   };
   rememberSigningCredential?: boolean;
+}
+
+export type GameBuildProgressStage =
+  | 'preflight'
+  | 'managed-files'
+  | 'prepare-output'
+  | 'copy-project'
+  | 'process-content'
+  | 'android-apk'
+  | 'create-package'
+  | 'zip'
+  | 'publish-output'
+  | 'write-report'
+  | 'complete';
+
+export interface GameBuildProgressEvent {
+  operationId: string;
+  stage: GameBuildProgressStage;
+  percent: number;
 }
 
 export interface GameBuildResult {
@@ -297,6 +339,18 @@ export interface GameManifestSigningIdentitySummary {
   algorithm: GameManifestSignatureAlgorithm;
   keyId: string;
   publicKey: string;
+}
+
+export interface GameManifestSigningSaveRequest {
+  releaseConfig: GameReleaseConfig;
+  releaseExpectedSourceHash?: string | null;
+  settings: GameReleaseProjectSettings;
+}
+
+export interface GameManifestSigningSaveResult {
+  identity: GameManifestSigningIdentitySummary;
+  release: GameReleaseSaveResult;
+  settings: GameReleaseProjectSettings;
 }
 
 export interface GameReleasePublicationMetadata {

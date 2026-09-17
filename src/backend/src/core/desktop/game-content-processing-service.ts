@@ -1,5 +1,4 @@
 import crypto from 'node:crypto';
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -13,6 +12,7 @@ import type {
 } from '../../../../contract/game-release.ts';
 import type { RpgMakerEngine } from '../rmmv/rpg-maker-engine.ts';
 import { resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
+import { GameBuildProcessCanceledError, runGameBuildProcess } from './game-build-process-service.ts';
 import { readGameEncryptionKey } from './game-encryption-key-service.ts';
 
 interface RuntimeContentRecord {
@@ -33,6 +33,10 @@ export interface GameContentProcessingResult {
 export interface GameContentProcessingPreflight {
   blockers: string[];
   warnings: string[];
+}
+
+export interface GameContentProcessingExecutionOptions {
+  isCanceled?: () => boolean;
 }
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
@@ -90,6 +94,7 @@ export async function applyContentProcessing(
   buildRoot: string,
   config: GameContentProcessingConfig,
   _engine: RpgMakerEngine,
+  options: GameContentProcessingExecutionOptions = {},
 ): Promise<GameContentProcessingResult> {
   const preflight = preflightContentProcessing(workflowRoot, project, config);
   if (preflight.blockers.length) throw new Error(preflight.blockers.join('\n'));
@@ -97,15 +102,19 @@ export async function applyContentProcessing(
   const processed: Record<string, GameContentProcessingMode> = {};
   const records: RuntimeContentRecord[] = [];
   const files = listFiles(buildRoot);
+  const assertNotCanceled = () => {
+    if (options.isCanceled?.()) throw new GameBuildProcessCanceledError();
+  };
 
   for (const relativePath of files) {
+    assertNotCanceled();
     const category = contentCategory(relativePath);
     if (!category) continue;
     const mode = config[category];
     if (mode === 'none') continue;
     const absolutePath = resolveRelative(buildRoot, relativePath);
     if (mode === 'compress') {
-      await compressFile(workflowRoot, absolutePath, relativePath, category);
+      await compressFile(workflowRoot, absolutePath, relativePath, category, options);
       processed[relativePath] = 'compress';
       continue;
     }
@@ -174,6 +183,7 @@ async function compressFile(
   absolutePath: string,
   relativePath: string,
   category: GameContentCategory,
+  options: GameContentProcessingExecutionOptions,
 ): Promise<void> {
   if (category === 'images') {
     const extension = path.extname(absolutePath).toLowerCase();
@@ -187,7 +197,7 @@ async function compressFile(
     return;
   }
   if (category === 'audio' || category === 'video') {
-    compressMedia(workflowRoot, absolutePath, relativePath, category);
+    await compressMedia(workflowRoot, absolutePath, relativePath, category, options);
     return;
   }
   if (category === 'javascript') {
@@ -209,12 +219,13 @@ async function minifyJavascript(absolutePath: string, relativePath: string): Pro
   fs.writeFileSync(absolutePath, result.code, 'utf8');
 }
 
-function compressMedia(
+async function compressMedia(
   workflowRoot: string,
   absolutePath: string,
   relativePath: string,
   category: 'audio' | 'video',
-): void {
+  options: GameContentProcessingExecutionOptions,
+): Promise<void> {
   const ffmpeg = managedFfmpegPath(workflowRoot);
   const extension = path.extname(absolutePath).toLowerCase();
   const temporary = `${absolutePath}.${crypto.randomUUID()}${extension}`;
@@ -231,13 +242,12 @@ function compressMedia(
         : null;
   if (!codec) throw new Error(`Compression is not configured for this media format: ${relativePath}.`);
   try {
-    const result = spawnSync(ffmpeg, ['-hide_banner', '-nostdin', '-y', '-i', absolutePath, ...codec, temporary], {
-      encoding: 'utf8',
-      windowsHide: true,
+    const result = await runGameBuildProcess(ffmpeg, ['-hide_banner', '-nostdin', '-y', '-i', absolutePath, ...codec, temporary], {
       maxBuffer: 8 * 1024 * 1024,
+      isCanceled: options.isCanceled,
     });
-    if (result.error || result.status !== 0 || !fs.existsSync(temporary)) {
-      throw new Error(`FFmpeg could not compress ${relativePath}: ${result.error?.message || lastLine(result.stderr) || `exit ${result.status}`}`);
+    if (result.status !== 0 || !fs.existsSync(temporary)) {
+      throw new Error(`FFmpeg could not compress ${relativePath}: ${lastLine(result.stderr) || `exit ${result.status}`}`);
     }
     if (fs.statSync(temporary).size < fs.statSync(absolutePath).size) replaceFile(absolutePath, temporary);
   } finally {
@@ -393,21 +403,56 @@ function renderRuntimeLoader(records: RuntimeContentRecord[], key: Buffer | null
   }
   patchMediaSource(globalThis.HTMLImageElement && HTMLImageElement.prototype);
   patchMediaSource(globalThis.HTMLMediaElement && HTMLMediaElement.prototype);
+  let pluginLoadChain = Promise.resolve();
   if (globalThis.PluginManager && typeof PluginManager.loadScript === 'function') {
-    const nativeLoadScript = PluginManager.loadScript;
     PluginManager.loadScript = function(name) {
+      const manager = this;
       const record = recordFor('js/plugins/' + name);
-      if (!record) return nativeLoadScript.apply(this, arguments);
-      load(record).then(data => {
-        const script = document.createElement('script');
-        script.type = 'text/javascript'; script.async = false;
-        script.src = URL.createObjectURL(new Blob([data], { type: 'text/javascript' }));
-        script.onerror = this.onError.bind(this);
-        document.body.appendChild(script);
-      }).catch(error => { console.error('[RPGAgentContentLoader]', error); this._errorUrls.push(name); });
+      pluginLoadChain = pluginLoadChain.then(async function() {
+        const objectUrl = record
+          ? URL.createObjectURL(new Blob([await load(record)], { type: 'text/javascript' }))
+          : null;
+        const source = objectUrl || String(manager._path || 'js/plugins/') + name;
+        try {
+          await new Promise(function(resolve, reject) {
+            const script = document.createElement('script');
+            script.type = 'text/javascript';
+            script.async = false;
+            script.src = source;
+            script.onload = resolve;
+            script.onerror = function() { reject(new Error('Could not load plugin: ' + name)); };
+            document.body.appendChild(script);
+          });
+        } finally {
+          if (objectUrl) URL.revokeObjectURL(objectUrl);
+        }
+      }).catch(function(error) {
+        console.error('[RPGAgentContentLoader]', error);
+        manager._errorUrls = manager._errorUrls || [];
+        manager._errorUrls.push(name);
+      });
+      return pluginLoadChain;
     };
   }
-  globalThis.RPGAgentContent = Object.freeze({ records: Object.keys(records), load: async path => load(recordFor(path)) });
+  if (globalThis.SceneManager && typeof SceneManager.run === 'function') {
+    const nativeRun = SceneManager.run;
+    let runRequested = false;
+    SceneManager.run = function(sceneClass) {
+      if (runRequested) return;
+      runRequested = true;
+      const manager = this;
+      pluginLoadChain.then(function() { nativeRun.call(manager, sceneClass); });
+    };
+  }
+  globalThis.RPGAgentContent = Object.freeze({
+    records: Object.keys(records),
+    load: async path => {
+      const record = recordFor(path);
+      if (!record) throw new Error('Processed game content is not registered: ' + path);
+      return load(record);
+    },
+    pluginsReady: () => pluginLoadChain,
+  });
 })();
 `;
 }

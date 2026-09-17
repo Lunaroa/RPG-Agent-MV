@@ -2,11 +2,13 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { Worker } from 'node:worker_threads';
 
 import type {
   GameBuildArtifact,
   GameBuildFileManifestEntry,
   GameBuildPreflightResult,
+  GameBuildProgressEvent,
   GameBuildPreset,
   GameBuildReport,
   GameBuildRequest,
@@ -44,6 +46,7 @@ import {
   validateGameReleaseProjectSettings,
 } from './game-build-preset.ts';
 import {
+  createDefaultGameReleaseConfig,
   inspectGameReleaseRuntimeChanges,
   readGameReleaseStatus,
   saveGameReleaseConfig,
@@ -62,6 +65,23 @@ const HISTORY_DIRECTORY = path.join('.luna_rpg', 'release-history');
 const PACKAGE_METADATA_PATH = '.rpg-agent/release-package.json';
 const CURRENT_RELEASE_PATH = '.rpg-agent/current-release.json';
 const PROCESSING_CATEGORIES: GameContentCategory[] = ['images', 'audio', 'video', 'data', 'javascript', 'ui'];
+const BUILD_WORKER_TYPESCRIPT = import.meta.url.endsWith('.ts');
+const BUILD_WORKER_FILE = BUILD_WORKER_TYPESCRIPT ? './game-build-worker.ts' : './game-build-worker.js';
+const BUILD_WORKER_URL = new URL(BUILD_WORKER_FILE, import.meta.url);
+const BUILD_WORKER_EXEC_ARGV = BUILD_WORKER_TYPESCRIPT
+  ? ['--experimental-strip-types', '--experimental-transform-types']
+  : [];
+
+export interface GameBuildExecutionOptions {
+  signal?: AbortSignal;
+  isCanceled?: () => boolean;
+  reportProgress?: (event: Omit<GameBuildProgressEvent, 'operationId'>) => void;
+}
+
+export interface GameBuildWorkerHandle {
+  result: Promise<GameBuildResult>;
+  cancel: () => void;
+}
 
 interface GameBuildPreflightInput {
   presetId: string;
@@ -207,19 +227,29 @@ export async function buildGame(
   workflowRoot: string,
   project: string,
   request: GameBuildRequest,
+  options: GameBuildExecutionOptions = {},
 ): Promise<GameBuildResult> {
   const startedAt = new Date().toISOString();
   const releaseId = crypto.randomUUID();
+  const progress = (stage: GameBuildProgressEvent['stage'], percent: number) => {
+    options.reportProgress?.({ stage, percent });
+  };
+  const cancellationRequested = () => Boolean(options.signal?.aborted || options.isCanceled?.());
+  const assertNotCanceled = () => {
+    if (cancellationRequested()) throw new GameBuildCanceledError();
+  };
   let preflight: GameBuildPreflightResult;
   try {
+    progress('preflight', 2);
+    assertNotCanceled();
     preflight = preflightGameBuild(workflowRoot, project, {
       presetId: request.presetId,
       ...(request.releaseConfig ? { releaseConfig: request.releaseConfig } : {}),
     });
   } catch (error) {
+    if (error instanceof GameBuildCanceledError || cancellationRequested()) return canceledResult();
     const recovered = recoverFailedPreflight(workflowRoot, project, request, error);
-    if (recovered) return failedBuildWithReport(project, recovered, releaseId, startedAt, 'preflight', error);
-    return failedResult('preflight', error);
+    return failedBuildWithReport(project, recovered, releaseId, startedAt, 'preflight', error);
   }
   if (!preflight.ok) {
     return failedBuildWithReport(
@@ -248,6 +278,8 @@ export async function buildGame(
   let failedStage = 'managed-files';
   let stagingRoot: string | null = null;
   try {
+    progress('managed-files', 8);
+    assertNotCanceled();
     if (preflight.managedChanges.length) {
       saveGameReleaseConfig(workflowRoot, project, {
         config: preflight.release,
@@ -263,6 +295,8 @@ export async function buildGame(
     }
 
     failedStage = 'prepare-output';
+    progress('prepare-output', 16);
+    assertNotCanceled();
     const preset = verified.preset;
     const outputRoot = resolveOutputDirectory(project, preset.outputDirectory);
     const destinations = resolveDestinations(verified.outputPath, preset.zip, request.outputConflict);
@@ -272,15 +306,21 @@ export async function buildGame(
     const packageContent = path.join(stagingRoot, 'package-content');
 
     failedStage = 'copy-project';
+    progress('copy-project', 24);
+    assertNotCanceled();
     const runtime = prepareCompleteContent(workflowRoot, project, preset, completeContent);
     failedStage = 'process-content';
+    progress('process-content', 38);
+    assertNotCanceled();
     const processing = await applyContentProcessing(
       workflowRoot,
       project,
       completeContent,
       preset.processing,
       inspectRmmvProject(project).engine,
+      { isCanceled: cancellationRequested },
     );
+    assertNotCanceled();
     writeJsonAtomically(path.join(completeContent, ...CURRENT_RELEASE_PATH.split('/')), {
       schemaVersion: 1,
       releaseId,
@@ -300,6 +340,8 @@ export async function buildGame(
     let androidOutput: AndroidBuildOutput | null = null;
     if (preset.target === 'android') {
       failedStage = 'android-apk';
+      progress('android-apk', 58);
+      assertNotCanceled();
       androidOutput = await buildAndroidApks({
         workflowRoot,
         project,
@@ -312,10 +354,14 @@ export async function buildGame(
         version: verified.release.version,
         releaseId,
         allowCleartext: verified.release.update.indexUrl.startsWith('http:'),
+        isCanceled: cancellationRequested,
       });
+      assertNotCanceled();
     }
 
     failedStage = 'create-package';
+    progress('create-package', 68);
+    assertNotCanceled();
     const packagePayload = preset.target === 'android' ? path.join(packageContent, 'content') : packageContent;
     const packageDetails = createPackageContent(
       preset,
@@ -364,11 +410,15 @@ export async function buildGame(
     const packageDigest = collectDirectoryDigest(packagePayload);
 
     failedStage = 'zip';
+    progress('zip', 78);
+    assertNotCanceled();
     const baseName = path.basename(destinations.directory);
     const stagedZip = preset.zip ? path.join(stagingRoot, `${baseName}.zip`) : null;
     if (stagedZip) writeZipArchive(packageContent, stagedZip, baseName);
 
     failedStage = 'publish-output';
+    progress('publish-output', 86);
+    assertNotCanceled();
     publishArtifacts(packageContent, stagedZip, destinations, request.outputConflict);
     const contentDestination = preset.target === 'android'
       ? path.join(destinations.directory, 'content')
@@ -412,6 +462,7 @@ export async function buildGame(
     }
 
     failedStage = 'write-report';
+    progress('write-report', 95);
     const report: GameBuildReport = {
       schemaVersion: 1,
       releaseId,
@@ -464,6 +515,7 @@ export async function buildGame(
     }
     cleanupStaging(stagingRoot);
     stagingRoot = null;
+    progress('complete', 100);
     return {
       status: 'success',
       releaseId,
@@ -474,8 +526,95 @@ export async function buildGame(
     };
   } catch (error) {
     if (stagingRoot) cleanupStaging(stagingRoot);
+    if (error instanceof GameBuildCanceledError || cancellationRequested()) return canceledResult(preflight.warnings);
     return failedBuildWithReport(project, preflight, releaseId, startedAt, failedStage, error);
   }
+}
+
+export function startGameBuildWorker(
+  workflowRoot: string,
+  project: string,
+  request: GameBuildRequest,
+  onProgress: (event: GameBuildProgressEvent) => void,
+): GameBuildWorkerHandle {
+  const operationId = requireOperationId(request.operationId);
+  const worker = new Worker(BUILD_WORKER_URL, { execArgv: BUILD_WORKER_EXEC_ARGV });
+  worker.unref();
+  const cancelBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+  const cancelState = new Int32Array(cancelBuffer);
+  let settled = false;
+  let cancelRequested = false;
+  let resolveResult!: (value: GameBuildResult) => void;
+  let rejectResult!: (error: Error) => void;
+  const result = new Promise<GameBuildResult>((resolve, reject) => {
+    resolveResult = resolve;
+    rejectResult = reject;
+  });
+  const settleResult = (value: GameBuildResult) => {
+    if (settled) return;
+    settled = true;
+    resolveResult(value);
+    void worker.terminate();
+  };
+  worker.on('message', (messageValue: unknown) => {
+    if (!messageValue || typeof messageValue !== 'object') return;
+    const value = messageValue as {
+      type?: string;
+      event?: Omit<GameBuildProgressEvent, 'operationId'>;
+      result?: GameBuildResult;
+      error?: string;
+    };
+    if (value.type === 'progress' && value.event) {
+      onProgress({ operationId, ...value.event });
+    } else if (value.type === 'result' && value.result) {
+      settleResult(value.result);
+    } else if (value.type === 'error') {
+      if (settled) return;
+      settled = true;
+      rejectResult(new Error(value.error || 'The packaging worker failed.'));
+      void worker.terminate();
+    }
+  });
+  worker.once('error', (error) => {
+    if (settled) return;
+    settled = true;
+    if (cancelRequested) resolveResult(canceledResult());
+    else rejectResult(error instanceof Error ? error : new Error(String(error)));
+  });
+  worker.once('exit', (code) => {
+    if (settled) return;
+    settled = true;
+    if (cancelRequested) resolveResult(canceledResult());
+    else rejectResult(new Error(`The packaging worker exited with code ${code}.`));
+  });
+  worker.postMessage({ type: 'start', workflowRoot, project, request, cancelBuffer });
+  return {
+    result,
+    cancel: () => {
+      if (settled || cancelRequested) return;
+      cancelRequested = true;
+      Atomics.store(cancelState, 0, 1);
+      Atomics.notify(cancelState, 0);
+    },
+  };
+}
+
+class GameBuildCanceledError extends Error {
+  constructor() {
+    super('The build was canceled.');
+    this.name = 'GameBuildCanceledError';
+  }
+}
+
+function canceledResult(warnings: string[] = []): GameBuildResult {
+  return { status: 'canceled', artifacts: [], warnings };
+}
+
+function requireOperationId(value: string | undefined): string {
+  if (!value || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value)) {
+    throw new Error('A valid packaging operation id is required.');
+  }
+  return value;
 }
 
 export function readGameBuildReport(project: string, releaseId: string): GameBuildReport {
@@ -517,7 +656,7 @@ function prepareCompleteContent(
     const privateManifest = path.join(target, 'rpg-agent-runtime.json');
     if (fs.existsSync(privateManifest)) fs.rmSync(privateManifest);
   }
-  installWindowsUpdaterRuntime(target);
+  installWindowsUpdaterRuntime(target, workflowRoot);
   return {
     engine: manifest.engine,
     engineVersion: manifest.engineVersion,
@@ -791,27 +930,44 @@ function recoverFailedPreflight(
   project: string,
   request: GameBuildRequest,
   error: unknown,
-): GameBuildPreflightResult | null {
+): GameBuildPreflightResult {
+  let settings: GameReleaseProjectSettings;
   try {
-    const preset = requirePreset(readGameBuildSettings(project), request.presetId);
-    const release = readGameReleaseStatus(workflowRoot, project).config;
-    const outputRoot = resolveOutputDirectory(project, preset.outputDirectory);
-    return {
-      ok: false,
-      blockers: [message(error)],
-      warnings: [],
-      release,
-      preset,
-      outputPath: path.join(
-        outputRoot,
-        gameArtifactBaseName(readGameName(project, release.gameId), release.version, preset.target, preset.architecture),
-      ),
-      existingOutput: false,
-      managedChanges: [],
-    };
+    settings = readGameBuildSettings(project);
   } catch {
-    return null;
+    settings = createDefaultGameReleaseProjectSettings(project);
   }
+  const fallbackSettings = createDefaultGameReleaseProjectSettings(project);
+  const preset = settings.presets.find((candidate) => candidate.id === request.presetId)
+    || settings.presets[0]
+    || fallbackSettings.presets[0]!;
+  let release: GameReleaseConfig;
+  try {
+    release = request.releaseConfig
+      ? validateGameReleaseConfig(request.releaseConfig)
+      : readGameReleaseStatus(workflowRoot, project).config;
+  } catch {
+    release = createDefaultGameReleaseConfig(project);
+  }
+  let outputRoot: string;
+  try {
+    outputRoot = resolveOutputDirectory(project, preset.outputDirectory);
+  } catch {
+    outputRoot = path.join(path.resolve(project), '.luna_rpg', 'builds');
+  }
+  return {
+    ok: false,
+    blockers: [message(error)],
+    warnings: ['The failure report used recovered release metadata because the saved configuration could not be read.'],
+    release,
+    preset,
+    outputPath: path.join(
+      outputRoot,
+      gameArtifactBaseName(readGameName(project, release.gameId), release.version, preset.target, preset.architecture),
+    ),
+    existingOutput: false,
+    managedChanges: [],
+  };
 }
 
 function failedResult(

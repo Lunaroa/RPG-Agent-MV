@@ -5,10 +5,12 @@ import { fileURLToPath } from 'node:url';
 
 import type {
   GameReleaseConfig,
+  GameReleaseGameIndex,
   GameReleaseManagedChange,
   GameReleaseSaveRequest,
   GameReleaseSaveResult,
   GameReleaseStatus,
+  GameReleaseUpdateIndexTestResult,
   GameSaveCompatibilityConfig,
   SaveCompatibilityAction,
   SaveCompatibilityKind,
@@ -20,7 +22,11 @@ import {
   type RmmvProjectLayout,
 } from '../rmmv/rmmv-layout.ts';
 import { normalizeGameVersion } from './game-version.ts';
-import { validateGameManifestSignatureConfig } from './game-manifest-signing-service.ts';
+import { resolveGameBuildRuntimeSource } from './game-build-runtime-source.ts';
+import {
+  validateGameManifestSignatureConfig,
+  verifyGameReleaseManifestSignature,
+} from './game-manifest-signing-service.ts';
 import {
   readProjectFile,
   readProjectFileVersion,
@@ -228,8 +234,191 @@ export function saveGameReleaseConfig(
   };
 }
 
+export async function testGameReleaseUpdateIndex(value: unknown): Promise<GameReleaseUpdateIndexTestResult> {
+  const config = validateGameReleaseConfig(value);
+  if (!config.update.enabled) throw new Error('Enable online updates before testing the update index.');
+  let response: Response;
+  try {
+    response = await fetch(config.update.indexUrl, {
+      method: 'GET',
+      cache: 'no-store',
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Could not download the configured update index: ${detail}`, { cause: error });
+  }
+  if (!response.ok) throw new Error(`The update index returned HTTP ${response.status}.`);
+  const text = await readLimitedResponseText(response, 8 * 1024 * 1024);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    throw new Error('The update index is not valid JSON.', { cause: error });
+  }
+  const index = requireRecord(parsed, 'update index');
+  if (index.schemaVersion !== 1) throw new Error('The update index schemaVersion must be 1.');
+  requireNonEmptyString(index.generatedAt, 'update index generatedAt', 128);
+  const games = requireRecord(index.games, 'update index games');
+  const game = requireRecord(games[config.gameId], `update index game ${config.gameId}`);
+  const channels = requireRecord(game.channels, `update index game ${config.gameId} channels`);
+  const channel = requireRecord(channels[config.channel], `update index channel ${config.channel}`);
+  if (!Array.isArray(channel.releases)) throw new Error('The selected update channel releases must be an array.');
+  const releases = channel.releases.map((entry, indexValue) => {
+    return validateUpdateIndexRelease(
+      entry,
+      `update index release ${indexValue + 1}`,
+      config.channel,
+      config.update.indexUrl,
+    );
+  });
+  const latestReleaseId = channel.latestReleaseId === null
+    ? null
+    : requireStableId(channel.latestReleaseId, 'update index latestReleaseId', 128);
+  const latest = latestReleaseId === null
+    ? null
+    : releases.find((entry) => entry.releaseId === latestReleaseId);
+  if (latestReleaseId && !latest) throw new Error('The update index latestReleaseId does not identify a release in the selected channel.');
+  const signatureConfig = config.update.manifestSignature;
+  let signed = false;
+  if (signatureConfig?.enabled) {
+    signed = verifyGameReleaseManifestSignature(config.gameId, game as unknown as GameReleaseGameIndex, signatureConfig);
+    if (!signed) throw new Error('The update index signature is missing or invalid.');
+  } else {
+    signed = Boolean(game.signature);
+  }
+  return {
+    ok: true,
+    latestVersion: latest?.version ?? null,
+    latestReleaseId,
+    releaseCount: releases.length,
+    signed,
+  };
+}
+
+function validateUpdateIndexRelease(
+  value: unknown,
+  label: string,
+  channel: string,
+  indexUrl: string,
+): { releaseId: string; version: string } {
+  const release = requireRecord(value, label);
+  const releaseId = requireStableId(release.releaseId, `${label} releaseId`, 128);
+  const version = normalizeGameVersion(release.version);
+  if (release.channel !== channel) throw new Error(`${label} channel does not match the selected update channel.`);
+  const defaultLanguage = requireNonEmptyString(release.defaultLanguage, `${label} defaultLanguage`, 64);
+  requireBoolean(release.required, `${label} required`);
+  requireLocalizedUpdateText(release.title, `${label} title`, defaultLanguage);
+  requireLocalizedUpdateText(release.summary, `${label} summary`, defaultLanguage);
+  if (!Array.isArray(release.packages) || release.packages.length === 0) {
+    throw new Error(`${label} packages must contain at least one package.`);
+  }
+  release.packages.forEach((entry, index) => validateUpdateIndexPackage(entry, `${label} package ${index + 1}`, indexUrl));
+  return { releaseId, version };
+}
+
+function validateUpdateIndexPackage(value: unknown, label: string, indexUrl: string): void {
+  const pkg = requireRecord(value, label);
+  requireStableId(pkg.packageId, `${label} packageId`, 128);
+  if (!['web', 'windows', 'android'].includes(String(pkg.platform))) {
+    throw new Error(`${label} platform is invalid.`);
+  }
+  requireNonEmptyString(pkg.architecture, `${label} architecture`, 64);
+  if (!['full', 'file-delta', 'binary-diff'].includes(String(pkg.packageType))) {
+    throw new Error(`${label} packageType is invalid.`);
+  }
+  if (!['content', 'apk'].includes(String(pkg.delivery))) throw new Error(`${label} delivery is invalid.`);
+  const packageUrl = requireNonEmptyString(pkg.url, `${label} url`, 4096);
+  let resolvedUrl: URL;
+  try {
+    resolvedUrl = new URL(packageUrl, indexUrl);
+  } catch {
+    throw new Error(`${label} url is invalid.`);
+  }
+  if (resolvedUrl.protocol !== 'http:' && resolvedUrl.protocol !== 'https:') {
+    throw new Error(`${label} url must resolve to HTTP or HTTPS.`);
+  }
+  if (!Number.isSafeInteger(pkg.bytes) || Number(pkg.bytes) < 0) throw new Error(`${label} bytes is invalid.`);
+  if (!/^[a-f0-9]{64}$/i.test(String(pkg.sha256 || ''))) throw new Error(`${label} sha256 is invalid.`);
+  if (!Array.isArray(pkg.targetFiles) || !Array.isArray(pkg.deletedFiles)) {
+    throw new Error(`${label} targetFiles and deletedFiles must be arrays.`);
+  }
+  pkg.targetFiles.forEach((entry, index) => validateUpdateIndexFile(entry, `${label} targetFiles[${index}]`));
+  pkg.deletedFiles.forEach((entry, index) => validateUpdateIndexRelativePath(entry, `${label} deletedFiles[${index}]`));
+  if (pkg.packageType !== 'full') requireStableId(pkg.baseReleaseId, `${label} baseReleaseId`, 128);
+  if (pkg.packageFiles !== undefined) {
+    if (!Array.isArray(pkg.packageFiles) || pkg.packageFiles.length === 0) {
+      throw new Error(`${label} packageFiles must contain at least one file when present.`);
+    }
+    pkg.packageFiles.forEach((entry, index) => validateUpdateIndexFile(entry, `${label} packageFiles[${index}]`));
+  }
+  if (pkg.delivery === 'content' && pkg.platform !== 'web' && pkg.packageFiles === undefined) {
+    throw new Error(`${label} packageFiles is required for native content updates.`);
+  }
+  if (pkg.delivery === 'apk') {
+    if (pkg.platform !== 'android') throw new Error(`${label} APK delivery requires the Android platform.`);
+    requireNonEmptyString(pkg.applicationId, `${label} applicationId`, 255);
+    if (!Number.isSafeInteger(pkg.versionCode) || Number(pkg.versionCode) <= 0) {
+      throw new Error(`${label} versionCode must be a positive integer.`);
+    }
+    if (!/^[a-f0-9]{64}$/i.test(String(pkg.signingCertificateSha256 || ''))) {
+      throw new Error(`${label} signingCertificateSha256 is invalid.`);
+    }
+  }
+}
+
+function validateUpdateIndexFile(value: unknown, label: string): void {
+  const file = requireRecord(value, label);
+  validateUpdateIndexRelativePath(file.path, `${label} path`);
+  if (!Number.isSafeInteger(file.bytes) || Number(file.bytes) < 0) throw new Error(`${label} bytes is invalid.`);
+  if (!/^[a-f0-9]{64}$/i.test(String(file.sha256 || ''))) throw new Error(`${label} sha256 is invalid.`);
+}
+
+function validateUpdateIndexRelativePath(value: unknown, label: string): string {
+  const relativePath = requireNonEmptyString(value, label, 4096).replace(/\\/g, '/');
+  if (path.posix.isAbsolute(relativePath) || path.win32.isAbsolute(relativePath)
+    || relativePath.split('/').some((part) => !part || part === '.' || part === '..')) {
+    throw new Error(`${label} is unsafe.`);
+  }
+  return relativePath;
+}
+
+function requireLocalizedUpdateText(value: unknown, label: string, defaultLanguage: string): void {
+  const localized = requireRecord(value, label);
+  requireNonEmptyString(localized[defaultLanguage], `${label}.${defaultLanguage}`, 20_000);
+}
+
+async function readLimitedResponseText(response: Response, maximumBytes: number): Promise<string> {
+  const declaredLength = Number(response.headers.get('content-length') || '0');
+  if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
+    throw new Error('The update index is larger than 8 MiB.');
+  }
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const item = await reader.read();
+    if (item.done) break;
+    total += item.value.byteLength;
+    if (total > maximumBytes) {
+      await reader.cancel();
+      throw new Error('The update index is larger than 8 MiB.');
+    }
+    chunks.push(item.value);
+  }
+  const content = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    content.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder('utf-8', { fatal: true }).decode(content).replace(/^\uFEFF/, '');
+}
+
 function inspectManagedRuntime(
-  _workflowRoot: string,
+  workflowRoot: string,
   project: string,
   layout: RmmvProjectLayout,
   config: GameReleaseConfig,
@@ -237,10 +426,15 @@ function inspectManagedRuntime(
   const changes: GameReleaseManagedChange[] = [];
   const mutations: ProjectFileMutation[] = [];
   const changedRelativePaths: string[] = [];
+  const runtimeSourceDirectory = resolveGameBuildRuntimeSource(
+    RUNTIME_SOURCE_DIRECTORY,
+    'game-release-runtime',
+    workflowRoot,
+  );
   const runtimeFiles = [VERSION_PLUGIN_NAME, UPDATER_PLUGIN_NAME].map((name) => ({
     name,
     relativePath: resourceRelativePath(layout, `js/plugins/${name}.js`),
-    content: fs.readFileSync(path.join(RUNTIME_SOURCE_DIRECTORY, `${name}.js`)),
+    content: fs.readFileSync(path.join(runtimeSourceDirectory, `${name}.js`)),
   }));
 
   for (const runtimeFile of runtimeFiles) {
@@ -387,6 +581,12 @@ function requireString(value: unknown, label: string, maximumLength: number): st
   if (typeof value !== 'string') throw new Error(`${label} must be a string.`);
   if (value.length > maximumLength) throw new Error(`${label} must not exceed ${maximumLength} characters.`);
   return value;
+}
+
+function requireNonEmptyString(value: unknown, label: string, maximumLength: number): string {
+  const text = requireString(value, label, maximumLength).trim();
+  if (!text) throw new Error(`${label} must not be empty.`);
+  return text;
 }
 
 function requireBoolean(value: unknown, label: string): boolean {

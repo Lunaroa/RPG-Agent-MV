@@ -39,7 +39,7 @@ export function validateGameReleaseProjectSettings(value: unknown): GameReleaseP
   const root = requireRecord(value, 'release settings');
   assertExactKeys(root, [
     'presets', 'selectedPresetId', 'publicationDirectory', 'androidToolchainRoot', 'lastSuccessfulAndroidVersionCodes',
-    'manifestSigningCredentialId',
+    'manifestSigningCredentialId', 'publicationDraft',
   ], 'release settings');
   if (!Array.isArray(root.presets)) throw new Error('release.presets must be an array.');
   const presets = root.presets.map((preset, index) => validateGameBuildPreset(preset, index));
@@ -63,6 +63,9 @@ export function validateGameReleaseProjectSettings(value: unknown): GameReleaseP
   const manifestSigningCredentialId = root.manifestSigningCredentialId === undefined
     ? undefined
     : requireStableId(root.manifestSigningCredentialId, 'release.manifestSigningCredentialId', 128);
+  const publicationDraft = root.publicationDraft === undefined
+    ? undefined
+    : validatePublicationDraft(root.publicationDraft);
   return {
     presets,
     ...(selectedPresetId ? { selectedPresetId } : {}),
@@ -70,6 +73,7 @@ export function validateGameReleaseProjectSettings(value: unknown): GameReleaseP
     ...(androidToolchainRoot ? { androidToolchainRoot } : {}),
     ...(lastSuccessfulAndroidVersionCodes ? { lastSuccessfulAndroidVersionCodes } : {}),
     ...(manifestSigningCredentialId ? { manifestSigningCredentialId } : {}),
+    ...(publicationDraft ? { publicationDraft } : {}),
   };
 }
 
@@ -111,7 +115,6 @@ export function validateGameBuildPreset(value: unknown, index = 0): GameBuildPre
   const processing = validateProcessing(raw.processing, `${label}.processing`);
   const android = raw.android === undefined ? undefined : validateAndroid(raw.android, `${label}.android`);
   if (target === 'android' && !android) throw new Error(`${label}.android is required for Android builds.`);
-  if (target !== 'android' && android) throw new Error(`${label}.android is only valid for Android builds.`);
   const upload = raw.upload === undefined ? undefined : validateUpload(raw.upload, `${label}.upload`);
   return {
     id,
@@ -127,6 +130,28 @@ export function validateGameBuildPreset(value: unknown, index = 0): GameBuildPre
     ...(android ? { android } : {}),
     ...(upload ? { upload } : {}),
   };
+}
+
+function validatePublicationDraft(value: unknown): NonNullable<GameReleaseProjectSettings['publicationDraft']> {
+  const raw = requireRecord(value, 'release.publicationDraft');
+  assertExactKeys(raw, ['defaultLanguage', 'locales', 'required'], 'release.publicationDraft');
+  const defaultLanguage = requireString(raw.defaultLanguage, 'release.publicationDraft.defaultLanguage', 64);
+  if (!Array.isArray(raw.locales) || raw.locales.length === 0 || raw.locales.length > 32) {
+    throw new Error('release.publicationDraft.locales must contain from 1 to 32 entries.');
+  }
+  const locales = raw.locales.map((entry, index) => {
+    const label = `release.publicationDraft.locales[${index}]`;
+    const locale = requireRecord(entry, label);
+    assertExactKeys(locale, ['language', 'title', 'summary', 'maintenance'], label);
+    return {
+      language: requireString(locale.language, `${label}.language`, 64),
+      title: requireString(locale.title, `${label}.title`, 512),
+      summary: requireString(locale.summary, `${label}.summary`, 20_000),
+      maintenance: requireString(locale.maintenance, `${label}.maintenance`, 20_000),
+    };
+  });
+  if (typeof raw.required !== 'boolean') throw new Error('release.publicationDraft.required must be true or false.');
+  return { defaultLanguage, locales, required: raw.required };
 }
 
 export function defaultProcessing(): GameContentProcessingConfig {

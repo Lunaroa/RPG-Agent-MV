@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -9,6 +10,7 @@ import {
   createDefaultGameReleaseConfig,
   readGameReleaseStatus,
   saveGameReleaseConfig,
+  testGameReleaseUpdateIndex,
   validateGameReleaseConfig,
 } from './game-release-service.ts';
 import { createGameManifestSigningIdentity } from './game-manifest-signing-service.ts';
@@ -136,6 +138,89 @@ test('enables the updater entry only when online updates are configured', () => 
     assert.equal(configured.find((entry) => entry.name === 'RPGAgentUpdater')?.status, true);
   });
 });
+
+test('tests the configured update index and resolves the selected channel latest release', async () => {
+  const index = {
+    schemaVersion: 1,
+    generatedAt: new Date(0).toISOString(),
+    games: {
+      'sample-game': {
+        channels: {
+          stable: {
+            latestReleaseId: 'release-2',
+            maintenance: null,
+            releases: [
+              updateRelease('release-1', '1.0.0'),
+              updateRelease('release-2', '1.1.0-beta.1'),
+            ],
+          },
+        },
+      },
+    },
+  };
+  const server = http.createServer((_request, response) => {
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify(index));
+  });
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  try {
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Test server did not open a TCP port.');
+    const config = createDefaultGameReleaseConfig('sample-game');
+    config.gameId = 'sample-game';
+    config.update = {
+      enabled: true,
+      indexUrl: `http://localhost:${address.port}/releases.json`,
+      checkOnStart: false,
+      backgroundDownload: false,
+      policy: 'optional',
+    };
+    const result = await testGameReleaseUpdateIndex(config);
+    assert.deepEqual(result, {
+      ok: true,
+      latestVersion: '1.1.0-beta.1',
+      latestReleaseId: 'release-2',
+      releaseCount: 2,
+      signed: false,
+    });
+    index.games['sample-game'].channels.stable.latestReleaseId = 'missing';
+    await assert.rejects(testGameReleaseUpdateIndex(config), /latestReleaseId/);
+    index.games['sample-game'].channels.stable.latestReleaseId = 'release-2';
+    (index.games['sample-game'].channels.stable.releases[1] as any).summary = {};
+    await assert.rejects(testGameReleaseUpdateIndex(config), /summary\.en-US/);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+function updateRelease(releaseId: string, version: string) {
+  const [core, suffix = ''] = version.split('-');
+  return {
+    releaseId,
+    version,
+    versionCore: core!.split('.'),
+    suffix,
+    channel: 'stable',
+    publishedAt: new Date(0).toISOString(),
+    title: { 'en-US': 'Sample update' },
+    summary: { 'en-US': 'Sample release notes' },
+    defaultLanguage: 'en-US',
+    required: false,
+    maintenance: null,
+    packages: [{
+      packageId: `${releaseId}-web`,
+      platform: 'web',
+      architecture: 'web',
+      delivery: 'content',
+      packageType: 'full',
+      url: `games/sample-game/stable/${releaseId}/sample.zip`,
+      bytes: 1,
+      sha256: 'a'.repeat(64),
+      deletedFiles: [],
+      targetFiles: [],
+    }],
+  };
+}
 
 function withFixture(
   layout: 'data' | 'www-data',

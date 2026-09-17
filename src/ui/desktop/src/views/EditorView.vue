@@ -1071,7 +1071,6 @@ function schedulePreviewIntentReconcile(): LatestAsyncToken<EditorPreviewIntent>
     previewRefreshActive.value = false;
     previewError.value = '';
     previewDiagnostic.value = null;
-    clearPreviewPreflightFailure();
   }
   void previewIntentCoordinator.runExclusive(token, async ({ isCurrent }) => {
     if (!token.value.active) {
@@ -1173,7 +1172,6 @@ async function stopPreviewSession() {
   previewStatus.value = 'stopped';
   previewError.value = '';
   previewDiagnostic.value = null;
-  clearPreviewPreflightFailure();
   if (!session || ['stopped', 'failed'].includes(session.status)) return;
   try {
     await mapPreview.stop();
@@ -1240,7 +1238,6 @@ async function refreshPreview() {
 }
 
 function setDirectPreviewFailure(error: unknown, stage: string, intent: Extract<EditorPreviewIntent, { active: true }>) {
-  clearPreviewPreflightFailure();
   const diagnostic = mapPreviewDiagnosticFromError({
     error,
     stage,

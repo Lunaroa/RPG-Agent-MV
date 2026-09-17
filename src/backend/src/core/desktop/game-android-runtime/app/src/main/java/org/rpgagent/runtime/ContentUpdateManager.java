@@ -30,7 +30,7 @@ final class ContentUpdateManager {
         this.state = state;
     }
 
-    void install(String payloadText) throws IOException, JSONException {
+    void install(String payloadText, UpdateProgressListener progress) throws IOException, JSONException {
         JSONObject payload = new JSONObject(payloadText);
         JSONObject pkg = requireObject(payload, "pkg");
         JSONObject release = requireObject(payload, "release");
@@ -60,7 +60,9 @@ final class ContentUpdateManager {
         File target = new File(work, "game");
         try {
             if (!downloaded.mkdirs()) throw new IOException("Could not create the update download directory.");
-            downloadPackage(packageUrl, packageFiles, pkg.optLong("bytes", -1), pkg.optString("sha256"), downloaded);
+            long expectedBytes = pkg.optLong("bytes", -1);
+            downloadPackage(packageUrl, packageFiles, expectedBytes, pkg.optString("sha256"), downloaded, progress);
+            progress.onProgress("verifying", expectedBytes, expectedBytes, 0, null);
             JSONObject manifest = readManifest(downloaded);
             validateManifest(manifest, releaseId, packageType, pkg.optString("baseReleaseId"), targetFiles, deletedFiles);
 
@@ -74,6 +76,7 @@ final class ContentUpdateManager {
             else applyCompleteFiles(target, downloaded, targetFiles);
             verifyTarget(target, targetFiles);
             state.activate(target, releaseId, version);
+            progress.onProgress("complete", expectedBytes, expectedBytes, 0, null);
         } finally {
             if (work.exists()) RuntimeFiles.deleteRecursively(work);
         }
@@ -84,7 +87,8 @@ final class ContentUpdateManager {
         JSONArray entries,
         long expectedBytes,
         String expectedSha256,
-        File destination
+        File destination,
+        UpdateProgressListener progress
     ) throws IOException, JSONException {
         if (expectedBytes < 0 || !expectedSha256.matches("(?i)[a-f0-9]{64}")) {
             throw new IOException("The content package size or SHA-256 is invalid.");
@@ -92,13 +96,14 @@ final class ContentUpdateManager {
         List<JSONObject> files = jsonObjects(entries);
         MessageDigest directoryDigest = RuntimeFiles.sha256Digest();
         long total = 0;
+        long startedAt = android.os.SystemClock.elapsedRealtime();
         Set<String> paths = new HashSet<>();
         for (JSONObject entry : files) {
             String relativePath = requireFileEntry(entry, paths);
             long bytes = entry.getLong("bytes");
             String sha256 = entry.getString("sha256").toLowerCase(java.util.Locale.ROOT);
             File target = RuntimeFiles.safeFile(destination, relativePath);
-            downloadFile(childUrl(packageUrl, relativePath), target, bytes, sha256);
+            downloadFile(childUrl(packageUrl, relativePath), target, bytes, sha256, total, expectedBytes, startedAt, progress);
             total += bytes;
             directoryDigest.update((relativePath + "\0" + bytes + "\0" + sha256 + "\n").getBytes(StandardCharsets.UTF_8));
         }
@@ -107,7 +112,16 @@ final class ContentUpdateManager {
         }
     }
 
-    private static void downloadFile(String url, File destination, long expectedBytes, String expectedSha256) throws IOException {
+    private static void downloadFile(
+        String url,
+        File destination,
+        long expectedBytes,
+        String expectedSha256,
+        long alreadyReceived,
+        long packageBytes,
+        long startedAt,
+        UpdateProgressListener progress
+    ) throws IOException {
         HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
         connection.setConnectTimeout(20_000);
         connection.setReadTimeout(60_000);
@@ -130,6 +144,9 @@ final class ContentUpdateManager {
                 if (bytes > expectedBytes) throw new IOException("An update file is larger than declared.");
                 output.write(buffer, 0, count);
                 digest.update(buffer, 0, count);
+                long completed = alreadyReceived + bytes;
+                long elapsed = Math.max(1, android.os.SystemClock.elapsedRealtime() - startedAt);
+                progress.onProgress("downloading", completed, packageBytes, completed * 1000 / elapsed, null);
             }
             output.getFD().sync();
         } finally {

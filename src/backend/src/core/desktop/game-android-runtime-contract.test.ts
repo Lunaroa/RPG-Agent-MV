@@ -31,6 +31,17 @@ test('managed Android shell fixes one WebView stack and contains content and APK
   const apk = fs.readFileSync(path.join(root, 'app', 'src', 'main', 'java', 'org', 'rpgagent', 'runtime', 'ApkUpdateManager.java'), 'utf8');
   assert.match(apk, /PackageInstaller/);
   assert.match(apk, /signingCertificateSha256/);
+  assert.match(apk, /progress\.onProgress\("downloading"/);
+  const content = fs.readFileSync(path.join(root, 'app', 'src', 'main', 'java', 'org', 'rpgagent', 'runtime', 'ContentUpdateManager.java'), 'utf8');
+  assert.match(content, /progress\.onProgress\("verifying"/);
+  assert.match(content, /progress\.onProgress\("complete"/);
+  const activity = fs.readFileSync(path.join(root, 'app', 'src', 'main', 'java', 'org', 'rpgagent', 'runtime', 'GameActivity.java'), 'utf8');
+  assert.match(activity, /RPGAgentUpdater\.handleNativeEvent/);
+  const receiver = fs.readFileSync(path.join(root, 'app', 'src', 'main', 'java', 'org', 'rpgagent', 'runtime', 'InstallResultReceiver.java'), 'utf8');
+  assert.match(receiver, /dispatchInstallResult\("error"/);
+  const bridge = fs.readFileSync(path.join(root, 'app', 'src', 'main', 'java', 'org', 'rpgagent', 'runtime', 'RPGAgentBridge.java'), 'utf8');
+  assert.match(bridge, /PROGRESS_INTERVAL_MS/);
+  assert.match(bridge, /received < total/);
 });
 
 test('Android toolchain status requires the pinned managed layout and verified dependency cache', () => {

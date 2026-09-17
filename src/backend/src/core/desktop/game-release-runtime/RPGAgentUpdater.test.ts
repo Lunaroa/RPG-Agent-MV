@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
 
+import type { GameReleaseRecord } from '../../../../../contract/game-release.ts';
 import {
   createGameManifestSigningIdentity,
   signGameReleaseManifest,
@@ -218,6 +219,115 @@ test('downloads a Windows startup update in the background and asks before insta
   }
 });
 
+test('uses the game locale and offers reload instead of an impossible Web self-update', async () => {
+  const candidate = release('release-web', '1.2.4');
+  const index = {
+    schemaVersion: 1,
+    generatedAt: new Date(0).toISOString(),
+    games: {
+      'sample-game': {
+        channels: { stable: { latestReleaseId: candidate.releaseId, maintenance: null, releases: [candidate] } },
+      },
+    },
+  };
+  const dom = createDocument();
+  let reloads = 0;
+  function SceneBoot(this: unknown) {}
+  SceneBoot.prototype.start = function() {};
+  const context = vm.createContext({
+    console,
+    URL,
+    document: dom.document,
+    location: { reload() { reloads += 1; } },
+    navigator: { language: 'en-US' },
+    $dataSystem: { locale: 'zh-CN' },
+    Scene_Boot: SceneBoot,
+    SceneManager: { exit() {} },
+    setTimeout,
+    localStorage: { getItem: () => '', setItem: () => undefined },
+    fetch: async () => ({ ok: true, json: async () => index }),
+    RPGAgentVersion: { getVersion: () => '1.2.3', compare: (value: string) => compare('1.2.3', value) },
+    $dataRPGAgentRelease: {
+      schemaVersion: 1,
+      gameId: 'sample-game',
+      version: '1.2.3',
+      channel: 'stable',
+      update: { enabled: true, indexUrl: 'https://updates.invalid/releases.json', checkOnStart: false, policy: 'optional' },
+    },
+  }) as vm.Context & Record<string, any>;
+  vm.runInContext(pluginSource, context, { filename: 'RPGAgentUpdater.js' });
+  assert.equal((await context.RPGAgentUpdater.check({ show: true })).status, 'available');
+  const buttons = allElements(dom.document.body).filter((element) => element.tag === 'button');
+  assert.deepEqual(buttons.map((button) => button.textContent), ['稍后再说', '重新载入']);
+  assert.match(allElements(dom.document.body).map((element) => element.textContent).join('\n'), /站点维护者/);
+  await buttons[1]!.onclick?.();
+  assert.equal(reloads, 1);
+});
+
+test('keeps Android progress active until a native callback and enables retry after failure', async () => {
+  const candidate = release('release-android', '1.2.4');
+  candidate.packages = [{
+    ...candidate.packages[0],
+    packageId: 'release-android-content',
+    platform: 'android',
+    architecture: 'universal',
+    delivery: 'content',
+  }];
+  const index = {
+    schemaVersion: 1,
+    generatedAt: new Date(0).toISOString(),
+    games: {
+      'sample-game': {
+        channels: { stable: { latestReleaseId: candidate.releaseId, maintenance: null, releases: [candidate] } },
+      },
+    },
+  };
+  const dom = createDocument();
+  let handoffs = 0;
+  function SceneBoot(this: unknown) {}
+  SceneBoot.prototype.start = function() {};
+  const context = vm.createContext({
+    console,
+    URL,
+    document: dom.document,
+    navigator: { language: 'en-US' },
+    Scene_Boot: SceneBoot,
+    setTimeout,
+    fetch: async () => ({ ok: true, json: async () => index }),
+    RPGAgentAndroid: {
+      getAbi: () => 'arm64-v8a',
+      getCurrentReleaseId: () => 'release-old',
+      installContentUpdate: () => { handoffs += 1; return true; },
+    },
+    RPGAgentVersion: { getVersion: () => '1.2.3', compare: (value: string) => compare('1.2.3', value) },
+    $dataRPGAgentRelease: {
+      schemaVersion: 1,
+      gameId: 'sample-game',
+      version: '1.2.3',
+      channel: 'stable',
+      update: { enabled: true, indexUrl: 'https://updates.invalid/releases.json', checkOnStart: false, policy: 'optional' },
+    },
+  }) as vm.Context & Record<string, any>;
+  vm.runInContext(pluginSource, context, { filename: 'RPGAgentUpdater.js' });
+  await context.RPGAgentUpdater.check({ show: true });
+  const button = allElements(dom.document.body).find((element) => element.tag === 'button' && /Full update/.test(element.textContent));
+  assert.ok(button);
+  await button!.onclick?.();
+  assert.equal(handoffs, 1);
+  assert.equal(context.RPGAgentUpdater.getState().downloading, true);
+  assert.equal(button!.disabled, true);
+  assert.equal(context.RPGAgentUpdater.handleNativeEvent({
+    stage: 'downloading', received: 25, total: 100, bytesPerSecond: 10,
+  }), true);
+  assert.equal(context.RPGAgentUpdater.getState().progress.received, 25);
+  assert.equal(context.RPGAgentUpdater.handleNativeEvent({ stage: 'error', message: 'Network unavailable' }), true);
+  assert.equal(context.RPGAgentUpdater.getState().downloading, false);
+  assert.equal(button!.disabled, false);
+  await button!.onclick?.();
+  assert.equal(handoffs, 2);
+  assert.equal(context.RPGAgentUpdater.getState().lastError, null);
+});
+
 function updaterContext(index: unknown, manifestSignature: unknown): vm.Context & Record<string, any> {
   function SceneBoot(this: unknown) {}
   SceneBoot.prototype.start = function() {};
@@ -249,12 +359,14 @@ function updaterContext(index: unknown, manifestSignature: unknown): vm.Context 
   }) as vm.Context & Record<string, any>;
 }
 
-function release(releaseId: string, version: string) {
+function release(releaseId: string, version: string): GameReleaseRecord {
+  const [core, suffix = ''] = version.split('-');
+  const [major, minor, patch] = core!.split('.');
   return {
     releaseId,
     version,
-    versionCore: version.split('.'),
-    suffix: '',
+    versionCore: [major!, minor!, patch!],
+    suffix,
     channel: 'stable',
     publishedAt: '2026-01-01T00:00:00.000Z',
     title: { 'en-US': 'Update' },
@@ -290,6 +402,7 @@ function compare(left: string, right: string): number {
 
 function createDocument() {
   class Element {
+    tag: string;
     id = '';
     type = '';
     textContent = '';
@@ -298,6 +411,10 @@ function createDocument() {
     parent: Element | null = null;
     children: Element[] = [];
     style = { cssText: '' };
+
+    constructor(tag = '') {
+      this.tag = tag;
+    }
 
     append(...children: Element[]) {
       for (const child of children) this.appendChild(child);
@@ -328,8 +445,12 @@ function createDocument() {
   return {
     document: {
       body,
-      createElement: () => new Element(),
+      createElement: (tag: string) => new Element(tag),
       getElementById: (id: string) => find(body, id),
     },
   };
+}
+
+function allElements(root: any): any[] {
+  return [root, ...root.children.flatMap((child: any) => allElements(child))];
 }

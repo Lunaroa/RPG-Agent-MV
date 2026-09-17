@@ -25,6 +25,10 @@ import android.widget.Toast;
 import androidx.annotation.Nullable;
 import androidx.webkit.WebViewAssetLoader;
 
+import org.json.JSONObject;
+
+import java.lang.ref.WeakReference;
+
 public final class GameActivity extends Activity {
     private static final String GAME_URL = "https://appassets.androidplatform.net/game/index.html";
     private WebView webView;
@@ -33,10 +37,12 @@ public final class GameActivity extends Activity {
     private RPGAgentBridge bridge;
     private WebViewAssetLoader assetLoader;
     private boolean rollbackAttempted;
+    private static WeakReference<GameActivity> activeActivity = new WeakReference<>(null);
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        activeActivity = new WeakReference<>(this);
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON, WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         enterImmersiveMode();
         try {
@@ -145,6 +151,32 @@ public final class GameActivity extends Activity {
         webView.loadUrl(GAME_URL);
     }
 
+    void dispatchUpdateEvent(String stage, long received, long total, long bytesPerSecond, String message) {
+        JSONObject event = new JSONObject();
+        try {
+            event.put("stage", stage);
+            event.put("received", received);
+            event.put("total", total);
+            event.put("bytesPerSecond", bytesPerSecond);
+            if (message != null) event.put("message", message);
+        } catch (Exception ignored) {
+            return;
+        }
+        String argument = JSONObject.quote(event.toString());
+        runOnUiThread(() -> {
+            if (webView == null) return;
+            webView.evaluateJavascript(
+                "(function(value){if(globalThis.RPGAgentUpdater&&typeof RPGAgentUpdater.handleNativeEvent==='function'){RPGAgentUpdater.handleNativeEvent(value);}})(" + argument + ");",
+                null
+            );
+        });
+    }
+
+    static void dispatchInstallResult(String stage, String message) {
+        GameActivity activity = activeActivity.get();
+        if (activity != null) activity.dispatchUpdateEvent(stage, 0, 0, 0, message);
+    }
+
     @Override
     public void onBackPressed() {
         if (webView == null) {
@@ -178,6 +210,7 @@ public final class GameActivity extends Activity {
             webView.stopLoading();
             webView.destroy();
         }
+        if (activeActivity.get() == this) activeActivity.clear();
         super.onDestroy();
     }
 

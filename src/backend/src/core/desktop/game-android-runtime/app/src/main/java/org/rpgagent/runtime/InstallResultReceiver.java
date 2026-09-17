@@ -20,9 +20,12 @@ public final class InstallResultReceiver extends BroadcastReceiver {
         }
         String message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
         if (status == PackageInstaller.STATUS_SUCCESS) {
+            GameActivity.dispatchInstallResult("complete", "Game update installed.");
             Toast.makeText(context, "Game update installed.", Toast.LENGTH_LONG).show();
         } else {
-            Toast.makeText(context, "Game update was not installed: " + (message == null ? "Android rejected it." : message), Toast.LENGTH_LONG).show();
+            String details = message == null ? "Android rejected it." : message;
+            GameActivity.dispatchInstallResult("error", details);
+            Toast.makeText(context, "Game update was not installed: " + details, Toast.LENGTH_LONG).show();
         }
     }
 }

@@ -36,7 +36,7 @@ final class ApkUpdateManager {
         this.activity = activity;
     }
 
-    void install(String payloadText) throws IOException, JSONException, PackageManager.NameNotFoundException {
+    void install(String payloadText, UpdateProgressListener progress) throws IOException, JSONException, PackageManager.NameNotFoundException {
         JSONObject payload = new JSONObject(payloadText);
         JSONObject pkg = payload.optJSONObject("pkg");
         if (pkg == null || !"android".equals(pkg.optString("platform")) || !"apk".equals(pkg.optString("delivery"))) {
@@ -57,7 +57,8 @@ final class ApkUpdateManager {
         File apk = new File(activity.getCacheDir(), "rpg-agent-update-" + UUID.randomUUID() + ".apk");
         boolean retainedForConfirmation = false;
         try {
-            download(url, apk, expectedBytes, expectedSha256);
+            download(url, apk, expectedBytes, expectedSha256, progress);
+            progress.onProgress("verifying", expectedBytes, expectedBytes, 0, null);
             PackageInfo archive = packageArchiveInfo(apk);
             if (archive == null || !expectedApplicationId.equals(archive.packageName)
                 || packageVersionCode(archive) != expectedVersionCode) {
@@ -86,23 +87,31 @@ final class ApkUpdateManager {
                     Intent settings = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + activity.getPackageName()));
                     activity.startActivity(settings);
                 });
-                return;
+                throw new IOException("Allow installs from this app in Android settings, then retry the update.");
             }
+            progress.onProgress("installing", expectedBytes, expectedBytes, 0, null);
             if (replacement) commit(apk, archive.packageName);
             else {
                 retainedForConfirmation = true;
                 activity.runOnUiThread(() -> new AlertDialog.Builder(activity)
                 .setTitle("Install as a new app?")
                 .setMessage("This APK uses a different application ID. Android will install it as a separate app, and this game's private saves will not move automatically.")
-                .setNegativeButton(android.R.string.cancel, (dialog, which) -> deleteDownloadedApk(apk))
+                .setNegativeButton(android.R.string.cancel, (dialog, which) -> {
+                    deleteDownloadedApk(apk);
+                    progress.onProgress("error", 0, 0, 0, "The APK installation was canceled.");
+                })
                 .setPositiveButton("Continue", (dialog, which) -> {
                     try {
                         commit(apk, archive.packageName);
                     } catch (IOException error) {
+                        progress.onProgress("error", 0, 0, 0, error.getMessage());
                         Toast.makeText(activity, error.getMessage(), Toast.LENGTH_LONG).show();
                     }
                 })
-                .setOnCancelListener(dialog -> deleteDownloadedApk(apk))
+                .setOnCancelListener(dialog -> {
+                    deleteDownloadedApk(apk);
+                    progress.onProgress("error", 0, 0, 0, "The APK installation was canceled.");
+                })
                 .show());
             }
         } finally {
@@ -169,7 +178,13 @@ final class ApkUpdateManager {
         return RuntimeFiles.sha256(signatures[0].toByteArray());
     }
 
-    private static void download(String value, File destination, long expectedBytes, String expectedSha256) throws IOException {
+    private static void download(
+        String value,
+        File destination,
+        long expectedBytes,
+        String expectedSha256,
+        UpdateProgressListener progress
+    ) throws IOException {
         HttpURLConnection connection = (HttpURLConnection) new URL(value).openConnection();
         connection.setConnectTimeout(20_000);
         connection.setReadTimeout(60_000);
@@ -182,6 +197,7 @@ final class ApkUpdateManager {
         }
         MessageDigest digest = RuntimeFiles.sha256Digest();
         long bytes = 0;
+        long startedAt = android.os.SystemClock.elapsedRealtime();
         try (InputStream input = new BufferedInputStream(connection.getInputStream()); FileOutputStream output = new FileOutputStream(destination)) {
             byte[] buffer = new byte[64 * 1024];
             int count;
@@ -190,6 +206,8 @@ final class ApkUpdateManager {
                 if (bytes > expectedBytes) throw new IOException("The APK is larger than declared.");
                 output.write(buffer, 0, count);
                 digest.update(buffer, 0, count);
+                long elapsed = Math.max(1, android.os.SystemClock.elapsedRealtime() - startedAt);
+                progress.onProgress("downloading", bytes, expectedBytes, bytes * 1000 / elapsed, null);
             }
             output.getFD().sync();
         } finally {

@@ -11,6 +11,48 @@
 
   const state = { checking: false, downloading: false, lastError: null, available: null, progress: null };
   let preparedDownload = null;
+  let nativeUpdateUi = null;
+  const UI_TEXT = {
+    'en-US': {
+      repair: 'Repair current version', exit: 'Exit', later: 'Later', reload: 'Reload',
+      installApk: 'Install APK', full: 'Full update', fileDelta: 'File update', binaryDiff: 'Binary patch',
+      checkFailed: 'Update check failed', playable: 'The current game can still be played.', close: 'Close',
+      unknownSize: 'Unknown size', webUpdate: 'This Web release is updated by deploying new site files. Reload after the site owner has published the update.',
+      androidHandoff: 'Handing the verified release information to Android…',
+      androidDownloading: 'Downloading {received} / {total} · {speed}/s…',
+      androidVerifying: 'Verifying the downloaded update…', androidInstalling: 'Opening the Android installer…',
+      updateReady: 'The update is ready. Restart or reload the game to use it.', unchanged: 'The current game was not changed.',
+      preparing: 'Preparing update…', downloading: 'Downloading {received} / {total} · {speed}/s…',
+      verifiedExit: 'Download verified. Exit the game to apply the update…',
+      updateTitle: 'Update {version}',
+    },
+    'zh-CN': {
+      repair: '修复当前版本', exit: '退出游戏', later: '稍后再说', reload: '重新载入',
+      installApk: '安装 APK', full: '完整更新', fileDelta: '文件更新', binaryDiff: '二进制补丁',
+      checkFailed: '检查更新失败', playable: '当前游戏仍可正常游玩。', close: '关闭',
+      unknownSize: '大小未知', webUpdate: 'Web 版需要由站点维护者先部署新文件。部署完成后，请重新载入页面。',
+      androidHandoff: '正在把已验证的发行信息交给 Android…',
+      androidDownloading: '正在下载 {received} / {total} · {speed}/秒…',
+      androidVerifying: '正在校验下载内容…', androidInstalling: '正在打开 Android 安装程序…',
+      updateReady: '更新已经准备完成，请重启或重新载入游戏。', unchanged: '当前游戏没有被修改。',
+      preparing: '正在准备更新…', downloading: '正在下载 {received} / {total} · {speed}/秒…',
+      verifiedExit: '下载和校验已完成，退出游戏后将开始安装…',
+      updateTitle: '更新到 {version}',
+    },
+    'ja-JP': {
+      repair: '現在のバージョンを修復', exit: 'ゲームを終了', later: '後で', reload: '再読み込み',
+      installApk: 'APK をインストール', full: '完全更新', fileDelta: 'ファイル更新', binaryDiff: '差分パッチ',
+      checkFailed: '更新の確認に失敗しました', playable: '現在のゲームは引き続きプレイできます。', close: '閉じる',
+      unknownSize: 'サイズ不明', webUpdate: 'Web 版はサイト管理者が新しいファイルを公開して更新します。公開後に再読み込みしてください。',
+      androidHandoff: '確認済みのリリース情報を Android に渡しています…',
+      androidDownloading: '{received} / {total} をダウンロード中 · {speed}/秒…',
+      androidVerifying: 'ダウンロードを検証しています…', androidInstalling: 'Android インストーラーを開いています…',
+      updateReady: '更新の準備が完了しました。ゲームを再起動または再読み込みしてください。', unchanged: '現在のゲームは変更されていません。',
+      preparing: '更新を準備しています…', downloading: '{received} / {total} をダウンロード中 · {speed}/秒…',
+      verifiedExit: 'ダウンロードの検証が完了しました。ゲームを終了すると更新を適用します…',
+      updateTitle: 'バージョン {version} に更新',
+    },
+  };
 
   function releaseConfig() {
     const config = globalThis.$dataRPGAgentRelease;
@@ -34,9 +76,29 @@
   }
 
   function currentLanguage() {
-    return globalThis.ConfigManager && ConfigManager.language
-      ? String(ConfigManager.language)
-      : (globalThis.navigator && navigator.language) || 'en-US';
+    const config = globalThis.$dataRPGAgentRelease;
+    const value = (globalThis.$dataSystem && $dataSystem.locale)
+      || (config && config.update && config.update.defaultLanguage)
+      || (globalThis.ConfigManager && ConfigManager.language)
+      || (globalThis.navigator && navigator.language)
+      || 'en-US';
+    return normalizeLanguage(value);
+  }
+
+  function normalizeLanguage(value) {
+    const language = String(value || 'en-US').replace(/_/g, '-');
+    const lower = language.toLowerCase();
+    if (lower === 'zh' || lower.startsWith('zh-cn') || lower.startsWith('zh-hans')) return 'zh-CN';
+    if (lower === 'ja' || lower.startsWith('ja-')) return 'ja-JP';
+    if (lower === 'en' || lower.startsWith('en-')) return 'en-US';
+    return language;
+  }
+
+  function ui(key, values = {}) {
+    const language = currentLanguage();
+    const dictionary = UI_TEXT[language] || UI_TEXT[language.split('-')[0]] || UI_TEXT['en-US'];
+    const template = dictionary[key] || UI_TEXT['en-US'][key] || key;
+    return template.replace(/\{([^}]+)\}/g, (_match, name) => String(values[name] ?? ''));
   }
 
   function selectText(map, language, fallback) {
@@ -270,17 +332,20 @@
     const summary = selectText(release.summary, language, release.defaultLanguage);
     const maintenance = result.maintenance ? selectText(result.maintenance, language, release.defaultLanguage) : '';
     const repairing = compareReleaseVersions(RPGAgentVersion.getVersion(), release.version) === 0;
-    const body = `${summary}\n\n${release.publishedAt || ''}${maintenance ? `\n\n${maintenance}` : ''}`;
+    const webNotice = platform() === 'web' ? `\n\n${ui('webUpdate')}` : '';
+    const body = `${summary}\n\n${release.publishedAt || ''}${maintenance ? `\n\n${maintenance}` : ''}${webNotice}`;
     const required = release.required === true || releaseConfig().update.policy === 'required';
     const packages = sortedPackages(result.packages);
-    const actions = packages.map((pkg) => ({
-      label: `${repairing ? 'Repair current version' : packageLabel(pkg)} · ${formatBytes(pkg.bytes)}`,
-      run: (_host, content, button) => download(result, pkg, content, button),
-    }));
+    const actions = platform() === 'web'
+      ? [{ label: ui('reload'), run: () => reloadGame() }]
+      : packages.map((pkg) => ({
+        label: `${repairing ? ui('repair') : packageLabel(pkg)} · ${formatBytes(pkg.bytes)}`,
+        run: (_host, content, button) => download(result, pkg, content, button),
+      }));
     actions.unshift(required
-      ? { label: 'Exit', run: () => exitGame() }
-      : { label: 'Later', run: (host) => host.remove() });
-    overlay(title || `Update ${release.version}`, body, actions);
+      ? { label: ui('exit'), run: () => exitGame() }
+      : { label: ui('later'), run: (host) => host.remove() });
+    overlay(title || ui('updateTitle', { version: release.version }), body, actions);
   }
 
   function sortedPackages(packages) {
@@ -292,18 +357,18 @@
   }
 
   function packageLabel(pkg) {
-    if (pkg.delivery === 'apk') return 'Install APK';
-    return ({ full: 'Full update', 'file-delta': 'File update', 'binary-diff': 'Binary patch' })[pkg.packageType] || pkg.packageType;
+    if (pkg.delivery === 'apk') return ui('installApk');
+    return ({ full: ui('full'), 'file-delta': ui('fileDelta'), 'binary-diff': ui('binaryDiff') })[pkg.packageType] || pkg.packageType;
   }
 
   function showError(message) {
-    overlay('Update check failed', `${message}\n\nThe current game can still be played.`, [
-      { label: 'Close', run: (host) => host.remove() },
+    overlay(ui('checkFailed'), `${message}\n\n${ui('playable')}`, [
+      { label: ui('close'), run: (host) => host.remove() },
     ]);
   }
 
   function formatBytes(bytes) {
-    if (!Number.isFinite(bytes) || bytes <= 0) return 'Unknown size';
+    if (!Number.isFinite(bytes) || bytes <= 0) return ui('unknownSize');
     const units = ['B', 'KB', 'MB', 'GB'];
     let value = bytes;
     let unit = 0;
@@ -312,7 +377,11 @@
   }
 
   function packageUrl(relative) {
-    return new URL(String(relative), releaseConfig().update.indexUrl).toString();
+    const parsed = new URL(String(relative), releaseConfig().update.indexUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error('The update package URL must use HTTP or HTTPS.');
+    }
+    return parsed.toString();
   }
 
   function childUrl(base, relativePath) {
@@ -368,7 +437,9 @@
           const completed = totalReceived + received;
           const bytesPerSecond = completed * 1000 / Math.max(1, Date.now() - startedAt);
           state.progress = { received: completed, total: pkg.bytes, bytesPerSecond };
-          if (content) content.textContent = `Downloading ${formatBytes(completed)} / ${formatBytes(pkg.bytes)} · ${formatBytes(bytesPerSecond)}/s…`;
+          if (content) content.textContent = ui('downloading', {
+            received: formatBytes(completed), total: formatBytes(pkg.bytes), speed: formatBytes(bytesPerSecond),
+          });
         });
         const digest = await sha256(buffer);
         if (digest !== String(file.sha256).toLowerCase() || buffer.byteLength !== file.bytes) {
@@ -406,11 +477,13 @@
   async function download(result, pkg, content, button) {
     if (state.downloading) return;
     state.downloading = true;
+    state.lastError = null;
+    state.progress = null;
     button.disabled = true;
+    let nativePending = false;
     try {
-      if (platform() === 'web') throw new Error('Web releases are updated by deploying the new site content. This browser copy cannot replace its own files.');
       if (platform() === 'android') {
-        content.textContent = 'Handing the verified release information to Android…';
+        content.textContent = ui('androidHandoff');
         const payload = JSON.stringify({
           indexUrl: releaseConfig().update.indexUrl,
           packageUrl: packageUrl(pkg.url),
@@ -421,6 +494,8 @@
           ? RPGAgentAndroid.installApkUpdate(payload)
           : RPGAgentAndroid.installContentUpdate(payload);
         if (accepted === false) throw new Error('Android declined the update handoff.');
+        nativePending = true;
+        nativeUpdateUi = { content, button };
         return;
       }
       let downloaded;
@@ -433,21 +508,67 @@
         discardPreparedDownload();
         downloaded = await downloadDirectory(pkg, content);
       }
-      content.textContent = 'Download verified. Exit the game to apply the update…';
+      content.textContent = ui('verifiedExit');
       handoffWindowsUpdate(pkg, result.release, downloaded);
     } catch (error) {
-      content.textContent = `${error instanceof Error ? error.message : String(error)}\n\nThe current game was not changed.`;
+      state.lastError = error instanceof Error ? error.message : String(error);
+      content.textContent = `${state.lastError}\n\n${ui('unchanged')}`;
       button.disabled = false;
     } finally {
-      state.downloading = false;
+      if (!nativePending) state.downloading = false;
     }
+  }
+
+  function handleNativeEvent(input) {
+    let event = input;
+    if (typeof input === 'string') {
+      try { event = JSON.parse(input); } catch { return false; }
+    }
+    if (!event || typeof event !== 'object' || typeof event.stage !== 'string') return false;
+    const received = Number(event.received) || 0;
+    const total = Number(event.total) || 0;
+    const bytesPerSecond = Number(event.bytesPerSecond) || 0;
+    if (event.stage === 'downloading') {
+      state.progress = { received, total, bytesPerSecond };
+      if (nativeUpdateUi) nativeUpdateUi.content.textContent = ui('androidDownloading', {
+        received: formatBytes(received), total: formatBytes(total), speed: formatBytes(bytesPerSecond),
+      });
+      return true;
+    }
+    if (event.stage === 'verifying') {
+      if (nativeUpdateUi) nativeUpdateUi.content.textContent = ui('androidVerifying');
+      return true;
+    }
+    if (event.stage === 'installing') {
+      if (nativeUpdateUi) nativeUpdateUi.content.textContent = ui('androidInstalling');
+      return true;
+    }
+    if (event.stage === 'complete') {
+      state.downloading = false;
+      state.lastError = null;
+      state.progress = { received, total, bytesPerSecond };
+      if (nativeUpdateUi) nativeUpdateUi.content.textContent = ui('updateReady');
+      nativeUpdateUi = null;
+      return true;
+    }
+    if (event.stage === 'error') {
+      state.downloading = false;
+      state.lastError = typeof event.message === 'string' ? event.message : ui('checkFailed');
+      if (nativeUpdateUi) {
+        nativeUpdateUi.content.textContent = `${state.lastError}\n\n${ui('unchanged')}`;
+        nativeUpdateUi.button.disabled = false;
+      }
+      nativeUpdateUi = null;
+      return true;
+    }
+    return false;
   }
 
   function backgroundStatus() {
     document.getElementById('rpg-agent-updater-background')?.remove();
     const status = document.createElement('div');
     status.id = 'rpg-agent-updater-background';
-    status.textContent = 'Preparing update…';
+    status.textContent = ui('preparing');
     status.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:999998;max-width:min(420px,calc(100% - 32px));padding:10px 12px;border:1px solid #68717e;border-radius:6px;background:#171a20;color:#f3f5f7;font:13px/1.4 sans-serif;box-shadow:0 8px 28px rgba(0,0,0,.35)';
     document.body.appendChild(status);
     return status;
@@ -568,10 +689,15 @@
     else if (globalThis.SceneManager) SceneManager.exit();
   }
 
+  function reloadGame() {
+    if (globalThis.location && typeof location.reload === 'function') location.reload();
+  }
+
   const api = Object.freeze({
     check,
     open() { return check({ show: true, manual: true }); },
     getState() { return { ...state }; },
+    handleNativeEvent,
   });
   globalThis.RPGAgentUpdater = api;
 

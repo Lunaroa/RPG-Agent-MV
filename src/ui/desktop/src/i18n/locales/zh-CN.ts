@@ -92,6 +92,7 @@ const zhCN = {
     'gameVersion.confirm.title': '保存游戏版本设置',
     'gameVersion.confirm.detail': '版本配置和受管运行时插件会直接写入工程；已有文件会先备份，外部改动冲突时不会覆盖。',
     'gameVersion.error.load': '读取游戏版本设置失败：{{message}}',
+    'gameVersion.error.preview': '无法预览保存改动：{{message}}',
     'gameVersion.error.save': '保存游戏版本设置失败：{{message}}',
     'gameVersion.error.indexTest': '更新清单测试失败：{{message}}',
 
@@ -211,6 +212,7 @@ const zhCN = {
     'gamePackaging.uploadSucceeded': '发布目录已生成并上传，服务器索引最后更新。',
     'gamePackaging.checkPassed': '检查通过',
     'gamePackaging.checkFailed': '需要先处理以下问题',
+    'gamePackaging.checkWarnings': '提醒（不阻断构建）',
     'gamePackaging.managedChangesTitle': '确认写入工程文件',
     'gamePackaging.continueBuild': '写入并构建',
     'gamePackaging.outputExists': '输出已经存在',

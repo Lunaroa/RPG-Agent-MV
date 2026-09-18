@@ -118,6 +118,21 @@ test('uses the engine-resolved www data layout and detects concurrent release ed
   });
 });
 
+test('release audit: previews the current version draft without writing the project', () => {
+  withFixture('data', ({ workflowRoot, project }) => {
+    const initial = readGameReleaseStatus(workflowRoot, project);
+    const saved = saveGameReleaseConfig(workflowRoot, project, { config: initial.config, expectedSourceHash: null });
+    assert.deepEqual(saved.managedChanges, []);
+    const draft = { ...saved.config, version: '2.0.0', update: { ...saved.config.update, enabled: true,
+      indexUrl: 'https://updates.example.test/releases.json' } };
+    const preview = readGameReleaseStatus(workflowRoot, project, draft);
+    assert.deepEqual(preview.managedChanges.map((change) => change.relativePath).sort(), ['data/RPGAgentRelease.json', 'js/plugins.js']);
+    assert.ok(preview.managedChanges.every((change) => change.kind === 'update'));
+    assert.equal(preview.sourceHash, saved.sourceHash);
+    assert.equal(readGameReleaseStatus(workflowRoot, project).config.version, saved.config.version);
+  });
+});
+
 test('enables the updater entry only when online updates are configured', () => {
   withFixture('data', ({ workflowRoot, project }) => {
     const initial = readGameReleaseStatus(workflowRoot, project);
@@ -141,13 +156,14 @@ test('enables the updater entry only when online updates are configured', () => 
 
 test('tests the configured update index and resolves the selected channel latest release', async () => {
   const index = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date(0).toISOString(),
     games: {
       'sample-game': {
         channels: {
           stable: {
             latestReleaseId: 'release-2',
+            latestReleaseIds: { 'web/web': 'release-2' },
             maintenance: null,
             releases: [
               updateRelease('release-1', '1.0.0'),

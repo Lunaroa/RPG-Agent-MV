@@ -174,7 +174,9 @@ function runtimeUrl(relativePath: string): string {
 }
 
 function isBootstrapJavascript(relativePath: string): boolean {
-  return BOOTSTRAP_JAVASCRIPT.has(stripWww(relativePath.replace(/\\/g, '/')))
+  const runtimePath = stripWww(relativePath.replace(/\\/g, '/'));
+  // Engine libraries execute before the content loader in both MV and MZ.
+  return runtimePath.startsWith('js/libs/') || BOOTSTRAP_JAVASCRIPT.has(runtimePath)
     || relativePath.endsWith('/RPGAgentContentLoader.js');
 }
 
@@ -404,46 +406,57 @@ function renderRuntimeLoader(records: RuntimeContentRecord[], key: Buffer | null
   patchMediaSource(globalThis.HTMLImageElement && HTMLImageElement.prototype);
   patchMediaSource(globalThis.HTMLMediaElement && HTMLMediaElement.prototype);
   let pluginLoadChain = Promise.resolve();
-  if (globalThis.PluginManager && typeof PluginManager.loadScript === 'function') {
-    PluginManager.loadScript = function(name) {
-      const manager = this;
-      const record = recordFor('js/plugins/' + name);
-      pluginLoadChain = pluginLoadChain.then(async function() {
-        const objectUrl = record
-          ? URL.createObjectURL(new Blob([await load(record)], { type: 'text/javascript' }))
-          : null;
-        const source = objectUrl || String(manager._path || 'js/plugins/') + name;
-        try {
-          await new Promise(function(resolve, reject) {
-            const script = document.createElement('script');
-            script.type = 'text/javascript';
-            script.async = false;
-            script.src = source;
-            script.onload = resolve;
-            script.onerror = function() { reject(new Error('Could not load plugin: ' + name)); };
-            document.body.appendChild(script);
-          });
-        } finally {
-          if (objectUrl) URL.revokeObjectURL(objectUrl);
-        }
-      }).catch(function(error) {
-        console.error('[RPGAgentContentLoader]', error);
-        manager._errorUrls = manager._errorUrls || [];
-        manager._errorUrls.push(name);
-      });
-      return pluginLoadChain;
-    };
+  let pluginHookInstalled = false;
+  let sceneHookInstalled = false;
+  function installEngineHooks() {
+    if (!pluginHookInstalled && globalThis.PluginManager && typeof PluginManager.loadScript === 'function') {
+      pluginHookInstalled = true;
+      PluginManager.loadScript = function(name) {
+        const manager = this;
+        const record = recordFor('js/plugins/' + name);
+        pluginLoadChain = pluginLoadChain.then(async function() {
+          const objectUrl = record
+            ? URL.createObjectURL(new Blob([await load(record)], { type: 'text/javascript' }))
+            : null;
+          const source = objectUrl || String(manager._path || 'js/plugins/') + name;
+          try {
+            await new Promise(function(resolve, reject) {
+              const script = document.createElement('script');
+              script.type = 'text/javascript';
+              script.async = false;
+              script.src = source;
+              script.onload = resolve;
+              script.onerror = function() { reject(new Error('Could not load plugin: ' + name)); };
+              document.body.appendChild(script);
+            });
+          } finally {
+            if (objectUrl) URL.revokeObjectURL(objectUrl);
+          }
+        }).catch(function(error) {
+          console.error('[RPGAgentContentLoader]', error);
+          manager._errorUrls = manager._errorUrls || [];
+          manager._errorUrls.push(name);
+        });
+        return pluginLoadChain;
+      };
+    }
+    if (!sceneHookInstalled && globalThis.SceneManager && typeof SceneManager.run === 'function') {
+      sceneHookInstalled = true;
+      const nativeRun = SceneManager.run;
+      let runRequested = false;
+      SceneManager.run = function(sceneClass) {
+        if (runRequested) return;
+        runRequested = true;
+        const manager = this;
+        pluginLoadChain.then(function() { nativeRun.call(manager, sceneClass); });
+      };
+    }
+    if (pluginHookInstalled && sceneHookInstalled) document.removeEventListener('load', installEngineHooks, true);
   }
-  if (globalThis.SceneManager && typeof SceneManager.run === 'function') {
-    const nativeRun = SceneManager.run;
-    let runRequested = false;
-    SceneManager.run = function(sceneClass) {
-      if (runRequested) return;
-      runRequested = true;
-      const manager = this;
-      pluginLoadChain.then(function() { nativeRun.call(manager, sceneClass); });
-    };
-  }
+  // MZ loads its engine scripts from main.js after this loader has executed.
+  // Capture their load event before the bootstrap's own onload starts plugins.
+  document.addEventListener('load', installEngineHooks, true);
+  installEngineHooks();
   globalThis.RPGAgentContent = Object.freeze({
     records: Object.keys(records),
     load: async path => {

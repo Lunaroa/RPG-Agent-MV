@@ -109,9 +109,9 @@
   }
 
   function validateIndex(index) {
-    if (!index || index.schemaVersion !== 1 || typeof index.generatedAt !== 'string'
+    if (!index || index.schemaVersion !== 2 || typeof index.generatedAt !== 'string'
       || !index.games || typeof index.games !== 'object' || Array.isArray(index.games)) {
-      throw new Error('The update index has an unsupported format.');
+      throw new Error('The update index must use schemaVersion 2. Ask the developer to regenerate the publication index.');
     }
     return index;
   }
@@ -270,9 +270,13 @@
       await verifyGameManifest(config.gameId, game, config.update.manifestSignature);
       const channel = game.channels[config.channel];
       if (!channel || !Array.isArray(channel.releases)) throw new Error('The configured game or channel is missing from the update index.');
-      const release = channel.latestReleaseId
-        ? channel.releases.find((candidate) => candidate && candidate.releaseId === channel.latestReleaseId)
-        : null;
+      if (!channel.latestReleaseIds || typeof channel.latestReleaseIds !== 'object' || Array.isArray(channel.latestReleaseIds)) {
+        throw new Error('The update index has no per-platform current releases. Ask the developer to regenerate the publication index.');
+      }
+      const target = platform();
+      const releaseId = channel.latestReleaseIds[`${target}/${architecture()}`] || channel.latestReleaseIds[`${target}/universal`];
+      const release = releaseId ? channel.releases.find((candidate) => candidate && candidate.releaseId === releaseId) : null;
+      if (releaseId && !release) throw new Error('The current platform release does not exist in this channel.');
       if (!release) return { status: 'current', maintenance: channel.maintenance || null };
       validateRelease(release, config.channel);
       const compared = compareReleaseVersions(RPGAgentVersion.getVersion(), release.version);

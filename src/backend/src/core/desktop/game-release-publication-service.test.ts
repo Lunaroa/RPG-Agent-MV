@@ -60,6 +60,49 @@ test('publishes a directory artifact into a multi-game index and permits an iden
   }
 });
 
+test('release audit: publishing and promoting a platform preserves other platform pointers', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-platform-publication-'));
+  const project = path.join(root, 'sample');
+  const publishDirectory = path.join(root, 'published');
+  try {
+    for (const [releaseId, platform, architecture, promote] of [
+      ['web-one', 'web', 'web', true], ['windows-one', 'windows', 'x64', true],
+      ['windows-two', 'windows', 'x64', false],
+    ] as const) {
+      const artifact = path.join(root, releaseId);
+      write(artifact, 'index.html', '<!doctype html>');
+      writeReport(project, releaseId, { ...directoryArtifact(artifact, 'directory'), platform, architecture });
+      await publishGameRelease(project, { releaseId, publishDirectory, metadata, updateLatest: promote });
+    }
+    const channel = () => JSON.parse(fs.readFileSync(path.join(publishDirectory, 'releases.json'), 'utf8')).games['sample-game'].channels.stable;
+    assert.deepEqual(channel().latestReleaseIds, { 'web/web': 'web-one', 'windows/x64': 'windows-one' });
+    await publishGameRelease(project, { releaseId: 'windows-two', publishDirectory, metadata, updateLatest: true });
+    assert.deepEqual(channel().latestReleaseIds, { 'web/web': 'web-one', 'windows/x64': 'windows-two' });
+    await publishGameRelease(project, { releaseId: 'web-one', publishDirectory, metadata, updateLatest: true });
+    assert.equal(channel().latestReleaseIds['windows/x64'], 'windows-two');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('release audit: rejects an old publication index without changing existing files', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-old-publication-'));
+  const project = path.join(root, 'sample');
+  const artifact = path.join(root, 'artifact');
+  const publishDirectory = path.join(root, 'published');
+  try {
+    write(artifact, 'index.html', '<!doctype html>');
+    writeReport(project, 'release-new', directoryArtifact(artifact, 'directory'));
+    write(publishDirectory, 'releases.json', JSON.stringify({ schemaVersion: 1, generatedAt: '2026-01-01T00:00:00.000Z', games: {} }));
+    write(publishDirectory, 'existing-content.txt', 'Existing publication');
+    const before = collectDirectoryDigest(publishDirectory);
+    await assert.rejects(
+      publishGameRelease(project, { releaseId: 'release-new', publishDirectory, metadata, updateLatest: true }),
+      /schemaVersion 2.*new directory/,
+    );
+    assert.deepEqual(collectDirectoryDigest(publishDirectory), before);
+    assert.equal(fs.existsSync(path.join(publishDirectory, 'games')), false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('publishes an unzipped delta artifact as a directory and rejects changed retry metadata', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-publish-delta-'));
   const project = path.join(root, 'projects', 'sample');
@@ -197,6 +240,9 @@ test('signs one game manifest with the build identity and rejects later tamperin
       publicKey: identity.publicKey,
     };
     assert.equal(verifyGameReleaseManifestSignature('sample-game', index.games['sample-game'], config), true);
+    index.games['sample-game'].channels.stable.latestReleaseIds['web/web'] = 'tampered';
+    assert.equal(verifyGameReleaseManifestSignature('sample-game', index.games['sample-game'], config), false);
+    index.games['sample-game'].channels.stable.latestReleaseIds['web/web'] = 'release-signed';
     index.games['sample-game'].channels.stable.latestReleaseId = 'tampered';
     assert.equal(verifyGameReleaseManifestSignature('sample-game', index.games['sample-game'], config), false);
   } finally {

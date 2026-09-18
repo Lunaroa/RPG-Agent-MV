@@ -94,6 +94,7 @@ const enUS = {
     'gameVersion.confirm.title': 'Save game version settings',
     'gameVersion.confirm.detail': 'The release config and managed runtime plugins will be written directly to the project. Existing files are backed up first, and external edit conflicts are never overwritten.',
     'gameVersion.error.load': 'Could not load game version settings: {{message}}',
+    'gameVersion.error.preview': 'Could not preview saved changes: {{message}}',
     'gameVersion.error.save': 'Could not save game version settings: {{message}}',
     'gameVersion.error.indexTest': 'The update index test failed: {{message}}',
 
@@ -213,6 +214,7 @@ const enUS = {
     'gamePackaging.uploadSucceeded': 'The release was uploaded and the server index was updated last.',
     'gamePackaging.checkPassed': 'Check passed',
     'gamePackaging.checkFailed': 'Resolve these issues first',
+    'gamePackaging.checkWarnings': 'Warnings (build can continue)',
     'gamePackaging.managedChangesTitle': 'Confirm project file changes',
     'gamePackaging.continueBuild': 'Write and build',
     'gamePackaging.outputExists': 'Output already exists',

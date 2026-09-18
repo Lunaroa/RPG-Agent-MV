@@ -694,7 +694,7 @@ function createPackageContent(
   for (const file of changedFiles) {
     const target = fs.readFileSync(resolveSafeRelative(completeContent, file.path));
     const baseEntry = base.files.get(file.path);
-    const baseFile = baseEntry ? locateBaseArtifactFile(base.report, file.path) : null;
+    const baseFile = baseEntry ? locateBaseArtifactFile(base.report, file.path, baseEntry.sha256) : null;
     const baseContent = baseFile ? fs.readFileSync(baseFile) : null;
     const patch = createBinaryPatch(baseContent, target);
     const patchPath = `.rpg-agent/patches/${encodePatchPath(file.path)}.rpgpatch`;
@@ -713,13 +713,13 @@ function createPackageContent(
   return { patches };
 }
 
-function locateBaseArtifactFile(report: GameBuildReport, relativePath: string): string {
+function locateBaseArtifactFile(report: GameBuildReport, relativePath: string, expectedSha256: string): string {
   const directory = report.artifacts.find((artifact) => artifact.kind === 'directory' && artifact.packageType === 'full');
   if (!directory || !fs.existsSync(directory.path)) {
     throw new Error(`The exact full baseline directory for ${report.releaseId} is unavailable.`);
   }
   const file = resolveSafeRelative(directory.path, relativePath);
-  if (!fs.existsSync(file) || sha256File(file) !== report.files.find((entry) => entry.path === relativePath)?.sha256) {
+  if (!fs.existsSync(file) || sha256File(file) !== expectedSha256) {
     throw new Error(`The baseline file no longer matches its build report: ${relativePath}.`);
   }
   return file;
@@ -752,6 +752,12 @@ function requireBaseRelease(project: string, preset: GameBuildPreset, release: G
     }
     if (files.has(file.path)) throw new Error(`The selected baseline contains a duplicate file path: ${file.path}.`);
     files.set(file.path, file);
+  }
+  if (preset.packageType === 'binary-diff') {
+    if (report.packageType !== 'full') {
+      throw new Error('A binary diff requires a full baseline with its original content directory.');
+    }
+    for (const file of files.values()) locateBaseArtifactFile(report, file.path, file.sha256);
   }
   return { report, files };
 }

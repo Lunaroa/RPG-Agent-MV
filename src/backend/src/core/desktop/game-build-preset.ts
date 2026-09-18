@@ -113,7 +113,7 @@ export function validateGameBuildPreset(value: unknown, index = 0): GameBuildPre
     throw new Error(`${label}.baseReleaseId is only valid for delta packages.`);
   }
   const processing = validateProcessing(raw.processing, `${label}.processing`);
-  const android = raw.android === undefined ? undefined : validateAndroid(raw.android, `${label}.android`);
+  const android = raw.android === undefined ? undefined : validateAndroid(raw.android, `${label}.android`, target === 'android');
   if (target === 'android' && !android) throw new Error(`${label}.android is required for Android builds.`);
   const upload = raw.upload === undefined ? undefined : validateUpload(raw.upload, `${label}.upload`);
   return {
@@ -177,7 +177,7 @@ function validateProcessing(value: unknown, label: string): GameContentProcessin
   return { ...result, ...(encryptionKeyId ? { encryptionKeyId } : {}) };
 }
 
-function validateAndroid(value: unknown, label: string): AndroidBuildConfig {
+function validateAndroid(value: unknown, label: string, active: boolean): AndroidBuildConfig {
   const raw = requireRecord(value, label);
   assertExactKeys(raw, [
     'applicationId', 'displayName', 'versionCode', 'orientation', 'minSdk', 'targetSdk', 'abis',
@@ -185,10 +185,11 @@ function validateAndroid(value: unknown, label: string): AndroidBuildConfig {
     'signingCredentialId', 'newApplication',
   ], label);
   const applicationId = requireString(raw.applicationId, `${label}.applicationId`, 255);
-  if (!/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/.test(applicationId)) {
+  if (active && !/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/.test(applicationId)) {
     throw new Error(`${label}.applicationId must be a lowercase reverse-domain Android application id.`);
   }
-  const displayName = requireNonEmptyString(raw.displayName, `${label}.displayName`, 80);
+  const displayName = active ? requireNonEmptyString(raw.displayName, `${label}.displayName`, 80)
+    : requireString(raw.displayName, `${label}.displayName`, 80);
   const versionCode = requireInteger(raw.versionCode, `${label}.versionCode`, 1, 2_100_000_000);
   if (!['landscape', 'portrait', 'sensor'].includes(String(raw.orientation))) {
     throw new Error(`${label}.orientation is invalid.`);
@@ -204,7 +205,8 @@ function validateAndroid(value: unknown, label: string): AndroidBuildConfig {
     return abi as AndroidAbi;
   });
   if (new Set(abis).size !== abis.length) throw new Error(`${label}.abis contains duplicates.`);
-  const iconRelativePath = requireSafeRelativePath(raw.iconRelativePath, `${label}.iconRelativePath`);
+  const iconRelativePath = !active && raw.iconRelativePath === '' ? ''
+    : requireSafeRelativePath(raw.iconRelativePath, `${label}.iconRelativePath`);
   const splashRelativePath = raw.splashRelativePath === undefined
     ? undefined
     : requireSafeRelativePath(raw.splashRelativePath, `${label}.splashRelativePath`);
@@ -215,7 +217,7 @@ function validateAndroid(value: unknown, label: string): AndroidBuildConfig {
   const signingCredentialId = raw.signingCredentialId === undefined
     ? undefined
     : requireStableId(raw.signingCredentialId, `${label}.signingCredentialId`, 128);
-  if (signing === 'release' && (!keystorePath || !keyAlias || !signingCredentialId)) {
+  if (active && signing === 'release' && (!keystorePath || !keyAlias || !signingCredentialId)) {
     throw new Error(`${label} release signing requires keystorePath, keyAlias, and signingCredentialId.`);
   }
   if (raw.newApplication !== undefined && typeof raw.newApplication !== 'boolean') {

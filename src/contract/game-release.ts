@@ -315,7 +315,7 @@ export interface GameReleaseRecord {
 }
 
 export interface GameReleaseIndex {
-  schemaVersion: 1;
+  schemaVersion: 2;
   generatedAt: string;
   games: Record<string, GameReleaseGameIndex>;
 }
@@ -323,6 +323,8 @@ export interface GameReleaseIndex {
 export interface GameReleaseGameIndex {
   channels: Record<string, {
     latestReleaseId: string | null;
+    /** Explicit current release per platform/architecture; history is never selected implicitly. */
+    latestReleaseIds: Record<string, string>;
     maintenance: Record<string, string> | null;
     releases: GameReleaseRecord[];
   }>;

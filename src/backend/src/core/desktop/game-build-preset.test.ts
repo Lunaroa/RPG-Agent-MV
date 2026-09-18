@@ -113,4 +113,11 @@ test('keeps inactive Android configuration and an incomplete publication draft w
   });
   assert.equal(settings.presets[0]?.android?.versionCode, 3);
   assert.equal(settings.publicationDraft?.locales[0]?.summary, '');
+  const preset = settings.presets[0]!;
+  preset.android!.iconRelativePath = '';
+  preset.android!.signing = 'release';
+  assert.equal(validateGameBuildPreset(preset).android?.iconRelativePath, '');
+  assert.throws(() => validateGameBuildPreset({ ...preset, target: 'android', architecture: 'per-abi' }), /iconRelativePath/);
+  preset.android!.iconRelativePath = 'icon/icon.png';
+  assert.throws(() => validateGameBuildPreset({ ...preset, target: 'android', architecture: 'per-abi' }), /release signing requires/);
 });

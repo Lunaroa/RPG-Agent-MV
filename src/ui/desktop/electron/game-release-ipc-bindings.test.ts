@@ -22,6 +22,33 @@ const settings: GameReleaseProjectSettings = {
   selectedPresetId: 'web-release',
 };
 
+test('release audit: Web builds do not resolve inactive Android signing credentials', async () => {
+  const fixture = createFixture([]);
+  const next = structuredClone(settings);
+  next.presets[0]!.android = { applicationId: 'com.example.sample', displayName: 'Sample', versionCode: 1,
+    minSdk: 23, targetSdk: 36, orientation: 'landscape', abis: ['arm64-v8a'], iconRelativePath: '', signing: 'release' };
+  fixture.dependencies.build.readGameBuildSettings = () => next;
+  (fixture.dependencies.build as any).startGameBuildWorker = () => ({ result: Promise.resolve({ status: 'success' }), cancel() {} });
+  registerGameReleaseIpcHandlers(fixture.ipc as never, fixture.dialog as never, fixture.shell as never, fixture.dependencies as never);
+  const sender = { id: 17, isDestroyed: () => false, send() {}, once() {}, removeListener() {} };
+  const result = await fixture.invokeWithEvent({ sender }, 'gameBuild:build', {
+    operationId: 'inactive-android', presetId: 'web-release', outputConflict: 'new-directory',
+  }, 'project') as { status: string };
+  assert.equal(result.status, 'success');
+});
+
+test('release audit: the status bridge forwards a draft without saving it', async () => {
+  const fixture = createFixture([]);
+  let received: unknown;
+  (fixture.dependencies.release as any).readGameReleaseStatus = (_root: string, _project: string, draft: unknown) => {
+    received = draft;
+    return { managedChanges: [] };
+  };
+  registerGameReleaseIpcHandlers(fixture.ipc as never, fixture.dialog as never, fixture.shell as never, fixture.dependencies as never);
+  await fixture.invoke('gameRelease:status', 'project', releaseConfig);
+  assert.deepEqual(received, releaseConfig);
+});
+
 test('saves manifest signing references before storing the private key', async () => {
   const calls: string[] = [];
   const fixture = createFixture(calls);

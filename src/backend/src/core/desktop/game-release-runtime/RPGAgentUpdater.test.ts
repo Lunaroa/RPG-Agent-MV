@@ -16,13 +16,14 @@ const pluginSource = fs.readFileSync(new URL('./RPGAgentUpdater.js', import.meta
 
 test('uses the channel latest pointer and offers same-version repair only for a different release id', async () => {
   const index = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: '2026-01-01T00:00:00.000Z',
     games: {
       'sample-game': {
         channels: {
           stable: {
             latestReleaseId: 'release-current-repair',
+            latestReleaseIds: { 'web/web': 'release-current-repair' },
             maintenance: null,
             releases: [
               release('release-newer-history', '9.0.0'),
@@ -74,6 +75,26 @@ test('uses the channel latest pointer and offers same-version repair only for a 
   assert.equal(current.status, 'current');
 });
 
+test('release audit: updater selects only the explicit current platform release', async () => {
+  const web = release('web-current', '1.2.4');
+  const windows = release('windows-current', '1.2.5');
+  windows.packages[0]!.platform = 'windows';
+  windows.packages[0]!.architecture = 'x64';
+  const channel = { latestReleaseId: windows.releaseId,
+    latestReleaseIds: { 'web/web': web.releaseId, 'windows/x64': windows.releaseId } as Record<string, string>,
+    maintenance: null, releases: [web, windows, release('unpromoted-web', '9.0.0')] };
+  const context = updaterContext({ schemaVersion: 2, generatedAt: new Date(0).toISOString(),
+    games: { 'sample-game': { channels: { stable: channel } } } }, undefined);
+  vm.runInContext(pluginSource, context);
+  assert.equal((await context.RPGAgentUpdater.check({ show: false })).release.releaseId, web.releaseId);
+  channel.latestReleaseIds['web/web'] = 'missing-release';
+  assert.equal((await context.RPGAgentUpdater.check({ show: false })).status, 'error');
+  delete channel.latestReleaseIds['web/web'];
+  assert.equal((await context.RPGAgentUpdater.check({ show: false })).status, 'current');
+  delete (channel as { latestReleaseIds?: unknown }).latestReleaseIds;
+  assert.match((await context.RPGAgentUpdater.check({ show: false })).error, /regenerate/);
+});
+
 test('accepts an authentic game manifest and rejects a changed signed channel', async () => {
   const identity = createGameManifestSigningIdentity('manifest-signing-runtime-test');
   const signatureConfig = {
@@ -86,6 +107,7 @@ test('accepts an authentic game manifest and rejects a changed signed channel', 
     channels: {
       stable: {
         latestReleaseId: 'release-signed',
+        latestReleaseIds: { 'web/web': 'release-signed' },
         maintenance: null,
         releases: [release('release-signed', '1.2.4')],
       },
@@ -93,7 +115,7 @@ test('accepts an authentic game manifest and rejects a changed signed channel', 
   };
   const signedGame = { ...game, signature: signGameReleaseManifest('sample-game', game, signatureConfig, identity.privateKey) };
   const index = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: '2026-01-01T00:00:00.000Z',
     games: { 'sample-game': signedGame },
   };
@@ -130,12 +152,12 @@ test('downloads a Windows startup update in the background and asks before insta
       targetFiles: [{ path: 'game.dat', bytes: fileContent.byteLength, sha256: fileSha256, processing: 'none' }],
     }];
     const index = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       generatedAt: '2026-01-01T00:00:00.000Z',
       games: {
         'sample-game': {
           channels: {
-            stable: { latestReleaseId: candidate.releaseId, maintenance: null, releases: [candidate] },
+            stable: { latestReleaseId: candidate.releaseId, latestReleaseIds: { 'windows/x64': candidate.releaseId }, maintenance: null, releases: [candidate] },
           },
         },
       },
@@ -222,11 +244,11 @@ test('downloads a Windows startup update in the background and asks before insta
 test('uses the game locale and offers reload instead of an impossible Web self-update', async () => {
   const candidate = release('release-web', '1.2.4');
   const index = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date(0).toISOString(),
     games: {
       'sample-game': {
-        channels: { stable: { latestReleaseId: candidate.releaseId, maintenance: null, releases: [candidate] } },
+        channels: { stable: { latestReleaseId: candidate.releaseId, latestReleaseIds: { 'web/web': candidate.releaseId }, maintenance: null, releases: [candidate] } },
       },
     },
   };
@@ -274,11 +296,11 @@ test('keeps Android progress active until a native callback and enables retry af
     delivery: 'content',
   }];
   const index = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date(0).toISOString(),
     games: {
       'sample-game': {
-        channels: { stable: { latestReleaseId: candidate.releaseId, maintenance: null, releases: [candidate] } },
+        channels: { stable: { latestReleaseId: candidate.releaseId, latestReleaseIds: { 'android/arm64-v8a': candidate.releaseId }, maintenance: null, releases: [candidate] } },
       },
     },
   };

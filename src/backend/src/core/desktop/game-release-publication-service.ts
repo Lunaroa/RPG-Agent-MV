@@ -59,8 +59,10 @@ export async function publishGameRelease(
       throw new Error(`The local publication for ${releaseId} is incomplete. Inspect the publish directory before retrying.`);
     }
     assertRetryMatches(existingRecord, report, metadata);
+    const channel = index.games[gameId]!.channels[channelName]!;
+    const pointersChanged = updateLatestReleases(channel, existingRecord, request.updateLatest);
     const signatureChanged = applyGameManifestSignature(index, gameId, manifestSignature, request);
-    if (signatureChanged) writeJsonAtomically(indexPath, index);
+    if (signatureChanged || pointersChanged) writeJsonAtomically(indexPath, index);
     return uploadExistingPublication(
       publishRoot,
       releaseDirectory,
@@ -142,10 +144,10 @@ export async function publishGameRelease(
   };
   try {
     const game = index.games[gameId] ||= { channels: {} };
-    const channel = game.channels[channelName] ||= { latestReleaseId: null, maintenance: null, releases: [] };
+    const channel = game.channels[channelName] ||= { latestReleaseId: null, latestReleaseIds: {}, maintenance: null, releases: [] };
     channel.releases.push(record);
     channel.maintenance = metadata.maintenance;
-    if (request.updateLatest || !channel.latestReleaseId) channel.latestReleaseId = releaseId;
+    updateLatestReleases(channel, record, request.updateLatest);
     applyGameManifestSignature(index, gameId, manifestSignature, request);
     index.generatedAt = new Date().toISOString();
     writeJsonAtomically(indexPath, index);
@@ -343,13 +345,40 @@ function isArtifactDirectory(artifact: GameBuildArtifact): boolean {
 }
 
 function readIndex(file: string): GameReleaseIndex {
-  if (!fs.existsSync(file)) return { schemaVersion: 1, generatedAt: new Date(0).toISOString(), games: {} };
+  if (!fs.existsSync(file)) return { schemaVersion: 2, generatedAt: new Date(0).toISOString(), games: {} };
   const value = JSON.parse(fs.readFileSync(file, 'utf8')) as GameReleaseIndex;
-  if (!value || value.schemaVersion !== 1 || typeof value.generatedAt !== 'string'
+  if (!value || value.schemaVersion !== 2 || typeof value.generatedAt !== 'string'
     || !value.games || typeof value.games !== 'object' || Array.isArray(value.games)) {
-    throw new Error('The existing release index has an unsupported format.');
+    throw new Error('The release index must use schemaVersion 2. Regenerate older publication indexes in a new directory.');
+  }
+  for (const game of Object.values(value.games)) {
+    for (const channel of Object.values(game.channels)) {
+      if (!channel.latestReleaseIds || typeof channel.latestReleaseIds !== 'object' || Array.isArray(channel.latestReleaseIds)) {
+        throw new Error('The release index has no per-platform current releases. Regenerate the publication index in a new directory.');
+      }
+    }
   }
   return value;
+}
+
+function updateLatestReleases(
+  channel: GameReleaseIndex['games'][string]['channels'][string],
+  record: GameReleaseRecord,
+  updateLatest: boolean,
+): boolean {
+  let changed = false;
+  if ((updateLatest || !channel.latestReleaseId) && channel.latestReleaseId !== record.releaseId) {
+    channel.latestReleaseId = record.releaseId;
+    changed = true;
+  }
+  for (const pkg of record.packages) {
+    const target = `${pkg.platform}/${pkg.architecture}`;
+    if ((updateLatest || !channel.latestReleaseIds[target]) && channel.latestReleaseIds[target] !== record.releaseId) {
+      channel.latestReleaseIds[target] = record.releaseId;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 function validatePublishRequest(value: GameReleasePublishRequest): GameReleasePublishRequest {

@@ -737,11 +737,11 @@ export function validatePluginConfiguration(workflowRoot: string, project: strin
       });
     }
     const targets = readPluginTargets(workflowRoot, project, fileRelativePath);
-    if (targets.length && !targets.includes(engineTarget)) {
+    if (entry.status && targets.length && !targets.includes(engineTarget)) {
       issues.push({
-        severity: 'error',
+        severity: 'warn',
         code: 'plugin-engine-target-mismatch',
-        message: `Plugin ${name} targets ${targets.join('/')} but the project engine is ${engineTarget}`,
+        message: `Plugin ${name} declares ${targets.join('/')} while the project engine is ${engineTarget}. Verify its runtime compatibility; the header alone does not establish incompatibility.`,
         pluginName: name,
         index,
         relativePath: fileRelativePath,

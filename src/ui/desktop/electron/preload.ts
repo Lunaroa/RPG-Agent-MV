@@ -186,7 +186,7 @@ contextBridge.exposeInMainWorld('api', {
   },
 
   gameRelease: {
-    status: (project?: string) => ipcRenderer.invoke('gameRelease:status', project),
+    status: (project?: string, draft?: unknown) => ipcRenderer.invoke('gameRelease:status', project, draft),
     save: (request: unknown, project?: string) => ipcRenderer.invoke('gameRelease:save', request, project),
     testUpdateIndex: (value: unknown, project?: string) => ipcRenderer.invoke('gameRelease:testUpdateIndex', value, project),
   },

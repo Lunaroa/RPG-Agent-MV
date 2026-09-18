@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 
 import type {
   GameReleaseConfig,
+  GameReleaseManagedChange,
   GameReleaseStatus,
   SaveCompatibilityAction,
   SaveCompatibilityKind,
@@ -27,6 +28,10 @@ const advanced = ref(false)
 const status = ref<GameReleaseStatus | null>(null)
 const form = ref<GameReleaseConfig | null>(null)
 const savedForm = ref<GameReleaseConfig | null>(null)
+const managedChanges = ref<GameReleaseManagedChange[]>([])
+const previewError = ref('')
+let previewRequestId = 0
+let previewTimer: ReturnType<typeof setTimeout> | undefined
 let unregisterLifecycle: (() => void) | null = null
 let loadRequestId = 0
 
@@ -41,6 +46,45 @@ const dirty = computed(() => Boolean(
 ))
 
 watch(() => projectStore.currentProject, () => void load(), { immediate: true })
+onActivated(() => void refreshOnActivation())
+
+async function refreshOnActivation() {
+  if (loading.value || dirty.value || saving.value || testingUpdateIndex.value) return
+  const project = projectStore.currentProject
+  const requestId = loadRequestId
+  if (!project) return
+  try {
+    const next = await gameRelease.status(project)
+    if (requestId !== loadRequestId || projectStore.currentProject !== project || dirty.value || saving.value || testingUpdateIndex.value) return
+    if (next.sourceHash !== status.value?.sourceHash) await load()
+    else managedChanges.value = next.managedChanges
+  } catch (cause) {
+    if (requestId === loadRequestId && projectStore.currentProject === project) error.value = operationError('gameVersion.error.load', cause)
+  }
+}
+watch(() => JSON.stringify(form.value), () => {
+  clearTimeout(previewTimer)
+  previewRequestId += 1
+  managedChanges.value = []
+  previewError.value = ''
+  if (form.value && !saving.value) previewTimer = setTimeout(() => void refreshManagedChanges(), 150)
+})
+
+async function refreshManagedChanges() {
+  const project = projectStore.currentProject
+  const draft = form.value && cloneDraft(form.value)
+  const requestId = ++previewRequestId
+  if (!project || !draft) return
+  try {
+    const next = await gameRelease.status(project, draft)
+    if (requestId !== previewRequestId || projectStore.currentProject !== project) return
+    managedChanges.value = next.managedChanges
+  } catch (cause) {
+    if (requestId === previewRequestId && projectStore.currentProject === project) {
+      previewError.value = operationError('gameVersion.error.preview', cause)
+    }
+  }
+}
 
 onMounted(() => {
   unregisterLifecycle = registerProductPluginLifecycleGuard('game-version', {
@@ -51,11 +95,15 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  clearTimeout(previewTimer)
+  previewRequestId += 1
   unregisterLifecycle?.()
   unregisterLifecycle = null
 })
 
 async function load(): Promise<boolean> {
+  clearTimeout(previewTimer)
+  previewRequestId += 1
   const requestId = ++loadRequestId
   const project = projectStore.currentProject
   status.value = null
@@ -73,6 +121,7 @@ async function load(): Promise<boolean> {
     status.value = next
     form.value = cloneDraft(next.config)
     savedForm.value = cloneDraft(next.config)
+    managedChanges.value = next.managedChanges
     advanced.value = next.config.update.enabled
     return true
   } catch (cause) {
@@ -147,6 +196,7 @@ async function save(confirmWrite = true): Promise<boolean> {
     status.value = saved
     form.value = cloneDraft(saved.config)
     savedForm.value = cloneDraft(saved.config)
+    managedChanges.value = saved.managedChanges
     ElMessage.success(t('gameVersion.saved'))
     return true
   } catch (cause) {
@@ -221,7 +271,7 @@ function operationError(key: MessageKey, value: unknown): string {
 
     <el-scrollbar v-else-if="form" class="page-scroll">
       <el-form label-position="top" class="release-form" :disabled="saving || testingUpdateIndex" @submit.prevent>
-        <el-alert v-if="error" class="page-error" :title="error" type="error" show-icon @close="error = ''" />
+        <el-alert v-if="error || previewError" class="page-error" :title="error || previewError" type="error" show-icon @close="error = ''; previewError = ''" />
         <section class="form-section form-section-primary">
           <el-form-item :label="t('gameVersion.version')">
             <el-input v-model="form.version" data-ui-id="game-version-value" placeholder="1.0.0-beta.1" />
@@ -311,10 +361,10 @@ function operationError(key: MessageKey, value: unknown): string {
           </div>
         </section>
 
-        <section v-if="status?.managedChanges.length" class="managed-changes">
+        <section v-if="managedChanges.length" class="managed-changes">
           <h2>{{ t('gameVersion.pendingFiles') }}</h2>
           <p>{{ t('gameVersion.pendingFilesNote') }}</p>
-          <div v-for="change in status.managedChanges" :key="change.relativePath" class="managed-change">
+          <div v-for="change in managedChanges" :key="change.relativePath" class="managed-change">
             <code>{{ change.relativePath }}</code>
             <span>{{ change.kind === 'create' ? t('gameVersion.create') : t('gameVersion.update') }}</span>
           </div>

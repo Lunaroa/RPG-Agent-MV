@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, FolderOpened, Plus } from '@element-plus/icons-vue'
 
@@ -10,6 +10,7 @@ import type {
   GameBuildPreflightResult,
   GameBuildResult,
   GameBuildTarget,
+  GameBuildPackageType,
   GameContentCategory,
   GameContentProcessingMode,
   GameEncryptionKeySummary,
@@ -77,6 +78,7 @@ let loadRequestId = 0
 const targets: GameBuildTarget[] = ['web', 'windows', 'android']
 const processingCategories: GameContentCategory[] = ['images', 'audio', 'video', 'data', 'javascript', 'ui']
 const processingModes: GameContentProcessingMode[] = ['none', 'compress', 'obfuscate', 'encrypt']
+const usesEncryption = computed(() => processingCategories.some((category) => activePreset.value?.processing[category] === 'encrypt'))
 const activePreset = computed(() => {
   if (!settings.value) return null
   return settings.value.presets.find((preset) => preset.id === settings.value?.selectedPresetId)
@@ -108,6 +110,21 @@ const dirty = computed(() => Boolean(
 ))
 
 watch(() => projectStore.currentProject, () => void load(), { immediate: true })
+onActivated(() => void refreshOnActivation())
+
+async function refreshOnActivation() {
+  if (loading.value || dirty.value || checking.value || building.value || publishing.value) return
+  const project = projectStore.currentProject
+  const requestId = loadRequestId
+  if (!project) return
+  try {
+    const [nextRelease, nextSettings] = await Promise.all([gameRelease.status(project), gameBuild.getSettings(project)])
+    if (!isCurrentProjectRequest(project, requestId) || dirty.value || checking.value || building.value || publishing.value) return
+    if (nextRelease.sourceHash !== releaseStatus.value?.sourceHash || JSON.stringify(nextSettings) !== JSON.stringify(settings.value)) await load()
+  } catch (cause) {
+    if (isCurrentProjectRequest(project, requestId)) error.value = operationError('gamePackaging.error.load', cause)
+  }
+}
 watch(
   () => [
     activePreset.value?.id,
@@ -289,6 +306,12 @@ function changeTarget(target: GameBuildTarget) {
   preflight.value = null
 }
 
+function changePackageType(packageType: GameBuildPackageType) {
+  if (!activePreset.value) return
+  activePreset.value.packageType = packageType
+  if (packageType === 'full') delete activePreset.value.baseReleaseId
+}
+
 function defaultAndroid(): AndroidBuildConfig {
   return {
     applicationId: 'com.example.game',
@@ -364,7 +387,7 @@ function ensureUpload(enabled: boolean) {
 function ensureCredentialReferences() {
   const preset = activePreset.value
   if (!preset) return
-  if (preset.android?.signing === 'release' && !preset.android.signingCredentialId) {
+  if (preset.target === 'android' && preset.android?.signing === 'release' && !preset.android.signingCredentialId) {
     preset.android.signingCredentialId = `android-signing-${preset.id}`
   }
   if (preset.upload?.enabled && preset.upload.authorization !== 'none' && !preset.upload.credentialId) {
@@ -378,7 +401,7 @@ async function refreshCredentialStatus() {
   try {
     const capability = await gameBuild.getCredentialStatus()
     const [signing, upload, manifestSigning] = await Promise.all([
-      preset?.android?.signingCredentialId
+      preset?.target === 'android' && preset.android?.signingCredentialId
         ? gameBuild.getCredentialStatus('android-signing', preset.android.signingCredentialId)
         : Promise.resolve(null),
       preset?.upload?.credentialId
@@ -726,6 +749,7 @@ async function build() {
   published.value = null
   const operationId = globalThis.crypto.randomUUID()
   buildProgress.value = { operationId, stage: 'preflight', percent: 0 }
+  let releaseToPublish: string | undefined
   try {
     const built = await gameBuild.build({
       operationId,
@@ -734,7 +758,7 @@ async function build() {
       releaseConfig: cloneDraft(release.value),
       releaseExpectedSourceHash: releaseStatus.value.sourceHash,
       confirmManagedChanges: true,
-      ...(preset.android?.signing === 'release' ? {
+      ...(preset.target === 'android' && preset.android?.signing === 'release' ? {
         signingCredential: {
           ...(signingStorePassword.value ? { storePassword: signingStorePassword.value } : {}),
           ...(signingKeyPassword.value ? { keyPassword: signingKeyPassword.value } : {}),
@@ -760,7 +784,7 @@ async function build() {
       signingKeyPassword.value = ''
       await refreshCredentialStatus()
       if (!isCurrentProjectRequest(project, requestId)) return
-      if (preset.upload?.enabled && built.releaseId) await publishRelease(built.releaseId)
+      if (preset.upload?.enabled) releaseToPublish = built.releaseId
     } else if (built.status === 'failed') {
       error.value = built.error || t('gamePackaging.buildFailed')
       ElMessage.error(error.value)
@@ -778,6 +802,7 @@ async function build() {
       cancelingBuild.value = false
     }
   }
+  if (releaseToPublish && isCurrentProjectRequest(project, requestId)) await publishRelease(releaseToPublish)
 }
 
 async function cancelBuild() {
@@ -984,7 +1009,7 @@ function operationError(key: MessageKey, value: unknown): string {
             </el-select>
           </el-form-item>
           <el-form-item :label="t('gamePackaging.packageType')">
-            <el-select v-model="activePreset.packageType">
+            <el-select :model-value="activePreset.packageType" @update:model-value="changePackageType($event as GameBuildPackageType)">
               <el-option value="full" :label="t('gamePackaging.package.full')" />
               <el-option value="file-delta" :label="t('gamePackaging.package.fileDelta')" />
               <el-option value="binary-diff" :label="t('gamePackaging.package.binaryDiff')" />
@@ -1011,7 +1036,7 @@ function operationError(key: MessageKey, value: unknown): string {
               </el-select>
             </el-form-item>
           </div>
-          <el-form-item v-if="activePreset.processing.encryptionKeyId" :label="t('gamePackaging.encryptionKeyId')">
+          <el-form-item v-if="usesEncryption" :label="t('gamePackaging.encryptionKeyId')">
             <div class="key-line">
               <el-select v-model="activePreset.processing.encryptionKeyId" :placeholder="t('gamePackaging.selectEncryptionKey')">
                 <el-option v-for="key in encryptionKeys" :key="key.id" :value="key.id" :label="key.id" />
@@ -1176,10 +1201,14 @@ function operationError(key: MessageKey, value: unknown): string {
         <section v-if="preflight" class="check-result" :class="preflight.ok ? 'is-ok' : 'is-error'">
           <h2>{{ preflight.ok ? t('gamePackaging.checkPassed') : t('gamePackaging.checkFailed') }}</h2>
           <ul v-if="preflight.blockers.length"><li v-for="item in preflight.blockers" :key="item">{{ item }}</li></ul>
-          <ul v-if="preflight.warnings.length"><li v-for="item in preflight.warnings" :key="item">{{ item }}</li></ul>
           <p v-if="preflight.ok && preflight.preset.packageType !== 'full'" class="section-note">
             {{ t('gamePackaging.contentChangesAfterBuild') }}
           </p>
+        </section>
+
+        <section v-if="preflight?.warnings.length" class="check-result">
+          <h2>{{ t('gamePackaging.checkWarnings') }}</h2>
+          <ul><li v-for="item in preflight.warnings" :key="item">{{ item }}</li></ul>
         </section>
 
         <section

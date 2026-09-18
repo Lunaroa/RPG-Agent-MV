@@ -155,20 +155,22 @@ export function validateGameReleaseConfig(value: unknown): GameReleaseConfig {
   };
 }
 
-export function readGameReleaseStatus(workflowRoot: string, project: string): GameReleaseStatus {
+export function readGameReleaseStatus(workflowRoot: string, project: string, draft?: unknown): GameReleaseStatus {
   const layout = resolveRmmvLayout(project);
   const relativePath = dataRelativePath(layout, RELEASE_FILE_NAME);
   const releaseFile = resolveProjectFileForRead(project, relativePath);
   const exists = Boolean(releaseFile);
-  const config = exists
+  const storedConfig = exists
     ? validateGameReleaseConfig(JSON.parse(readProjectFile(project, relativePath).content.toString('utf8').replace(/^\uFEFF/, '')))
     : createDefaultGameReleaseConfig(project);
+  const config = draft === undefined ? storedConfig : validateGameReleaseConfig(draft);
   const sourceHash = readProjectFileVersion(project, relativePath).sha256;
   const runtime = inspectManagedRuntime(workflowRoot, project, layout, config);
-  const configChanges: GameReleaseManagedChange[] = exists ? [] : [{
+  const configChanged = !bufferMatchesProjectFile(project, relativePath, Buffer.from(`${JSON.stringify(config, null, 2)}\n`, 'utf8'));
+  const configChanges: GameReleaseManagedChange[] = !configChanged ? [] : [{
     relativePath,
-    kind: 'create',
-    description: 'Create the game release configuration in the engine data directory.',
+    kind: exists ? 'update' : 'create',
+    description: exists ? 'Update the game release configuration.' : 'Create the game release configuration in the engine data directory.',
   }];
   return {
     exists,
@@ -258,7 +260,7 @@ export async function testGameReleaseUpdateIndex(value: unknown): Promise<GameRe
     throw new Error('The update index is not valid JSON.', { cause: error });
   }
   const index = requireRecord(parsed, 'update index');
-  if (index.schemaVersion !== 1) throw new Error('The update index schemaVersion must be 1.');
+  if (index.schemaVersion !== 2) throw new Error('The update index schemaVersion must be 2. Regenerate older publication indexes.');
   requireNonEmptyString(index.generatedAt, 'update index generatedAt', 128);
   const games = requireRecord(index.games, 'update index games');
   const game = requireRecord(games[config.gameId], `update index game ${config.gameId}`);
@@ -280,6 +282,14 @@ export async function testGameReleaseUpdateIndex(value: unknown): Promise<GameRe
     ? null
     : releases.find((entry) => entry.releaseId === latestReleaseId);
   if (latestReleaseId && !latest) throw new Error('The update index latestReleaseId does not identify a release in the selected channel.');
+  const platformPointers = requireRecord(channel.latestReleaseIds, 'update index latestReleaseIds (regenerate older publication indexes)');
+  for (const [target, value] of Object.entries(platformPointers)) {
+    const id = requireStableId(value, `update index latestReleaseIds.${target}`, 128);
+    const candidate = releases.find((entry) => entry.releaseId === id);
+    if (!candidate || !candidate.targets.includes(target)) {
+      throw new Error(`The update index current release for ${target} does not contain that platform and architecture.`);
+    }
+  }
   const signatureConfig = config.update.manifestSignature;
   let signed = false;
   if (signatureConfig?.enabled) {
@@ -302,7 +312,7 @@ function validateUpdateIndexRelease(
   label: string,
   channel: string,
   indexUrl: string,
-): { releaseId: string; version: string } {
+): { releaseId: string; version: string; targets: string[] } {
   const release = requireRecord(value, label);
   const releaseId = requireStableId(release.releaseId, `${label} releaseId`, 128);
   const version = normalizeGameVersion(release.version);
@@ -315,7 +325,10 @@ function validateUpdateIndexRelease(
     throw new Error(`${label} packages must contain at least one package.`);
   }
   release.packages.forEach((entry, index) => validateUpdateIndexPackage(entry, `${label} package ${index + 1}`, indexUrl));
-  return { releaseId, version };
+  return { releaseId, version, targets: release.packages.map((entry) => {
+    const pkg = entry as Record<string, unknown>;
+    return `${pkg.platform}/${pkg.architecture}`;
+  }) };
 }
 
 function validateUpdateIndexPackage(value: unknown, label: string, indexUrl: string): void {

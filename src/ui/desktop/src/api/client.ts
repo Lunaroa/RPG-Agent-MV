@@ -231,7 +231,7 @@ declare global {
         setSearch(settings: unknown, project?: string): Promise<unknown>;
       };
       gameRelease: {
-        status(project?: string): Promise<unknown>;
+        status(project?: string, draft?: unknown): Promise<unknown>;
         save(request: unknown, project?: string): Promise<unknown>;
         testUpdateIndex(value: unknown, project?: string): Promise<unknown>;
       };
@@ -724,8 +724,8 @@ export const projectConfig = {
 };
 
 export const gameRelease = {
-  status(project?: string) {
-    return desktopApi().gameRelease.status(project) as Promise<GameReleaseStatus>;
+  status(project?: string, draft?: GameReleaseConfig) {
+    return desktopApi().gameRelease.status(project, draft === undefined ? undefined : toPlain(draft)) as Promise<GameReleaseStatus>;
   },
   save(request: GameReleaseSaveRequest, project?: string) {
     return desktopApi().gameRelease.save(toPlain(request), project) as Promise<GameReleaseSaveResult>;

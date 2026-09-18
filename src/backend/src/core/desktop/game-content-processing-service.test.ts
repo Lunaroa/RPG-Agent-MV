@@ -58,6 +58,34 @@ test('encrypts and obfuscates a build copy and injects a syntactically valid fir
   }
 });
 
+test('release audit: encrypted JavaScript keeps startup libraries executable before the loader', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-startup-content-'));
+  const project = path.join(root, 'project');
+  const build = path.join(root, 'build');
+  try {
+    fs.mkdirSync(project, { recursive: true });
+    generateGameEncryptionKey(project, 'sample-key');
+    write(build, 'index.html', '<script src="js/libs/SampleRenderer.js"></script><script src="js/rpg_core.js"></script><script src="js/plugins.js"></script><script src="js/main.js"></script>');
+    write(build, 'js/libs/SampleRenderer.js', 'globalThis.SampleRenderer = { ready: true };');
+    write(build, 'js/rpg_core.js', 'if (!SampleRenderer.ready) throw new Error("Missing renderer");');
+    write(build, 'js/plugins.js', 'var $plugins = [];');
+    write(build, 'js/main.js', 'globalThis.started = SampleRenderer.ready;');
+    write(build, 'js/plugins/Sample.js', 'globalThis.samplePlugin = true;');
+    await applyContentProcessing(root, project, build, { images: 'none', audio: 'none', video: 'none',
+      data: 'none', javascript: 'encrypt', ui: 'none', encryptionKeyId: 'sample-key' }, 'rpg-maker-mv');
+    const context = vm.createContext({ fetch: async () => new Response(''), console,
+      document: { addEventListener() {}, removeEventListener() {} } });
+    const index = fs.readFileSync(path.join(build, 'index.html'), 'utf8');
+    for (const match of index.matchAll(/<script src="([^"]+)"><\/script>/g)) {
+      const script = path.join(build, match[1]!);
+      assert.ok(fs.existsSync(script), `Missing startup dependency: ${match[1]}`);
+      vm.runInContext(fs.readFileSync(script, 'utf8'), context);
+    }
+    assert.equal(context.started, true);
+    assert.ok(fs.existsSync(path.join(build, 'js/plugins/Sample.js.rpgagent')));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('minifies JSON compression and fails preflight when a selected key is missing', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-content-compress-'));
   const project = path.join(root, 'project');
@@ -77,7 +105,9 @@ test('minifies JSON compression and fails preflight when a selected key is missi
   }
 });
 
-test('loads encrypted and plain plugins sequentially before starting the game', async () => {
+for (const delayedEngine of [false, true]) {
+test(delayedEngine ? 'release audit: installs encrypted plugin hooks after MZ engine scripts load'
+  : 'loads encrypted and plain plugins sequentially before starting the game', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-plugin-order-'));
   const project = path.join(root, 'project');
   const build = path.join(root, 'build');
@@ -95,6 +125,11 @@ test('loads encrypted and plain plugins sequentially before starting the game', 
     const loader = fs.readFileSync(path.join(build, 'js', 'RPGAgentContentLoader.js'), 'utf8');
     const encrypted = fs.readFileSync(path.join(build, 'js', 'plugins', 'Encrypted.js.rpgagent'));
     const order: string[] = [];
+    let engineLoad: (() => void) | undefined;
+    const engine = {
+      PluginManager: { _path: 'js/plugins/', _errorUrls: [] as string[], loadScript() {} },
+      SceneManager: { run() { order.push('run'); } },
+    };
     const context = vm.createContext({
       URL,
       Blob,
@@ -114,6 +149,8 @@ test('loads encrypted and plain plugins sequentially before starting the game', 
         return new Response('', { status: 200 });
       },
       document: {
+        addEventListener(_type: string, handler: () => void) { engineLoad = handler; },
+        removeEventListener() { engineLoad = undefined; },
         createElement: () => ({ type: '', async: true, src: '', onload: null as null | (() => void), onerror: null }),
         body: {
           appendChild: (script: { src: string; onload: null | (() => void) }) => {
@@ -122,10 +159,15 @@ test('loads encrypted and plain plugins sequentially before starting the game', 
           },
         },
       },
-      PluginManager: { _path: 'js/plugins/', _errorUrls: [] as string[], loadScript() {} },
-      SceneManager: { run() { order.push('run'); } },
+      ...(delayedEngine ? {} : engine),
     });
     vm.runInContext(loader, context);
+    if (delayedEngine) {
+      assert.ok(engineLoad, 'MZ bootstrap must wait for engine scripts');
+      Object.assign(context, engine);
+      engineLoad();
+    }
+    assert.equal(engineLoad, undefined, 'completed engine hooks must remove the load listener');
     vm.runInContext("PluginManager.loadScript('Encrypted.js'); PluginManager.loadScript('Plain.js'); SceneManager.run('Boot');", context);
     await vm.runInContext('RPGAgentContent.pluginsReady()', context);
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -134,6 +176,7 @@ test('loads encrypted and plain plugins sequentially before starting the game', 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+}
 
 function decrypt(content: Buffer, key: Buffer): Buffer {
   const magic = Buffer.from('RPGAGENTENC1\n', 'ascii');

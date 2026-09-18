@@ -45,6 +45,7 @@ function gameEntry(): GameReleaseGameIndex {
     channels: {
       stable: {
         latestReleaseId: 'release-one',
+        latestReleaseIds: {},
         maintenance: null,
         releases: [],
       },

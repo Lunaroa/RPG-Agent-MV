@@ -40,7 +40,7 @@ const CHANNELS = [
 ] as const;
 
 interface GameReleaseModule {
-  readGameReleaseStatus(workflowRoot: string, project: string): unknown;
+  readGameReleaseStatus(workflowRoot: string, project: string, draft?: unknown): unknown;
   saveGameReleaseConfig(workflowRoot: string, project: string, request: GameReleaseSaveRequest): unknown;
   testGameReleaseUpdateIndex(value: unknown): Promise<unknown>;
 }
@@ -112,8 +112,8 @@ export function registerGameReleaseIpcHandlers(
   },
 ): void {
   cleanupGameReleaseIpcHandlers(ipcMain);
-  ipcMain.handle('gameRelease:status', (_event, project?: string) => dependencies.serialize(
-    dependencies.release.readGameReleaseStatus(dependencies.workflowRoot, dependencies.resolveProject(project)),
+  ipcMain.handle('gameRelease:status', (_event, project?: string, draft?: unknown) => dependencies.serialize(
+    dependencies.release.readGameReleaseStatus(dependencies.workflowRoot, dependencies.resolveProject(project), draft),
   ));
   ipcMain.handle('gameRelease:save', (_event, request: GameReleaseSaveRequest, project?: string) => dependencies.serialize(
     dependencies.release.saveGameReleaseConfig(
@@ -349,7 +349,7 @@ function resolveSigningCredential(
   request: GameBuildRequest,
 ): void {
   const android = preset.android;
-  if (!android || android.signing !== 'release') return;
+  if (preset.target !== 'android' || !android || android.signing !== 'release') return;
   const credentialId = android.signingCredentialId;
   if (!credentialId) throw new Error('The Android release signing credential reference is missing from this preset.');
   const provided = request.signingCredential;

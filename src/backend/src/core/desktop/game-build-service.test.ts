@@ -15,6 +15,42 @@ import {
   startGameBuildWorker,
 } from './game-build-service.ts';
 
+test('release audit: plugin target metadata is advisory and disabled plugins do not block builds', async () => {
+  await withProject(async ({ workflowRoot, project, release, preset }) => {
+    saveGameBuildSettings(project, { presets: [preset], selectedPresetId: preset.id });
+    write(project, 'js/plugins/SampleDualEngine.js', '/*:\n * @target MZ\n * @plugindesc Sample plugin\n */');
+    for (const enabled of [true, false]) {
+      write(project, 'js/plugins.js', `var $plugins = ${JSON.stringify([
+        { name: 'SampleDualEngine', status: enabled, parameters: {}, description: '' },
+      ])};`);
+      const result = preflightGameBuild(workflowRoot, project, { presetId: preset.id, releaseConfig: release });
+      assert.equal(result.ok, true, result.blockers.join('\n'));
+      assert.equal(result.warnings.some((item) => item.includes('declares MZ')), enabled);
+    }
+    write(project, 'js/plugins.js', 'var $plugins = [{"name":"MissingPlugin","status":true,"parameters":{}}];');
+    assert.equal(preflightGameBuild(workflowRoot, project, { presetId: preset.id, releaseConfig: release }).ok, false);
+  });
+});
+
+test('release audit: binary diff preflight rejects delta and changed full baselines', async () => {
+  await withProject(async ({ workflowRoot, project, release, preset }) => {
+    saveGameBuildSettings(project, { presets: [preset], selectedPresetId: preset.id });
+    const full = await buildGame(workflowRoot, project, { presetId: preset.id, releaseConfig: release,
+      outputConflict: 'new-directory', confirmManagedChanges: true });
+    assert.equal(full.status, 'success', full.error);
+    const deltaPreset: GameBuildPreset = { ...preset, packageType: 'file-delta', baseReleaseId: full.releaseId! };
+    saveGameBuildSettings(project, { presets: [deltaPreset], selectedPresetId: preset.id });
+    const delta = await buildGame(workflowRoot, project, { presetId: preset.id, outputConflict: 'new-directory', confirmManagedChanges: true });
+    assert.equal(delta.status, 'success', delta.error);
+    saveGameBuildSettings(project, { presets: [{ ...deltaPreset, packageType: 'binary-diff', baseReleaseId: delta.releaseId! }], selectedPresetId: preset.id });
+    assert.match(preflightGameBuild(workflowRoot, project, { presetId: preset.id }).blockers.join('\n'), /requires a full baseline/);
+    saveGameBuildSettings(project, { presets: [{ ...deltaPreset, packageType: 'binary-diff' }], selectedPresetId: preset.id });
+    assert.equal(preflightGameBuild(workflowRoot, project, { presetId: preset.id }).ok, true);
+    write(full.outputPath!, 'data/Map001.json', '{"displayName":"Changed baseline"}');
+    assert.match(preflightGameBuild(workflowRoot, project, { presetId: preset.id }).blockers.join('\n'), /baseline file no longer matches/);
+  });
+});
+
 test('lists explicit Android icon candidates without guessing among multiple files', () => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-icon-candidates-'));
   try {

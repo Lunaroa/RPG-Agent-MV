@@ -127,15 +127,16 @@ final class ApkUpdateManager {
             parameters.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED);
         }
         int sessionId = installer.createSession(parameters);
-        try (PackageInstaller.Session session = installer.openSession(sessionId);
-             InputStream input = new FileInputStream(apk);
-             OutputStream output = session.openWrite("game.apk", 0, apk.length())) {
-            RuntimeFiles.copy(input, output);
-            session.fsync(output);
+        try (PackageInstaller.Session session = installer.openSession(sessionId)) {
+            try (InputStream input = new FileInputStream(apk);
+                 OutputStream output = session.openWrite("game.apk", 0, apk.length())) {
+                RuntimeFiles.copy(input, output);
+                session.fsync(output);
+            }
             Intent result = new Intent(activity, InstallResultReceiver.class).setAction(INSTALL_ACTION);
             int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            // The installer fills status and confirmation extras; before API 31 mutability is the default.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) flags |= PendingIntent.FLAG_MUTABLE;
-            else flags |= PendingIntent.FLAG_IMMUTABLE;
             PendingIntent pending = PendingIntent.getBroadcast(activity, sessionId, result, flags);
             session.commit(pending.getIntentSender());
         } catch (IOException | RuntimeException error) {

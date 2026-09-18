@@ -17,6 +17,7 @@ const PACKAGE_TYPES = new Set(['full', 'file-delta', 'binary-diff']);
 const PROCESSING_MODES = new Set<GameContentProcessingMode>(['none', 'compress', 'obfuscate', 'encrypt']);
 const CONTENT_CATEGORIES: GameContentCategory[] = ['images', 'audio', 'video', 'data', 'javascript', 'ui'];
 const ANDROID_ABIS = new Set<AndroidAbi>(['arm64-v8a', 'armeabi-v7a', 'x86_64']);
+const ANDROID_APPLICATION_ID = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/;
 
 export function createDefaultGameReleaseProjectSettings(project: string): GameReleaseProjectSettings {
   const outputDirectory = path.join(path.resolve(project), '.luna_rpg', 'builds');
@@ -185,7 +186,7 @@ function validateAndroid(value: unknown, label: string, active: boolean): Androi
     'signingCredentialId', 'newApplication',
   ], label);
   const applicationId = requireString(raw.applicationId, `${label}.applicationId`, 255);
-  if (active && !/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/.test(applicationId)) {
+  if (active && !ANDROID_APPLICATION_ID.test(applicationId)) {
     throw new Error(`${label}.applicationId must be a lowercase reverse-domain Android application id.`);
   }
   const displayName = active ? requireNonEmptyString(raw.displayName, `${label}.displayName`, 80)
@@ -272,7 +273,12 @@ function validateVersionCodeHistory(value: unknown): Record<string, number> {
   const raw = requireRecord(value, 'release.lastSuccessfulAndroidVersionCodes');
   const result: Record<string, number> = {};
   for (const [key, versionCode] of Object.entries(raw)) {
-    requireStableId(key, `release.lastSuccessfulAndroidVersionCodes key ${key}`, 255);
+    const label = `release.lastSuccessfulAndroidVersionCodes key ${key}`;
+    const parts = key.split(':');
+    if (parts.length !== 2) throw new Error(`${label} must identify a preset and Android application id.`);
+    requireStableId(parts[0], `${label} preset`, 128);
+    const applicationId = requireString(parts[1], `${label} applicationId`, 255);
+    if (!ANDROID_APPLICATION_ID.test(applicationId)) throw new Error(`${label} has an invalid Android application id.`);
     result[key] = requireInteger(versionCode, `release.lastSuccessfulAndroidVersionCodes.${key}`, 1, 2_100_000_000);
   }
   return result;

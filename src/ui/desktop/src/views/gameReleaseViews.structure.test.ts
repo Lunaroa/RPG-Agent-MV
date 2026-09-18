@@ -47,3 +47,9 @@ test('packaging view validates publication data before preflight and preserves A
 function read(name: string): string {
   return fs.readFileSync(path.join(import.meta.dirname, name), 'utf8');
 }
+
+test('Android minimum SDK defaults to the shared floor and preserves invalid legacy drafts for explicit correction', () => {
+  assert.match(packagingView, /minSdk: ANDROID_MINIMUM_SDK/);
+  assert.match(packagingView, /activePreset\.android\.minSdk < ANDROID_MINIMUM_SDK \? t\('gamePackaging\.minimumAndroidVersion'\)/);
+  assert.match(packagingView, /v-model="activePreset\.android\.minSdk" :min="21"/);
+});

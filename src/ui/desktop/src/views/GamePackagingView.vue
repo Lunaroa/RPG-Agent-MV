@@ -2,6 +2,7 @@
 import { computed, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, FolderOpened, Plus } from '@element-plus/icons-vue'
+import { ANDROID_MINIMUM_SDK } from '@contract/game-release'
 
 import type {
   AndroidBuildConfig,
@@ -318,7 +319,7 @@ function defaultAndroid(): AndroidBuildConfig {
     displayName: release.value?.gameId || 'Game',
     versionCode: 1,
     orientation: 'landscape',
-    minSdk: 23,
+    minSdk: ANDROID_MINIMUM_SDK,
     targetSdk: 36,
     abis: ['arm64-v8a'],
     iconRelativePath: androidIconCandidates.value.length === 1 ? androidIconCandidates.value[0]! : '',
@@ -1059,7 +1060,7 @@ function operationError(key: MessageKey, value: unknown): string {
             <el-form-item :label="t('gamePackaging.applicationId')"><el-input v-model="activePreset.android.applicationId" /></el-form-item>
             <el-form-item :label="t('gamePackaging.displayName')"><el-input v-model="activePreset.android.displayName" /></el-form-item>
             <el-form-item :label="t('gamePackaging.versionCode')"><el-input-number v-model="activePreset.android.versionCode" :min="1" /></el-form-item>
-            <el-form-item :label="t('gamePackaging.minSdk')"><el-input-number v-model="activePreset.android.minSdk" :min="23" :max="36" /></el-form-item>
+            <el-form-item :label="t('gamePackaging.minSdk')" :error="activePreset.android.minSdk < ANDROID_MINIMUM_SDK ? t('gamePackaging.minimumAndroidVersion') : ''"><el-input-number v-model="activePreset.android.minSdk" :min="21" :max="36" /></el-form-item>
             <el-form-item :label="t('gamePackaging.targetSdk')"><el-input-number v-model="activePreset.android.targetSdk" :min="activePreset.android.minSdk" :max="36" /></el-form-item>
             <el-form-item :label="t('gamePackaging.orientation')">
               <el-select v-model="activePreset.android.orientation">

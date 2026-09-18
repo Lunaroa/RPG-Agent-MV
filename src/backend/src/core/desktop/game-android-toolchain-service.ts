@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { ANDROID_MINIMUM_SDK } from '../../../../contract/game-release.ts';
 
 import type {
   AndroidKeystoreCreateRequest,
@@ -197,7 +198,14 @@ export async function installAndroidToolchain(
     if (!status.configured) throw new Error(`Managed Android toolchain installation is incomplete: ${status.missing.join(', ')}.`);
     return status;
   } catch (error) {
-    if (fs.existsSync(staging)) fs.rmSync(staging, { recursive: true, force: true });
+    // Keep a fully verified installation if publication fails; it can be recovered without downloading again.
+    if (fs.existsSync(staging) && !fs.existsSync(path.join(staging, MANIFEST_NAME))) {
+      try {
+        fs.rmSync(staging, { recursive: true, force: true });
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], `Android toolchain installation failed: ${error instanceof Error ? error.message : String(error)}. Temporary file cleanup also failed.`);
+      }
+    }
     throw error;
   }
 }
@@ -273,7 +281,7 @@ function prepareGradleDependencies(root: string, environment: NodeJS.ProcessEnv)
     applicationId: 'org.rpgagent.bootstrap',
     versionName: '1.0.0',
     versionCode: 1,
-    minSdk: 23,
+    minSdk: ANDROID_MINIMUM_SDK,
     targetSdk: ANDROID_TOOLCHAIN_VERSIONS.compileSdk,
     orientation: 'landscape',
     allowCleartext: false,
@@ -320,6 +328,8 @@ function prepareGradleDependencies(root: string, environment: NodeJS.ProcessEnv)
   const verification = path.join(project, 'gradle', 'verification-metadata.xml');
   if (!fs.existsSync(verification)) throw new Error('Gradle did not generate dependency verification metadata.');
   fs.copyFileSync(verification, path.join(root, 'gradle-verification-metadata.xml'));
+  // A single-use daemon can still be shutting down after its launcher exits on Windows.
+  runGradle(root, java, ['--stop'], gradleEnvironment);
   fs.rmSync(project, { recursive: true, force: false });
 }
 

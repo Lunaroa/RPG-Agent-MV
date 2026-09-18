@@ -15,6 +15,23 @@ import {
   startGameBuildWorker,
 } from './game-build-service.ts';
 
+test('Android build preflight blocks missing MV mobile audio without blocking Web output', async () => {
+  await withProject(async ({ workflowRoot, project, release, preset }) => {
+    write(project, 'audio/se/Sample.ogg', 'audio fixture');
+    saveGameBuildSettings(project, { presets: [preset], selectedPresetId: preset.id });
+    const web = preflightGameBuild(workflowRoot, project, { presetId: preset.id, releaseConfig: release });
+    assert.equal(web.ok, true, web.blockers.join('\n'));
+    const android: GameBuildPreset = { ...preset, target: 'android', architecture: 'per-abi', android: {
+      applicationId: 'org.example.sample', displayName: 'Sample', versionCode: 1, orientation: 'landscape',
+      minSdk: 24, targetSdk: 36, abis: ['arm64-v8a'], iconRelativePath: 'icon.png', signing: 'debug',
+    } };
+    saveGameBuildSettings(project, { presets: [android], selectedPresetId: android.id });
+    const result = preflightGameBuild(workflowRoot, project, { presetId: android.id, releaseConfig: release });
+    assert.ok(result.blockers.some(item => item.includes('audio/se/Sample.m4a')));
+    assert.equal(fs.existsSync(path.join(project, 'audio/se/Sample.m4a')), false);
+  });
+});
+
 test('release audit: plugin target metadata is advisory and disabled plugins do not block builds', async () => {
   await withProject(async ({ workflowRoot, project, release, preset }) => {
     saveGameBuildSettings(project, { presets: [preset], selectedPresetId: preset.id });

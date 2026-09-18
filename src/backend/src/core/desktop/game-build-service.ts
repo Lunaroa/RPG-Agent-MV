@@ -27,6 +27,7 @@ import {
 import { createBinaryPatch } from './game-binary-diff.ts';
 import {
   applyContentProcessing,
+  preflightAndroidAudio,
   preflightContentProcessing,
 } from './game-content-processing-service.ts';
 import { compareGameBuildContent } from './game-build-content-changes.ts';
@@ -176,6 +177,9 @@ export function preflightGameBuild(
   const processingPreflight = preflightContentProcessing(workflowRoot, project, preset.processing);
   blockers.push(...processingPreflight.blockers);
   warnings.push(...processingPreflight.warnings);
+  if (preset.target === 'android') {
+    blockers.push(...preflightAndroidAudio(project, manifest.engine, manifest.encryptedAudio));
+  }
 
   const outputRoot = resolveOutputDirectory(project, preset.outputDirectory);
   try {

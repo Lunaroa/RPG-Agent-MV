@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import sharp from 'sharp';
+import { ANDROID_MINIMUM_SDK } from '../../../../contract/game-release.ts';
 
 import type {
   AndroidAbi,
@@ -32,7 +33,6 @@ const ABI_VERSION_OFFSETS: Record<AndroidAbi, number> = {
   'arm64-v8a': 4,
 };
 const MAX_BASE_VERSION_CODE = 210_000_000;
-const MINIMUM_SHELL_SDK = 23;
 
 export interface AndroidBuildOutput {
   artifacts: GameBuildArtifact[];
@@ -63,8 +63,8 @@ export function preflightAndroidBuild(
     blockers.push('The Android packaging preset is missing its Android configuration.');
     return { blockers, warnings, toolchain };
   }
-  if (android.minSdk < MINIMUM_SHELL_SDK) {
-    blockers.push(`The fixed Android shell requires minSdk ${MINIMUM_SHELL_SDK} or newer.`);
+  if (android.minSdk < ANDROID_MINIMUM_SDK) {
+    blockers.push(`The fixed Android shell requires Android 7.0 (minSdk ${ANDROID_MINIMUM_SDK}) or newer. Update this preset's minimum Android version before building.`);
   }
   if (android.targetSdk > ANDROID_TOOLCHAIN_VERSIONS.compileSdk) {
     blockers.push(`targetSdk cannot exceed the managed compile SDK ${ANDROID_TOOLCHAIN_VERSIONS.compileSdk}.`);

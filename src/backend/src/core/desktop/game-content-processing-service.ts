@@ -50,6 +50,20 @@ const BOOTSTRAP_JAVASCRIPT = new Set([
 const ENCRYPTED_MAGIC = Buffer.from('RPGAGENTENC1\n', 'ascii');
 const OBFUSCATED_MAGIC = Buffer.from('RPGOBF1\n', 'ascii');
 
+export function preflightAndroidAudio(project: string, engine: RpgMakerEngine, encryptedAudio: boolean): string[] {
+  if (engine !== 'rpg-maker-mv') return [];
+  const audioRoot = path.join(resolveRmmvLayout(project).resourceRoot, 'audio');
+  if (!fs.existsSync(audioRoot)) return [];
+  const files = listFiles(audioRoot);
+  const mobileExtension = encryptedAudio ? '.rpgmvm' : '.m4a';
+  const required = new Set(files
+    .filter(file => /\.(ogg|rpgmvo)$/i.test(file))
+    .map(file => file.replace(/\.(ogg|rpgmvo)$/i, mobileExtension)));
+  const missing = [...required].filter(file => !files.includes(file) || fs.statSync(resolveRelative(audioRoot, file)).size === 0);
+  if (!missing.length) return [];
+  return [`RPG Maker MV on Android requires ${mobileExtension} audio. ${missing.length} mobile audio file(s) are missing or empty: ${missing.slice(0, 5).map(file => `audio/${file}`).join(', ')}. Prepare the matching mobile audio before building; the source files will not be converted automatically.`];
+}
+
 export function preflightContentProcessing(
   workflowRoot: string,
   project: string,

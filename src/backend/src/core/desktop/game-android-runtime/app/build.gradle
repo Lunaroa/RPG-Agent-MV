@@ -76,6 +76,11 @@ android {
         buildConfig false
     }
 
+    androidResources {
+        // Keep .rpg-agent metadata and game directories that start with an underscore.
+        ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
+    }
+
     lint {
         abortOnError true
         checkReleaseBuilds true

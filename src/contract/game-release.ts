@@ -1,4 +1,5 @@
 export const GAME_VERSION_PATTERN = /^\d+\.\d+\.\d+(?: *-[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*)?$/;
+export const ANDROID_MINIMUM_SDK = 24;
 
 export type SaveCompatibilityAction = 'allow' | 'warn' | 'block' | 'callback';
 export type SaveCompatibilityKind = 'legacy' | 'older' | 'same' | 'newer' | 'differentChannel';

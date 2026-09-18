@@ -147,6 +147,7 @@ const zhCN = {
     'gamePackaging.displayName': '应用名称',
     'gamePackaging.versionCode': 'Android 整数版本',
     'gamePackaging.minSdk': '最低 Android API',
+    'gamePackaging.minimumAndroidVersion': '需要 Android 7.0（API 24）或更新版本，请修改此配置后再构建。',
     'gamePackaging.targetSdk': '目标 Android API',
     'gamePackaging.orientation': '方向',
     'gamePackaging.landscape': '横屏',

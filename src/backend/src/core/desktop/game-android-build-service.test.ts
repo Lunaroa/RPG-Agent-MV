@@ -6,7 +6,8 @@ import test from 'node:test';
 
 import type { GameBuildPreset, GameReleaseProjectSettings } from '../../../../contract/game-release.ts';
 import { preflightAndroidBuild, recordAndroidBuildSuccess } from './game-android-build-service.ts';
-import { defaultProcessing } from './game-build-preset.ts';
+import { defaultProcessing, validateGameReleaseProjectSettings } from './game-build-preset.ts';
+import { readGameBuildSettings, saveGameBuildSettings } from './game-build-service.ts';
 import { ANDROID_TOOLCHAIN_VERSIONS } from './game-android-toolchain-service.ts';
 
 test('Android preflight enforces managed toolchain, artwork, and monotonically increasing base versionCode', () => {
@@ -58,6 +59,44 @@ test('successful Android build history advances the preset default without chang
   assert.equal(next.lastSuccessfulAndroidVersionCodes?.[`${preset.id}:${preset.android!.applicationId}`], 12);
 });
 
+test('Android preflight rejects legacy minimum SDK without rewriting the preset', () => {
+  const workflowRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-android-minimum-'));
+  const project = path.join(workflowRoot, 'projects', 'sample');
+  try {
+    write(project, 'data/System.json', '{}');
+    write(project, 'icon.png', 'image fixture');
+    createToolchain(path.join(workflowRoot, 'runtime', 'game-build', 'android'));
+    const preset = androidPreset(project);
+    const settings: GameReleaseProjectSettings = { presets: [preset], selectedPresetId: preset.id };
+    preset.android!.minSdk = 23;
+    const legacy = preflightAndroidBuild(workflowRoot, project, settings, preset);
+    assert.ok(legacy.blockers.some(item => item.includes('minSdk 24')));
+    assert.equal(preset.android!.minSdk, 23);
+    preset.android!.minSdk = 24;
+    assert.deepEqual(preflightAndroidBuild(workflowRoot, project, settings, preset).blockers, []);
+  } finally {
+    fs.rmSync(workflowRoot, { recursive: true, force: true });
+  }
+});
+
+test('successful Android build history persists and reloads its next versionCode', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-android-history-'));
+  try {
+    const preset = androidPreset(project);
+    const settings = { presets: [preset], selectedPresetId: preset.id };
+    const next = recordAndroidBuildSuccess(settings, preset);
+    saveGameBuildSettings(project, next);
+    const reloaded = readGameBuildSettings(project);
+    assert.equal(reloaded.presets[0]!.android!.versionCode, preset.android!.versionCode + 1);
+    assert.deepEqual(reloaded.lastSuccessfulAndroidVersionCodes, next.lastSuccessfulAndroidVersionCodes);
+    for (const key of ['missing-separator', 'preset:org.example.game:extra', '../preset:org.example.game', 'preset:invalid']) {
+      assert.throws(() => validateGameReleaseProjectSettings({ ...settings, lastSuccessfulAndroidVersionCodes: { [key]: 1 } }));
+    }
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true });
+  }
+});
+
 function androidPreset(project: string): GameBuildPreset {
   return {
     id: 'android-release',
@@ -74,7 +113,7 @@ function androidPreset(project: string): GameBuildPreset {
       displayName: 'Sample Game',
       versionCode: 7,
       orientation: 'landscape',
-      minSdk: 23,
+      minSdk: 24,
       targetSdk: 36,
       abis: ['arm64-v8a'],
       iconRelativePath: 'icon.png',

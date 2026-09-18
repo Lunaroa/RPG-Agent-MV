@@ -149,6 +149,7 @@ const enUS = {
     'gamePackaging.displayName': 'Display name',
     'gamePackaging.versionCode': 'Android version code',
     'gamePackaging.minSdk': 'Minimum Android API',
+    'gamePackaging.minimumAndroidVersion': 'Android 7.0 (API 24) or newer is required. Update this preset before building.',
     'gamePackaging.targetSdk': 'Target Android API',
     'gamePackaging.orientation': 'Orientation',
     'gamePackaging.landscape': 'Landscape',

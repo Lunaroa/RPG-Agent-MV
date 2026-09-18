@@ -11,8 +11,41 @@ import { generateGameEncryptionKey, readGameEncryptionKey } from './game-encrypt
 import {
   applyContentProcessing,
   contentCategory,
+  preflightAndroidAudio,
   preflightContentProcessing,
 } from './game-content-processing-service.ts';
+
+test('Android MV audio preflight rejects missing mobile pairs without modifying source files', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-mobile-audio-'));
+  try {
+    write(project, 'www/data/System.json', '{}');
+    write(project, 'www/audio/se/Sample.ogg', 'audio fixture');
+    assert.match(preflightAndroidAudio(project, 'rpg-maker-mv', false).join(), /1 mobile audio.*audio\/se\/Sample\.m4a/);
+    assert.equal(fs.existsSync(path.join(project, 'www/audio/se/Sample.m4a')), false);
+    assert.deepEqual(preflightAndroidAudio(project, 'rpg-maker-mz', false), []);
+    write(project, 'www/audio/se/Sample.m4a', '');
+    assert.equal(preflightAndroidAudio(project, 'rpg-maker-mv', false).length, 1);
+    write(project, 'www/audio/se/Sample.m4a', 'mobile audio fixture');
+    assert.deepEqual(preflightAndroidAudio(project, 'rpg-maker-mv', false), []);
+    assert.equal(fs.readFileSync(path.join(project, 'www/audio/se/Sample.ogg'), 'utf8'), 'audio fixture');
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('Android MV audio preflight checks encrypted mobile files in root-layout projects', () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-mobile-encrypted-audio-'));
+  try {
+    write(project, 'data/System.json', '{}');
+    write(project, 'audio/bgm/Sample.rpgmvo', 'encrypted audio fixture');
+    write(project, 'audio/bgm/Sample.m4a', 'plain audio fixture');
+    assert.match(preflightAndroidAudio(project, 'rpg-maker-mv', true).join(), /Sample\.rpgmvm/);
+    write(project, 'audio/bgm/Sample.rpgmvm', 'encrypted mobile audio fixture');
+    assert.deepEqual(preflightAndroidAudio(project, 'rpg-maker-mv', true), []);
+  } finally {
+    fs.rmSync(project, { recursive: true, force: true });
+  }
+});
 
 test('classifies root and www-layout game content without treating runtime files as content', () => {
   assert.equal(contentCategory('data/Map001.json'), 'data');

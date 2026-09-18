@@ -16,9 +16,15 @@ Each project can keep named presets for target, architecture, output, full or de
 
 Content categories can be compressed, obfuscated, or encrypted independently. Encryption uses AES-256-GCM and installs a matching runtime loader into the build copy. Because the client must decrypt its own content, the key is ultimately recoverable; this raises the casual extraction barrier but is not DRM.
 
+With JavaScript encryption enabled, engine bootstrap scripts and startup libraries in `js/libs/` stay readable so the engine and content loader can start. Plugin scripts are decrypted when loaded.
+
 ## Publication And Trust
 
 Local publication creates `releases.json` plus immutable artifacts under `games/<game>/<channel>/<release-id>/`. WebDAV and HTTP PUT adapters upload artifacts first and the index last. The server should support cross-origin static downloads; HTTPS is strongly recommended.
+
+Update indexes use schema version 2, with explicit current releases for each platform and architecture within a channel. Publishing Windows does not replace the Web current release. Regenerate version-1 indexes in a new publication directory; the publisher does not infer a current release from history or rewrite the old directory. Previously distributed updater plugins cannot read version 2: retain their original update endpoint and distribute rebuilt games together with a new version-2 endpoint. Release configuration, save data, and package-manifest versions are unchanged.
+
+Binary diffs require the original directory and unchanged files of an exact full baseline. Preflight rejects unavailable baselines and file-delta artifacts instead of discovering this halfway through a build.
 
 A release can provide localized titles, summaries, and optional maintenance notices, with one explicit default language. Players fall back to that language when their locale is unavailable. Publication is blocked when the default entry is missing or language codes are duplicated.
 

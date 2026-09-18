@@ -176,6 +176,8 @@ function createRuntime() {
     },
     alert(message: string) { runtime.alerts.push(message); },
   }) as vm.Context & Record<string, any>;
+  context.window = context;
+  context.globalThis = undefined;
   runtime.context = context;
   runtime.dataManager = dataManager;
   runtime.title = new context.Scene_Title();

@@ -55,32 +55,32 @@
   };
 
   function releaseConfig() {
-    const config = globalThis.$dataRPGAgentRelease;
+    const config = window.$dataRPGAgentRelease;
     if (!config || typeof config !== 'object') throw new Error('RPGAgentRelease.json is not loaded.');
-    if (!globalThis.RPGAgentVersion) throw new Error('RPGAgentVersion must load before RPGAgentUpdater.');
+    if (!window.RPGAgentVersion) throw new Error('RPGAgentVersion must load before RPGAgentUpdater.');
     return config;
   }
 
   function platform() {
-    if (globalThis.RPGAgentAndroid && typeof globalThis.RPGAgentAndroid.installContentUpdate === 'function') return 'android';
-    if (globalThis.process && process.versions && process.versions.nw) return 'windows';
+    if (window.RPGAgentAndroid && typeof window.RPGAgentAndroid.installContentUpdate === 'function') return 'android';
+    if (window.process && process.versions && process.versions.nw) return 'windows';
     return 'web';
   }
 
   function architecture() {
-    if (platform() === 'android' && globalThis.RPGAgentAndroid.getAbi) return String(globalThis.RPGAgentAndroid.getAbi());
-    if (platform() === 'windows' && globalThis.process) {
+    if (platform() === 'android' && window.RPGAgentAndroid.getAbi) return String(window.RPGAgentAndroid.getAbi());
+    if (platform() === 'windows' && window.process) {
       return process.arch === 'ia32' ? 'x86' : process.arch === 'arm64' ? 'arm64' : 'x64';
     }
     return 'web';
   }
 
   function currentLanguage() {
-    const config = globalThis.$dataRPGAgentRelease;
-    const value = (globalThis.$dataSystem && $dataSystem.locale)
+    const config = window.$dataRPGAgentRelease;
+    const value = (window.$dataSystem && $dataSystem.locale)
       || (config && config.update && config.update.defaultLanguage)
-      || (globalThis.ConfigManager && ConfigManager.language)
-      || (globalThis.navigator && navigator.language)
+      || (window.ConfigManager && ConfigManager.language)
+      || (window.navigator && navigator.language)
       || 'en-US';
     return normalizeLanguage(value);
   }
@@ -98,7 +98,7 @@
     const language = currentLanguage();
     const dictionary = UI_TEXT[language] || UI_TEXT[language.split('-')[0]] || UI_TEXT['en-US'];
     const template = dictionary[key] || UI_TEXT['en-US'][key] || key;
-    return template.replace(/\{([^}]+)\}/g, (_match, name) => String(values[name] ?? ''));
+    return template.replace(/\{([^}]+)\}/g, (_match, name) => String(values[name] == null ? '' : values[name]));
   }
 
   function selectText(map, language, fallback) {
@@ -141,7 +141,7 @@
     if (typeof value !== 'string' || !value || value.length % 4 !== 0
       || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) throw new Error(`${label} is not valid base64.`);
     let binary;
-    try { binary = atob(value); } catch { throw new Error(`${label} is not valid base64.`); }
+    try { binary = atob(value); } catch (_error) { throw new Error(`${label} is not valid base64.`); }
     return Uint8Array.from(binary, (character) => character.charCodeAt(0));
   }
 
@@ -154,7 +154,7 @@
   }
 
   async function digestHex(value) {
-    const digest = await globalThis.crypto.subtle.digest('SHA-256', value);
+    const digest = await window.crypto.subtle.digest('SHA-256', value);
     return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
   }
 
@@ -164,7 +164,7 @@
       || typeof configured.keyId !== 'string' || !/^[a-f0-9]{64}$/.test(configured.keyId)) {
       throw new Error('The embedded update manifest signing configuration is invalid.');
     }
-    if (!globalThis.crypto || !globalThis.crypto.subtle) {
+    if (!window.crypto || !window.crypto.subtle) {
       throw new Error('This runtime cannot verify signed update manifests.');
     }
     const publicKeyBytes = decodeBase64(configured.publicKey, 'The embedded update manifest public key');
@@ -185,7 +185,7 @@
     if (signatureBytes.byteLength !== 64) throw new Error('The update manifest signature has an invalid length.');
     let key;
     try {
-      key = await globalThis.crypto.subtle.importKey(
+      key = await window.crypto.subtle.importKey(
         'spki',
         publicKeyBytes,
         { name: 'ECDSA', namedCurve: 'P-256' },
@@ -195,7 +195,7 @@
     } catch (error) {
       throw new Error(`The embedded update manifest public key could not be imported: ${error instanceof Error ? error.message : String(error)}`);
     }
-    const valid = await globalThis.crypto.subtle.verify(
+    const valid = await window.crypto.subtle.verify(
       { name: 'ECDSA', hash: 'SHA-256' },
       key,
       signatureBytes,
@@ -206,24 +206,24 @@
 
   function gameDirectory() {
     if (platform() !== 'windows') return '';
-    const path = require('node:path');
+    const path = require('path');
     return path.dirname(process.execPath);
   }
 
   function currentReleaseRecord() {
-    if (platform() === 'android' && globalThis.RPGAgentAndroid.getCurrentReleaseId) {
+    if (platform() === 'android' && window.RPGAgentAndroid.getCurrentReleaseId) {
       return { releaseId: String(RPGAgentAndroid.getCurrentReleaseId() || '') };
     }
     if (platform() === 'windows') {
       try {
-        const fs = require('node:fs');
-        const path = require('node:path');
+        const fs = require('fs');
+        const path = require('path');
         const file = path.join(gameDirectory(), '.rpg-agent', 'current-release.json');
         const value = JSON.parse(fs.readFileSync(file, 'utf8'));
         return value && typeof value.releaseId === 'string' ? value : { releaseId: '' };
-      } catch { return { releaseId: '' }; }
+      } catch (_error) { return { releaseId: '' }; }
     }
-    try { return { releaseId: localStorage.getItem('rpgAgentReleaseId') || '' }; } catch { return { releaseId: '' }; }
+    try { return { releaseId: localStorage.getItem('rpgAgentReleaseId') || '' }; } catch (_error) { return { releaseId: '' }; }
   }
 
   function compareReleaseVersions(left, right) {
@@ -301,12 +301,18 @@
   }
 
   function overlay(title, body, actions) {
-    document.getElementById('rpg-agent-updater-overlay')?.remove();
+    const previous = document.getElementById('rpg-agent-updater-overlay');
+    if (previous) previous.remove();
     const host = document.createElement('div');
     host.id = 'rpg-agent-updater-overlay';
-    host.style.cssText = 'position:fixed;inset:0;z-index:999999;display:grid;place-items:center;background:rgba(0,0,0,.72);font-family:sans-serif';
+    // Keep game input handlers from canceling clicks or receiving synthesized mouse events.
+    for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel',
+      'mousedown', 'mousemove', 'mouseup', 'pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'wheel']) {
+      host.addEventListener(type, (event) => event.stopPropagation(), { passive: true });
+    }
+    host.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;z-index:999999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.72);font-family:sans-serif';
     const panel = document.createElement('div');
-    panel.style.cssText = 'box-sizing:border-box;width:min(600px,calc(100% - 32px));max-height:calc(100% - 32px);overflow:auto;padding:22px;border-radius:8px;background:#171a20;color:#f3f5f7;box-shadow:0 20px 60px rgba(0,0,0,.45)';
+    panel.style.cssText = 'box-sizing:border-box;width:calc(100% - 32px);max-width:600px;max-height:calc(100% - 32px);overflow:auto;padding:22px;border-radius:8px;background:#171a20;color:#f3f5f7;box-shadow:0 20px 60px rgba(0,0,0,.45)';
     const heading = document.createElement('h2');
     heading.textContent = title;
     heading.style.cssText = 'margin:0 0 12px;font-size:20px';
@@ -394,7 +400,7 @@
   }
 
   async function sha256(buffer) {
-    const digest = await globalThis.crypto.subtle.digest('SHA-256', buffer);
+    const digest = await window.crypto.subtle.digest('SHA-256', buffer);
     return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('');
   }
 
@@ -425,10 +431,10 @@
     if (!Array.isArray(pkg.packageFiles) || !pkg.packageFiles.length) {
       throw new Error('This directory package has no downloadable file manifest.');
     }
-    const fs = require('node:fs');
-    const path = require('node:path');
-    const os = require('node:os');
-    const nodeCrypto = require('node:crypto');
+    const fs = require('fs');
+    const path = require('path');
+    const os = require('os');
+    const nodeCrypto = require('crypto');
     const updateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-update-'));
     const packageDirectory = path.join(updateRoot, 'package');
     const sorted = [...pkg.packageFiles].sort((left, right) => left.path.localeCompare(right.path, 'en'));
@@ -450,7 +456,7 @@
           throw new Error(`Downloaded update file failed verification: ${file.path}.`);
         }
         const destination = safeDownloadPath(packageDirectory, file.path, path);
-        fs.mkdirSync(path.dirname(destination), { recursive: true });
+        windowsFileSystem().ensureDirectory(path.dirname(destination));
         fs.writeFileSync(destination, Buffer.from(buffer));
         totalReceived += buffer.byteLength;
         directoryHash.update(`${file.path}\0${file.bytes}\0${digest}\n`, 'utf8');
@@ -461,7 +467,7 @@
       state.progress = { received: totalReceived, total: pkg.bytes, bytesPerSecond: totalReceived * 1000 / Math.max(1, Date.now() - startedAt) };
       return { updateRoot, packageDirectory };
     } catch (error) {
-      fs.rmSync(updateRoot, { recursive: true, force: true });
+      removeUpdateDirectory(updateRoot);
       throw error;
     }
   }
@@ -526,7 +532,7 @@
   function handleNativeEvent(input) {
     let event = input;
     if (typeof input === 'string') {
-      try { event = JSON.parse(input); } catch { return false; }
+      try { event = JSON.parse(input); } catch (_error) { return false; }
     }
     if (!event || typeof event !== 'object' || typeof event.stage !== 'string') return false;
     const received = Number(event.received) || 0;
@@ -569,11 +575,12 @@
   }
 
   function backgroundStatus() {
-    document.getElementById('rpg-agent-updater-background')?.remove();
+    const previous = document.getElementById('rpg-agent-updater-background');
+    if (previous) previous.remove();
     const status = document.createElement('div');
     status.id = 'rpg-agent-updater-background';
     status.textContent = ui('preparing');
-    status.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:999998;max-width:min(420px,calc(100% - 32px));padding:10px 12px;border:1px solid #68717e;border-radius:6px;background:#171a20;color:#f3f5f7;font:13px/1.4 sans-serif;box-shadow:0 8px 28px rgba(0,0,0,.35)';
+    status.style.cssText = 'box-sizing:border-box;position:fixed;right:16px;bottom:16px;z-index:999998;width:420px;max-width:calc(100% - 32px);padding:10px 12px;border:1px solid #68717e;border-radius:6px;background:#171a20;color:#f3f5f7;font:13px/1.4 sans-serif;box-shadow:0 8px 28px rgba(0,0,0,.35)';
     document.body.appendChild(status);
     return status;
   }
@@ -581,7 +588,7 @@
   function discardPreparedDownload() {
     if (!preparedDownload) return;
     try {
-      require('node:fs').rmSync(preparedDownload.downloaded.updateRoot, { recursive: true, force: true });
+      removeUpdateDirectory(preparedDownload.downloaded.updateRoot);
     } catch (error) {
       console.error('[RPGAgentUpdater] could not remove a prepared update', error);
     }
@@ -631,16 +638,26 @@
     else if (background && result.status === 'error') showError(result.error);
   }
 
+  function windowsFileSystem() {
+    const path = require('path');
+    return require(path.join(gameDirectory(), '.rpg-agent', 'updater', 'filesystem.cjs'));
+  }
+
+  function removeUpdateDirectory(directory) {
+    windowsFileSystem().removeDirectory(directory);
+  }
+
   function handoffWindowsUpdate(pkg, release, downloaded) {
-    const fs = require('node:fs');
-    const path = require('node:path');
-    const childProcess = require('node:child_process');
+    const fs = require('fs');
+    const path = require('path');
+    const childProcess = require('child_process');
     const directory = gameDirectory();
     const planPath = path.join(downloaded.updateRoot, 'plan.json');
     const helperDirectory = path.join(directory, '.rpg-agent', 'updater');
+    const helperEntry = path.join(helperDirectory, 'launcher.js');
     const executable = path.join(directory, 'Game.exe');
-    if (!fs.existsSync(path.join(helperDirectory, 'package.json')) || !fs.existsSync(executable)) {
-      fs.rmSync(downloaded.updateRoot, { recursive: true, force: true });
+    if (!fs.existsSync(helperEntry) || !fs.existsSync(executable)) {
+      removeUpdateDirectory(downloaded.updateRoot);
       throw new Error('The external Windows update launcher is missing from this game build.');
     }
     fs.writeFileSync(planPath, JSON.stringify({
@@ -653,7 +670,7 @@
       pkg,
       release,
     }, null, 2));
-    childProcess.spawn(executable, [helperDirectory, planPath], {
+    childProcess.spawn(executable, [helperEntry, planPath], {
       cwd: directory,
       detached: true,
       stdio: 'ignore',
@@ -666,8 +683,8 @@
     if (platform() !== 'windows') return;
     try {
       const args = [
-        ...(globalThis.nw && nw.App && Array.isArray(nw.App.argv) ? nw.App.argv : []),
-        ...(globalThis.process && Array.isArray(process.argv) ? process.argv : []),
+        ...(typeof nw !== 'undefined' && nw.App && Array.isArray(nw.App.argv) ? nw.App.argv : []),
+        ...(window.process && Array.isArray(process.argv) ? process.argv : []),
       ];
       const health = args.find((value) => String(value).startsWith('--rpg-agent-update-health='));
       const expected = args.find((value) => String(value).startsWith('--rpg-agent-expected-release='));
@@ -677,10 +694,10 @@
       if (!healthFile || currentReleaseRecord().releaseId !== expectedReleaseId) {
         throw new Error('The updated game did not start with the expected release id.');
       }
-      const fs = require('node:fs');
-      const path = require('node:path');
+      const fs = require('fs');
+      const path = require('path');
       const temporary = `${healthFile}.${process.pid}.tmp`;
-      fs.mkdirSync(path.dirname(healthFile), { recursive: true });
+      windowsFileSystem().ensureDirectory(path.dirname(healthFile));
       fs.writeFileSync(temporary, JSON.stringify({ ok: true, version: RPGAgentVersion.getVersion(), releaseId: expectedReleaseId }));
       fs.renameSync(temporary, healthFile);
     } catch (error) {
@@ -689,12 +706,12 @@
   }
 
   function exitGame() {
-    if (globalThis.nw && nw.App) nw.App.quit();
-    else if (globalThis.SceneManager) SceneManager.exit();
+    if (typeof nw !== 'undefined' && nw.App) nw.App.quit();
+    else if (window.SceneManager) SceneManager.exit();
   }
 
   function reloadGame() {
-    if (globalThis.location && typeof location.reload === 'function') location.reload();
+    if (window.location && typeof location.reload === 'function') location.reload();
   }
 
   const api = Object.freeze({
@@ -703,7 +720,7 @@
     getState() { return { ...state }; },
     handleNativeEvent,
   });
-  globalThis.RPGAgentUpdater = api;
+  window.RPGAgentUpdater = api;
 
   const originalBootStart = Scene_Boot.prototype.start;
   Scene_Boot.prototype.start = function() {

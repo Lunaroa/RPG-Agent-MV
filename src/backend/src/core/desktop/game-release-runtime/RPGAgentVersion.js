@@ -37,7 +37,7 @@
  * @text Check For Updates
  *
  * @help
- * The public API is available as globalThis.RPGAgentVersion.
+ * The public API is available as window.RPGAgentVersion.
  * Release settings are loaded from data/RPGAgentRelease.json.
  *
  * MV plugin commands:
@@ -89,7 +89,7 @@
   }
 
   function config() {
-    const value = globalThis.$dataRPGAgentRelease;
+    const value = window.$dataRPGAgentRelease;
     if (!value || typeof value !== 'object') throw new Error('RPGAgentRelease.json is not loaded.');
     const version = parseVersion(value.version).normalized;
     return { ...value, version };
@@ -140,7 +140,7 @@
     if (!ACTIONS.has(action)) throw new Error(`Invalid save compatibility action for ${kind}.`);
     const message = policyMessage(kind, origin, release);
     if (action === 'block') throw new Error(message);
-    if (action === 'warn' && typeof globalThis.alert === 'function') globalThis.alert(message);
+    if (action === 'warn' && typeof window.alert === 'function') window.alert(message);
     if (action === 'callback') {
       if (!migrationHandlers.length) throw new Error(`${message} No save migration callback is registered.`);
       for (const handler of migrationHandlers) {
@@ -179,7 +179,7 @@
       };
     },
   });
-  globalThis.RPGAgentVersion = api;
+  window.RPGAgentVersion = api;
 
   const originalLoadDatabase = DataManager.loadDatabase;
   DataManager.loadDatabase = function() {
@@ -189,7 +189,7 @@
 
   const originalIsDatabaseLoaded = DataManager.isDatabaseLoaded;
   DataManager.isDatabaseLoaded = function() {
-    return originalIsDatabaseLoaded.apply(this, arguments) && Boolean(globalThis.$dataRPGAgentRelease);
+    return originalIsDatabaseLoaded.apply(this, arguments) && Boolean(window.$dataRPGAgentRelease);
   };
 
   const originalSetupNewGame = DataManager.setupNewGame;
@@ -223,7 +223,7 @@
     return info;
   };
 
-  if (globalThis.Scene_Title && Scene_Title.prototype) {
+  if (window.Scene_Title && Scene_Title.prototype) {
     const originalTitleStart = Scene_Title.prototype.start;
     Scene_Title.prototype.start = function() {
       activeSaveOrigin = null;
@@ -231,12 +231,12 @@
     };
   }
 
-  if (globalThis.Scene_Boot && Scene_Boot.prototype) {
+  if (window.Scene_Boot && Scene_Boot.prototype) {
     const originalBootStart = Scene_Boot.prototype.start;
     Scene_Boot.prototype.start = function() {
       const result = originalBootStart.apply(this, arguments);
       try {
-        if (globalThis.RPGAgentAndroid && typeof RPGAgentAndroid.markContentHealthy === 'function') {
+        if (window.RPGAgentAndroid && typeof RPGAgentAndroid.markContentHealthy === 'function') {
           RPGAgentAndroid.markContentHealthy();
         }
       } catch (error) {
@@ -262,8 +262,8 @@
     } else if (name === 'IsAtLeast') {
       $gameSwitches.setValue(positiveId(args.resultSwitchId, 'resultSwitchId'), api.isAtLeast(String(args.version || '')));
     } else if (name === 'CheckForUpdates') {
-      if (!globalThis.RPGAgentUpdater) throw new Error('RPGAgentUpdater is not enabled.');
-      globalThis.RPGAgentUpdater.open();
+      if (!window.RPGAgentUpdater) throw new Error('RPGAgentUpdater is not enabled.');
+      window.RPGAgentUpdater.open();
     } else {
       throw new Error(`Unknown ${PLUGIN_NAME} command: ${name}.`);
     }

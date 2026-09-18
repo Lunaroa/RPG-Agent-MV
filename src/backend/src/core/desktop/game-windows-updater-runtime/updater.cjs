@@ -1,11 +1,12 @@
 (() => {
   'use strict';
 
-  const crypto = require('node:crypto');
-  const childProcess = require('node:child_process');
-  const fs = require('node:fs');
-  const os = require('node:os');
-  const path = require('node:path');
+  const crypto = require('crypto');
+  const childProcess = require('child_process');
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { ensureDirectory, removeDirectory } = require('./filesystem.cjs');
 
   const PATCH_MAGIC = Buffer.from('RPGAGENTBD1\n', 'ascii');
 
@@ -55,14 +56,14 @@
   }
 
   function applyBinaryPatch(base, patch) {
-    if (patch.byteLength < PATCH_MAGIC.byteLength + 4 || !patch.subarray(0, PATCH_MAGIC.byteLength).equals(PATCH_MAGIC)) {
+    if (patch.byteLength < PATCH_MAGIC.byteLength + 4 || !patch.slice(0, PATCH_MAGIC.byteLength).equals(PATCH_MAGIC)) {
       throw new Error('Binary patch has an invalid header.');
     }
     const headerLength = patch.readUInt32LE(PATCH_MAGIC.byteLength);
     const headerStart = PATCH_MAGIC.byteLength + 4;
     const payloadStart = headerStart + headerLength;
     if (payloadStart > patch.byteLength) throw new Error('Binary patch header is truncated.');
-    const header = JSON.parse(patch.subarray(headerStart, payloadStart).toString('utf8'));
+    const header = JSON.parse(patch.slice(headerStart, payloadStart).toString('utf8'));
     if (!header || header.schemaVersion !== 1 || header.algorithm !== 'changed-blocks-v1'
       || !Array.isArray(header.chunks) || !Number.isSafeInteger(header.targetBytes) || header.targetBytes < 0
       || !/^[a-f0-9]{64}$/i.test(String(header.targetSha256 || ''))
@@ -103,7 +104,7 @@
       const source = safePath(plan.packageDirectory, entry.path);
       const current = safePath(plan.gameDirectory, entry.path);
       const target = safePath(staging, entry.path);
-      fs.mkdirSync(path.dirname(target), { recursive: true });
+      ensureDirectory(path.dirname(target));
       let content;
       if (fs.existsSync(source) && fs.statSync(source).isFile()) {
         content = fs.readFileSync(source);
@@ -127,24 +128,24 @@
   }
 
   function copyToBackup(source, backup) {
-    fs.mkdirSync(path.dirname(backup), { recursive: true });
+    ensureDirectory(path.dirname(backup));
     fs.copyFileSync(source, backup);
   }
 
   function replaceFile(target, source) {
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    const temporary = `${target}.rpg-agent-${crypto.randomUUID()}.tmp`;
+    ensureDirectory(path.dirname(target));
+    const temporary = `${target}.rpg-agent-${crypto.randomBytes(16).toString('hex')}.tmp`;
     fs.copyFileSync(source, temporary);
     try {
-      if (fs.existsSync(target)) fs.rmSync(target);
+      if (fs.existsSync(target)) fs.unlinkSync(target);
       fs.renameSync(temporary, target);
     } finally {
-      if (fs.existsSync(temporary)) fs.rmSync(temporary);
+      if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
     }
   }
 
   function persistJournal(backup, journal) {
-    fs.mkdirSync(backup, { recursive: true });
+    ensureDirectory(backup);
     fs.writeFileSync(path.join(backup, 'journal.json'), `${JSON.stringify(journal, null, 2)}\n`, 'utf8');
   }
 
@@ -171,7 +172,7 @@
       copyToBackup(target, safePath(backup, `files/${relativePath}`));
       journal.files.push({ path: relativePath, existed: true, deleted: true });
       persistJournal(backup, journal);
-      fs.rmSync(target);
+      fs.unlinkSync(target);
     }
     persistJournal(backup, journal);
     return journal;
@@ -185,13 +186,13 @@
         if (!fs.existsSync(saved)) throw new Error(`Update rollback is missing ${entry.path}.`);
         replaceFile(target, saved);
       } else if (fs.existsSync(target)) {
-        fs.rmSync(target);
+        fs.unlinkSync(target);
       }
     }
   }
 
   function processExists(pid) {
-    try { process.kill(pid, 0); return true; } catch { return false; }
+    try { process.kill(pid, 0); return true; } catch (_error) { return false; }
   }
 
   async function waitForExit(pid, timeoutMs) {
@@ -247,23 +248,23 @@
     let applyStarted = false;
     let launchedPid = null;
     try {
-      await waitForExit(plan.gameProcessId, 30_000);
+      await waitForExit(plan.gameProcessId, 30000);
       prepareTarget(plan, staging);
       applyStarted = true;
       applyTarget(plan, staging, backup, journal);
       launchedPid = launchGame(plan, healthFile);
-      await waitForHealth(healthFile, launchedPid, 45_000);
+      await waitForHealth(healthFile, launchedPid, 45000);
       fs.writeFileSync(path.join(backup, 'verified.json'), `${JSON.stringify({ verifiedAt: new Date().toISOString() }, null, 2)}\n`, 'utf8');
     } catch (error) {
       if (launchedPid && processExists(launchedPid)) {
-        try { process.kill(launchedPid); } catch { /* already stopped */ }
+        try { process.kill(launchedPid); } catch (_error) { /* already stopped */ }
         await delay(500);
       }
       if (applyStarted) rollback(plan, backup, journal);
-      try { launchGame({ ...plan, release: { releaseId: plan.currentReleaseId || '' } }, path.join(work, 'rollback-health.json')); } catch { /* preserve primary error */ }
+      try { launchGame({ ...plan, release: { releaseId: plan.currentReleaseId || '' } }, path.join(work, 'rollback-health.json')); } catch (_error) { /* preserve primary error */ }
       throw error;
     } finally {
-      fs.rmSync(work, { recursive: true, force: true });
+      removeDirectory(work);
       cleanupDownloadedPlan(planPath);
     }
   }
@@ -274,11 +275,11 @@
     const relative = path.relative(temporaryRoot, root);
     if (!relative || relative.startsWith('..') || path.isAbsolute(relative)
       || !path.basename(root).startsWith('rpg-agent-update-')) return;
-    if (fs.existsSync(root)) fs.rmSync(root, { recursive: true, force: true });
+    if (fs.existsSync(root)) removeDirectory(root);
   }
 
   function planArgument() {
-    const args = globalThis.nw && nw.App && Array.isArray(nw.App.argv) ? nw.App.argv : process.argv.slice(2);
+    const args = typeof nw !== 'undefined' && nw.App && Array.isArray(nw.App.argv) ? nw.App.argv : process.argv.slice(2);
     const candidate = [...args].reverse().find((value) => typeof value === 'string' && value.toLowerCase().endsWith('.json'));
     if (!candidate) throw new Error('The updater plan path is missing.');
     return path.resolve(candidate);
@@ -292,8 +293,8 @@
         const file = path.join(os.tmpdir(), 'rpg-agent-updater-error.log');
         fs.writeFileSync(file, `${new Date().toISOString()} ${error && error.stack || error}\n`, 'utf8');
       } finally {
-        if (globalThis.nw && nw.App) nw.App.quit();
+        if (typeof nw !== 'undefined' && nw.App) nw.App.quit();
       }
-    }).then(() => { if (globalThis.nw && nw.App) nw.App.quit(); });
+    }).then(() => { if (typeof nw !== 'undefined' && nw.App) nw.App.quit(); });
   }
 })();

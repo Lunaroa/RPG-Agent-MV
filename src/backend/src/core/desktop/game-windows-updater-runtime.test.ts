@@ -6,10 +6,57 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { createBinaryPatch } from './game-binary-diff.ts';
 
 const require = createRequire(import.meta.url);
 const childProcess = require('node:child_process') as typeof import('node:child_process');
 const runtimeFile = fileURLToPath(new URL('./game-windows-updater-runtime/updater.cjs', import.meta.url));
+
+test('creates and removes update directories using MV filesystem APIs without following junctions', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-updater-filesystem-'));
+  const directory = path.join(root, 'download');
+  const outside = path.join(root, 'preserved');
+  const mkdir = fs.mkdirSync;
+  const { ensureDirectory, removeDirectory } = require('./game-windows-updater-runtime/filesystem.cjs');
+  try {
+    // A Node 9 filesystem has only single-directory mkdir, not recursive options.
+    fs.mkdirSync = ((target: fs.PathLike, options?: unknown) => {
+      assert.equal(options, undefined);
+      return mkdir(target);
+    }) as typeof fs.mkdirSync;
+    ensureDirectory(path.join(directory, 'nested', 'package'));
+    ensureDirectory(path.join(directory, 'nested', 'package'));
+    ensureDirectory(outside);
+    fs.writeFileSync(path.join(outside, 'save.dat'), 'preserved save', 'utf8');
+    fs.symlinkSync(outside, path.join(directory, 'linked-save'), process.platform === 'win32' ? 'junction' : 'dir');
+    assert.throws(() => removeDirectory(path.join(directory, 'linked-save')), /real directory/);
+    removeDirectory(directory);
+    assert.equal(fs.existsSync(directory), false);
+    assert.equal(fs.readFileSync(path.join(outside, 'save.dat'), 'utf8'), 'preserved save');
+    assert.throws(() => ensureDirectory(path.join(outside, 'save.dat')), /not a directory/);
+  } finally {
+    fs.mkdirSync = mkdir;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('applies generated binary patches and rejects the wrong baseline', () => {
+  const previousTestFlag = process.env.RPG_AGENT_UPDATER_TEST;
+  process.env.RPG_AGENT_UPDATER_TEST = '1';
+  try {
+    const updater = require(runtimeFile) as { applyBinaryPatch(base: Buffer | null, patch: Buffer): Buffer };
+    const base = Buffer.alloc(128 * 1024, 1);
+    const next = Buffer.from(base);
+    next.write('updated content', 70000, 'utf8');
+    const patch = createBinaryPatch(base, next);
+    assert.deepEqual(updater.applyBinaryPatch(base, patch), next);
+    assert.deepEqual(updater.applyBinaryPatch(null, createBinaryPatch(null, next)), next);
+    assert.throws(() => updater.applyBinaryPatch(Buffer.from('wrong baseline'), patch), /baseline SHA-256/);
+  } finally {
+    if (previousTestFlag === undefined) delete process.env.RPG_AGENT_UPDATER_TEST;
+    else process.env.RPG_AGENT_UPDATER_TEST = previousTestFlag;
+  }
+});
 
 test('prepares, applies, and rolls back a Windows content update without touching saves', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-updater-runtime-'));
@@ -165,19 +212,19 @@ test('rolls back files already replaced when a later Windows file is locked', ()
       files: [],
     };
     const lockedPath = path.join(game, 'data', 'Locked.json');
-    const originalRemove = fs.rmSync;
+    const originalRemove = fs.unlinkSync;
     try {
-      fs.rmSync = ((target: fs.PathLike, options?: fs.RmOptions) => {
+      fs.unlinkSync = ((target: fs.PathLike) => {
         if (path.resolve(String(target)) === path.resolve(lockedPath)) {
           const error = new Error('simulated locked file') as NodeJS.ErrnoException;
           error.code = 'EBUSY';
           throw error;
         }
-        return originalRemove(target, options);
-      }) as typeof fs.rmSync;
+        return originalRemove(target);
+      }) as typeof fs.unlinkSync;
       assert.throws(() => updater.applyTarget(plan, staging, backup, journal), /simulated locked file/);
     } finally {
-      fs.rmSync = originalRemove;
+      fs.unlinkSync = originalRemove;
     }
     updater.rollback(plan, backup, journal);
     assert.equal(fs.readFileSync(path.join(game, 'data', 'First.json'), 'utf8'), 'first old');

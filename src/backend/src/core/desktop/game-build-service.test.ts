@@ -246,6 +246,8 @@ test('builds a runnable Windows directory with an external update launcher and e
     assert.equal(result.status, 'success', result.error);
     assert.equal(fs.existsSync(path.join(result.outputPath!, 'Game.exe')), true);
     assert.equal(fs.existsSync(path.join(result.outputPath!, '.rpg-agent', 'updater', 'updater.cjs')), true);
+    assert.equal(fs.existsSync(path.join(result.outputPath!, '.rpg-agent', 'updater', 'launcher.js')), true);
+    assert.equal(fs.existsSync(path.join(result.outputPath!, '.rpg-agent', 'updater', 'filesystem.cjs')), true);
     const baseline = JSON.parse(fs.readFileSync(path.join(result.outputPath!, '.rpg-agent', 'current-release.json'), 'utf8'));
     assert.equal(baseline.releaseId, result.releaseId);
     const report = readGameBuildReport(project, result.releaseId!);

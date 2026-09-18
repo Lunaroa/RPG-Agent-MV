@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash, webcrypto } from 'node:crypto';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -61,7 +62,7 @@ test('uses the channel latest pointer and offers same-version repair only for a 
       update: { enabled: true, indexUrl: 'https://updates.invalid/releases.json', checkOnStart: false, policy: 'optional' },
     },
   }) as vm.Context & Record<string, any>;
-  vm.runInContext(pluginSource, context, { filename: 'RPGAgentUpdater.js' });
+  loadPlugin(context);
   const result = await context.RPGAgentUpdater.check({ show: false });
   assert.equal(result.status, 'available');
   assert.equal(result.release.releaseId, 'release-current-repair');
@@ -85,7 +86,7 @@ test('release audit: updater selects only the explicit current platform release'
     maintenance: null, releases: [web, windows, release('unpromoted-web', '9.0.0')] };
   const context = updaterContext({ schemaVersion: 2, generatedAt: new Date(0).toISOString(),
     games: { 'sample-game': { channels: { stable: channel } } } }, undefined);
-  vm.runInContext(pluginSource, context);
+  loadPlugin(context);
   assert.equal((await context.RPGAgentUpdater.check({ show: false })).release.releaseId, web.releaseId);
   channel.latestReleaseIds['web/web'] = 'missing-release';
   assert.equal((await context.RPGAgentUpdater.check({ show: false })).status, 'error');
@@ -120,7 +121,7 @@ test('accepts an authentic game manifest and rejects a changed signed channel', 
     games: { 'sample-game': signedGame },
   };
   const context = updaterContext(index, signatureConfig);
-  vm.runInContext(pluginSource, context, { filename: 'RPGAgentUpdater.js' });
+  loadPlugin(context);
   assert.equal((await context.RPGAgentUpdater.check({ show: false })).status, 'available');
 
   signedGame.channels.stable.latestReleaseId = 'changed-release';
@@ -163,14 +164,25 @@ test('downloads a Windows startup update in the background and asks before insta
       },
     };
     const scheduled: Array<() => unknown> = [];
+    const launches: string[][] = [];
+    let exited = false;
     const dom = createDocument();
     function SceneBoot(this: unknown) {}
     SceneBoot.prototype.start = function() {};
     const runtimeRequire = (specifier: string) => {
-      if (specifier === 'node:fs') return fs;
-      if (specifier === 'node:path') return path;
-      if (specifier === 'node:os') return { ...os, tmpdir: () => temporaryRoot };
-      if (specifier === 'node:crypto') return { createHash };
+      if (specifier === 'fs') return fs;
+      if (specifier === 'path') return path;
+      if (specifier === 'os') return { ...os, tmpdir: () => temporaryRoot };
+      if (specifier === 'crypto') return { createHash };
+      if (specifier === 'child_process') return {
+        spawn: (_executable: string, args: string[]) => {
+          launches.push(Array.from(args));
+          return { unref() {} };
+        },
+      };
+      if (specifier === path.join(temporaryRoot, '.rpg-agent', 'updater', 'filesystem.cjs')) {
+        return createRequire(import.meta.url)('../game-windows-updater-runtime/filesystem.cjs');
+      }
       throw new Error(`Unexpected runtime module: ${specifier}`);
     };
     const context = vm.createContext({
@@ -188,6 +200,7 @@ test('downloads a Windows startup update in the background and asks before insta
         versions: { nw: 'test' },
       },
       require: runtimeRequire,
+      nw: { App: { argv: [], quit() { exited = true; } } },
       Scene_Boot: SceneBoot,
       setTimeout(callback: () => unknown) { scheduled.push(callback); return 1; },
       fetch: async (url: string) => {
@@ -225,7 +238,7 @@ test('downloads a Windows startup update in the background and asks before insta
         },
       },
     }) as vm.Context & Record<string, any>;
-    vm.runInContext(pluginSource, context, { filename: 'RPGAgentUpdater.js' });
+    loadPlugin(context);
     context.Scene_Boot.prototype.start();
     assert.equal(scheduled.length, 1);
     await scheduled[0]!();
@@ -236,6 +249,19 @@ test('downloads a Windows startup update in the background and asks before insta
     assert.equal(state.progress.received, fileContent.byteLength, JSON.stringify(state));
     assert.equal(dom.document.getElementById('rpg-agent-updater-background'), null);
     assert.ok(dom.document.getElementById('rpg-agent-updater-overlay'));
+    assert.equal(launches.length, 0);
+    assert.equal(exited, false);
+    const helperDirectory = path.join(temporaryRoot, '.rpg-agent', 'updater');
+    fs.mkdirSync(helperDirectory, { recursive: true });
+    fs.writeFileSync(path.join(helperDirectory, 'launcher.js'), 'test launcher', 'utf8');
+    fs.writeFileSync(path.join(temporaryRoot, 'Game.exe'), 'test executable', 'utf8');
+    const button = allElements(dom.document.body).find(element => element.tag === 'button' && /Full update/.test(element.textContent));
+    assert.ok(button);
+    await button.onclick?.();
+    assert.equal(launches.length, 1);
+    assert.equal(launches[0]![0], path.join(helperDirectory, 'launcher.js'));
+    assert.equal(path.basename(launches[0]![1]!), 'plan.json');
+    assert.equal(exited, true);
   } finally {
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }
@@ -277,7 +303,7 @@ test('uses the game locale and offers reload instead of an impossible Web self-u
       update: { enabled: true, indexUrl: 'https://updates.invalid/releases.json', checkOnStart: false, policy: 'optional' },
     },
   }) as vm.Context & Record<string, any>;
-  vm.runInContext(pluginSource, context, { filename: 'RPGAgentUpdater.js' });
+  loadPlugin(context);
   assert.equal((await context.RPGAgentUpdater.check({ show: true })).status, 'available');
   const buttons = allElements(dom.document.body).filter((element) => element.tag === 'button');
   assert.deepEqual(buttons.map((button) => button.textContent), ['稍后再说', '重新载入']);
@@ -330,10 +356,22 @@ test('keeps Android progress active until a native callback and enables retry af
       update: { enabled: true, indexUrl: 'https://updates.invalid/releases.json', checkOnStart: false, policy: 'optional' },
     },
   }) as vm.Context & Record<string, any>;
-  vm.runInContext(pluginSource, context, { filename: 'RPGAgentUpdater.js' });
+  loadPlugin(context);
   await context.RPGAgentUpdater.check({ show: true });
   const button = allElements(dom.document.body).find((element) => element.tag === 'button' && /Full update/.test(element.textContent));
   assert.ok(button);
+  let gameTouches = 0;
+  for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel',
+    'mousedown', 'mousemove', 'mouseup', 'pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'wheel']) {
+    dom.document.body.addEventListener(type, (event) => {
+      gameTouches += 1;
+      event.preventDefault();
+    });
+    const event = button!.dispatchBubbling(type);
+    assert.equal(event.defaultPrevented, false, 'The browser must still generate the button click.');
+    assert.equal(event.propagationStopped, true, 'Touches must not reach the game input handler.');
+  }
+  assert.equal(gameTouches, 0);
   await button!.onclick?.();
   assert.equal(handoffs, 1);
   assert.equal(context.RPGAgentUpdater.getState().downloading, true);
@@ -349,6 +387,12 @@ test('keeps Android progress active until a native callback and enables retry af
   assert.equal(handoffs, 2);
   assert.equal(context.RPGAgentUpdater.getState().lastError, null);
 });
+
+function loadPlugin(context: vm.Context & Record<string, any>): void {
+  context.window = context;
+  context.globalThis = undefined;
+  vm.runInContext(pluginSource, context, { filename: 'RPGAgentUpdater.js' });
+}
 
 function updaterContext(index: unknown, manifestSignature: unknown): vm.Context & Record<string, any> {
   function SceneBoot(this: unknown) {}
@@ -433,9 +477,30 @@ function createDocument() {
     parent: Element | null = null;
     children: Element[] = [];
     style = { cssText: '' };
+    listeners = new Map<string, Array<(event: { stopPropagation(): void; preventDefault(): void }) => void>>();
 
     constructor(tag = '') {
       this.tag = tag;
+    }
+
+    addEventListener(type: string, listener: (event: { stopPropagation(): void; preventDefault(): void }) => void) {
+      this.listeners.set(type, [...(this.listeners.get(type) || []), listener]);
+    }
+
+    dispatchBubbling(type: string) {
+      const event = {
+        defaultPrevented: false,
+        propagationStopped: false,
+        preventDefault() { this.defaultPrevented = true; },
+        stopPropagation() { this.propagationStopped = true; },
+      };
+      let current: Element | null = this;
+      while (current) {
+        for (const listener of current.listeners.get(type) || []) listener(event);
+        if (event.propagationStopped) break;
+        current = current.parent;
+      }
+      return event;
     }
 
     append(...children: Element[]) {

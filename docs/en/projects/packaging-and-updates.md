@@ -30,7 +30,7 @@ A release can provide localized titles, summaries, and optional maintenance noti
 
 Every download is checked by byte length and SHA-256. Optional manifest signing creates an ECDSA P-256 identity. The private key remains in operating-system encrypted storage while only the public key is embedded in the game. A missing, changed, or incorrectly signed game manifest is rejected. Without a trusted signature, hashes detect corruption but do not prove developer origin.
 
-Windows updates are applied outside the running game and can roll back after a failed startup health check. Android content updates use verified private version directories and atomic activation. APK updates additionally check application ID, version code, and signing certificate before handing the APK to Android's system installer.
+Windows updates are applied outside the running game and can roll back after a failed startup health check. Android content updates use verified private version directories and atomic activation. APK updates additionally check application ID, version code, and signing certificate before handing the APK to Android's system installer. Replacing the APK may close the game; reopen it after installation. Automatic relaunch from an installation callback is not guaranteed because newer Android versions restrict background activity launches.
 
 ## Cross-platform save boundary
 
@@ -39,6 +39,10 @@ The first release preserves saves across upgrades on the same platform, but it d
 All three targets still use the same game-save data contract and version fields. A later player-initiated export/import adapter can therefore validate the game, origin version, channel, and content digest before importing. That route does not require accounts or cloud saves, but it needs separate acceptance with real old saves and each platform's plugin set; it does not block the first Web, Windows, and Android packages.
 
 The first Android build installs a pinned, verified toolchain after explicit license acceptance: Microsoft OpenJDK 17, Android command-line tools, Gradle 9.4.1, Android Gradle Plugin 9.2.1, Compile SDK 36, Build Tools 36.0.0, and AndroidX WebKit 1.17.0. Release APKs require a stable JKS identity. Changing the application ID or signing identity creates a new app rather than an in-place update.
+
+APKs require Android 7.0 (API 24) or newer. Older presets retain their original minimum API and show an error until the developer explicitly corrects it; opening a preset never silently migrates it.
+
+RPG Maker MV requires matching M4A audio on mobile, or `.rpgmvm` when native RPG Maker audio encryption is enabled. Android preflight lists missing or empty mobile counterparts for OGG or `.rpgmvo` assets and stops the build. It does not automatically transcode or modify source audio; preserve background-music loop metadata when preparing mobile assets. This requirement does not apply to RPG Maker MZ, which uses OGG.
 
 The Android icon is an explicit project-relative preset field. A new Android preset auto-selects an image only when the resource-root `icon/` folder contains exactly one PNG, JPEG, or WebP candidate. No candidate or multiple candidates require a deliberate selection; filenames and sort order are never used as a guess.
 

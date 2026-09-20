@@ -49,6 +49,109 @@ test('release audit: plugin target metadata is advisory and disabled plugins do 
   });
 });
 
+test('packaging accepts repeated disabled separators but rejects duplicate enabled plugins', async () => {
+  await withProject(async ({ workflowRoot, project, release, preset }) => {
+    saveGameBuildSettings(project, { presets: [preset], selectedPresetId: preset.id });
+    const entries = [0, 1].map(() => ({ name: 'SampleGroup', status: false, parameters: {} }));
+    write(project, 'js/plugins.js', `var $plugins = ${JSON.stringify(entries)};`);
+    assert.equal(preflightGameBuild(workflowRoot, project, { presetId: preset.id, releaseConfig: release }).ok, true);
+    write(project, 'js/plugins/SampleGroup.js', '/*:\n * @plugindesc Sample\n */');
+    entries[0]!.status = true;
+    write(project, 'js/plugins.js', `var $plugins = ${JSON.stringify(entries)};`);
+    assert.equal(preflightGameBuild(workflowRoot, project, { presetId: preset.id, releaseConfig: release }).ok, true);
+    entries[1]!.status = true;
+    write(project, 'js/plugins.js', `var $plugins = ${JSON.stringify(entries)};`);
+    const duplicate = preflightGameBuild(workflowRoot, project, { presetId: preset.id, releaseConfig: release });
+    assert.ok(duplicate.blockers.some(item => item.includes('Duplicate plugin configuration')));
+    entries[0]!.status = false;
+    entries.push({ name: 'SampleDependent', status: true, parameters: {} });
+    write(project, 'js/plugins/SampleDependent.js', '/*:\n * @target MV\n * @plugindesc Sample dependent\n * @base SampleGroup\n */');
+    write(project, 'js/plugins.js', `var $plugins = ${JSON.stringify(entries)};`);
+    const dependent = preflightGameBuild(workflowRoot, project, { presetId: preset.id, releaseConfig: release });
+    assert.equal(dependent.ok, true, dependent.blockers.join('\n'));
+  });
+});
+
+test('packaging records the original failure even when staging cleanup also fails', async (context) => {
+  await withProject(async ({ workflowRoot, project, release, preset }) => {
+    saveGameBuildSettings(project, { presets: [preset], selectedPresetId: preset.id });
+    const original = fs.rmSync;
+    const mocked = context.mock.method(fs, 'rmSync', (target: fs.PathLike, options: fs.RmOptions) => {
+      if (path.basename(String(target)).startsWith('.rpg-agent-build-')) throw new Error('cleanup denied');
+      return original(target, options);
+    });
+    try {
+      const result = await buildGame(workflowRoot, project, {
+        presetId: preset.id, outputConflict: 'overwrite', releaseConfig: release, confirmManagedChanges: true,
+      }, { reportProgress: event => { if (event.stage === 'copy-project') throw new Error('original copy failure'); } });
+      assert.equal(result.status, 'failed');
+      assert.match(result.error!, /original copy failure[\s\S]*cleanup denied/);
+      assert.match(readGameBuildReport(project, result.releaseId!).error!, /original copy failure/);
+    } finally { mocked.mock.restore(); }
+  });
+});
+
+test('packaging uses the configured official MV deployment runtime, not its playtest runner', async () => {
+  await withProject(async ({ workflowRoot, project, release, preset }) => {
+    const install = path.join(workflowRoot, 'official-editor');
+    const runner = path.join(install, 'nwjs-win-test');
+    const deployment = path.join(install, 'nwjs-win');
+    fs.mkdirSync(runner, { recursive: true });
+    fs.mkdirSync(deployment, { recursive: true });
+    createWindowsRuntime(runner, 'x64');
+    createWindowsRuntime(deployment, 'x64');
+    write(runner, 'playtest-only.txt', 'not for distribution');
+    write(deployment, 'package.json', '{"name":"sample","main":"www/index.html"}');
+    write(install, 'RPGMV.exe', 'editor fixture');
+    write(install, 'newdata/js/rpg_core.js', 'Utils.RPGMAKER_NAME = "MV"; Utils.RPGMAKER_VERSION = "1.6.2";');
+    const windows = { ...preset, target: 'windows' as const, architecture: 'x64' as const, zip: false };
+    saveGameBuildSettings(project, { presets: [windows], selectedPresetId: windows.id });
+    const configured = { 'rpg-maker-mv': path.join(runner, 'Game.exe') };
+    const result = await buildGame(workflowRoot, project, {
+      presetId: preset.id, outputConflict: 'overwrite', releaseConfig: release, confirmManagedChanges: true,
+      windowsRuntimeExecutables: configured,
+    });
+    assert.equal(result.status, 'success', result.error);
+    assert.equal(fs.existsSync(path.join(result.outputPath!, 'Game.exe')), true);
+    assert.equal(fs.existsSync(path.join(result.outputPath!, 'www', 'index.html')), true);
+    assert.equal(fs.existsSync(path.join(result.outputPath!, 'playtest-only.txt')), false);
+    const mismatch = preflightGameBuild(workflowRoot, project, { presetId: preset.id, windowsRuntimeExecutables: configured });
+    assert.equal(mismatch.ok, true, mismatch.blockers.join('\n'));
+    saveGameBuildSettings(project, { presets: [{ ...windows, architecture: 'x86' }], selectedPresetId: windows.id });
+    assert.ok(preflightGameBuild(workflowRoot, project, { presetId: preset.id, windowsRuntimeExecutables: configured }).blockers.some(item => item.includes('x86')));
+  });
+});
+
+test('packaging uses the configured MZ runtime and creates a runnable entry without renaming the source executable', async () => {
+  await withProject(async ({ workflowRoot, project, release, preset }) => {
+    fs.rmSync(path.join(project, 'Game.rpgproject'));
+    write(project, 'Game.rmmzproject', 'RPGMZ 1.10.0');
+    write(project, 'data/System.json', JSON.stringify({ gameTitle: 'Sample Game', tileSize: 48, faceSize: 144, iconSize: 32, advanced: { screenWidth: 816, screenHeight: 624, uiAreaWidth: 816, uiAreaHeight: 624 }, hasEncryptedImages: false, hasEncryptedAudio: false }));
+    for (const part of ['core', 'managers', 'objects', 'scenes', 'sprites', 'windows']) {
+      fs.rmSync(path.join(project, 'js', `rpg_${part}.js`));
+      write(project, `js/rmmz_${part}.js`, part === 'core' ? 'Utils.RPGMAKER_NAME = "MZ"; Utils.RPGMAKER_VERSION = "1.10.0";' : '');
+    }
+    const install = path.join(workflowRoot, 'sample-mz-editor');
+    const runtime = path.join(install, 'nwjs-win');
+    fs.mkdirSync(runtime, { recursive: true });
+    createWindowsRuntime(runtime, 'x64');
+    fs.renameSync(path.join(runtime, 'Game.exe'), path.join(runtime, 'nw.exe'));
+    write(runtime, 'v8_context_snapshot.bin', 'runtime fixture');
+    write(install, 'RPGMZ.exe', 'editor fixture');
+    write(install, 'newdata/js/rmmz_core.js', 'Utils.RPGMAKER_NAME = "MZ"; Utils.RPGMAKER_VERSION = "1.10.0";');
+    saveGameBuildSettings(project, { presets: [{ ...preset, target: 'windows', architecture: 'x64', zip: false }], selectedPresetId: preset.id });
+    const result = await buildGame(workflowRoot, project, {
+      presetId: preset.id, outputConflict: 'overwrite', releaseConfig: release, confirmManagedChanges: true,
+      windowsRuntimeExecutables: { 'rpg-maker-mz': path.join(runtime, 'nw.exe') },
+    });
+    assert.equal(result.status, 'success', result.error);
+    assert.equal(fs.existsSync(path.join(result.outputPath!, 'Game.exe')), true);
+    assert.equal(fs.existsSync(path.join(result.outputPath!, 'index.html')), true);
+    assert.equal(fs.existsSync(path.join(runtime, 'nw.exe')), true);
+    assert.equal(fs.existsSync(path.join(runtime, 'Game.exe')), false);
+  });
+});
+
 test('release audit: binary diff preflight rejects delta and changed full baselines', async () => {
   await withProject(async ({ workflowRoot, project, release, preset }) => {
     saveGameBuildSettings(project, { presets: [preset], selectedPresetId: preset.id });

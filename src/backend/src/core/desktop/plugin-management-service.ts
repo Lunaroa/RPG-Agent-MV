@@ -662,7 +662,7 @@ export function deletePluginFile(
   };
 }
 
-export function validatePluginConfiguration(workflowRoot: string, project: string): PluginValidationResult {
+export function validatePluginConfiguration(workflowRoot: string, project: string, options: { enabledOnly?: boolean } = {}): PluginValidationResult {
   const parsed = readPlugins(workflowRoot, project);
   const issues: PluginValidationIssue[] = [];
   const engineTarget = inspectRmmvProject(project).engine === 'rpg-maker-mz' ? 'MZ' : 'MV';
@@ -685,6 +685,7 @@ export function validatePluginConfiguration(workflowRoot: string, project: strin
 
   const seen = new Map<string, number>();
   parsed.entries.forEach((entry, index) => {
+    if (options.enabledOnly && !entry.status) return;
     const name = String(entry.name || '');
     if (!name) {
       issues.push({
@@ -749,7 +750,7 @@ export function validatePluginConfiguration(workflowRoot: string, project: strin
     }
   });
 
-  issues.push(...collectPluginDependencyIssues(workflowRoot, project, parsed.entries));
+  issues.push(...collectPluginDependencyIssues(workflowRoot, project, options.enabledOnly ? parsed.entries.filter(entry => entry.status) : parsed.entries));
 
   return { ok: !issues.some((issue) => issue.severity === 'error'), issues };
 }

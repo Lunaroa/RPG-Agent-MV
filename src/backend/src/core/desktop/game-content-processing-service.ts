@@ -14,6 +14,7 @@ import type { RpgMakerEngine } from '../rmmv/rpg-maker-engine.ts';
 import { resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
 import { GameBuildProcessCanceledError, runGameBuildProcess } from './game-build-process-service.ts';
 import { readGameEncryptionKey } from './game-encryption-key-service.ts';
+import { managedFfmpegPath } from './game-media-tools-service.ts';
 
 interface RuntimeContentRecord {
   sourcePath: string;
@@ -484,8 +485,12 @@ function renderRuntimeLoader(records: RuntimeContentRecord[], key: Buffer | null
 `;
 }
 
-function managedFfmpegPath(workflowRoot: string): string {
-  return path.join(path.resolve(workflowRoot), 'runtime', 'game-build', 'tools', 'ffmpeg', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+export function inspectMediaTools(workflowRoot: string, project: string) {
+  const executable = managedFfmpegPath(workflowRoot);
+  return {
+    configured: fs.existsSync(executable) && fs.statSync(executable).isFile(),
+    wavFiles: listFiles(path.join(resolveRmmvLayout(project).resourceRoot, 'audio')).filter(file => /\.wav$/i.test(file)).length,
+  };
 }
 
 function requireEncryptionKey(key: Buffer | undefined): Buffer {

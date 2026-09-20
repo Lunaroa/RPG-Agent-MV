@@ -31,6 +31,38 @@ export function copyAndroidShellProject(target: string, workflowRoot?: string): 
   copyGameDirectory(source, target);
 }
 
+export function assertAndroidToolchainPath(root: string): void {
+  const resolved = path.resolve(root);
+  let ancestor = resolved;
+  while (!fs.existsSync(ancestor) && path.dirname(ancestor) !== ancestor) ancestor = path.dirname(ancestor);
+  if (/[^\x20-\x7e]/.test(resolved) || /[^\x20-\x7e]/.test(fs.realpathSync.native(ancestor))) {
+    throw new Error('The managed Android toolchain path must contain only ASCII characters. Select an ASCII-only installation folder; game and APK output folders may contain Unicode characters.');
+  }
+  fs.accessSync(ancestor, fs.constants.W_OK);
+}
+
+export async function withAndroidShellWorkspace<T>(root: string, build: (directory: string) => Promise<T>): Promise<T> {
+  assertAndroidToolchainPath(root);
+  // Gradle's Windows path contract applies to its project, not the user's final APK directory.
+  const directory = fs.mkdtempSync(path.join(fs.realpathSync.native(root), '.build-'));
+  let buildError: unknown;
+  try {
+    return await build(directory);
+  } catch (error) {
+    buildError = error;
+    throw error;
+  } finally {
+    try {
+      await fs.promises.rm(directory, { recursive: true, force: false });
+    } catch (cleanupError) {
+      if (buildError) {
+        throw new AggregateError([buildError, cleanupError], `${buildError instanceof Error ? buildError.message : String(buildError)}\nAndroid temporary workspace cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+      }
+      throw cleanupError;
+    }
+  }
+}
+
 export function assertAndroidShellTemplate(workflowRoot?: string): string {
   const source = resolveGameBuildRuntimeSource(ANDROID_SHELL_SOURCE_DIRECTORY, 'game-android-runtime', workflowRoot);
   const missing = ANDROID_SHELL_REQUIRED_FILES.filter((relativePath) => {

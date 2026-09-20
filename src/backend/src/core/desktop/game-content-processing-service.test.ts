@@ -11,9 +11,27 @@ import { generateGameEncryptionKey, readGameEncryptionKey } from './game-encrypt
 import {
   applyContentProcessing,
   contentCategory,
+  inspectMediaTools,
   preflightAndroidAudio,
   preflightContentProcessing,
 } from './game-content-processing-service.ts';
+
+test('media preflight requires FFmpeg only for compression and reports unsupported WAV without modifying audio', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'packaging-media-preflight-'));
+  const project = path.join(root, 'project');
+  const config: GameContentProcessingConfig = { images: 'none', audio: 'none', video: 'none', data: 'none', javascript: 'none', ui: 'none' };
+  try {
+    write(project, 'data/System.json', '{}');
+    write(project, 'audio/se/声音.WAV', 'unchanged audio fixture');
+    assert.deepEqual(inspectMediaTools(root, project), { configured: false, wavFiles: 1 });
+    assert.deepEqual(preflightContentProcessing(root, project, config).blockers, []);
+    const blockers = preflightContentProcessing(root, project, { ...config, audio: 'compress' }).blockers;
+    assert.ok(blockers.some(message => message.startsWith('Managed FFmpeg is required')));
+    assert.ok(blockers.some(message => message.startsWith('WAV compression is not configured')));
+    assert.equal(fs.readFileSync(path.join(project, 'audio/se/声音.WAV'), 'utf8'), 'unchanged audio fixture');
+    assert.deepEqual(fs.readdirSync(path.join(project, 'audio/se')), ['声音.WAV']);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 test('Android MV audio preflight rejects missing mobile pairs without modifying source files', () => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'rpg-agent-mobile-audio-'));

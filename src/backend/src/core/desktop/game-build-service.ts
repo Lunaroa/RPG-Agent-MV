@@ -61,6 +61,7 @@ import {
   WINDOWS_REQUIRED_RUNTIME_FILES,
 } from './game-windows-runtime-contract.ts';
 import { validatePluginConfiguration } from './plugin-management-service.ts';
+import { inspectSelectedInteractiveProjectRuntime } from './interactive-playtest-runtime.ts';
 import { patchProjectConfig, readProjectConfig } from './project-config-service.ts';
 
 const HISTORY_DIRECTORY = path.join('.luna_rpg', 'release-history');
@@ -86,6 +87,7 @@ export interface GameBuildWorkerHandle {
 }
 
 interface GameBuildPreflightInput {
+  windowsRuntimeExecutables?: GameBuildRequest['windowsRuntimeExecutables'];
   presetId: string;
   releaseConfig?: GameReleaseConfig;
 }
@@ -147,7 +149,7 @@ export function preflightGameBuild(
   if (!manifest.runnableStructure) {
     blockers.push(`The RPG Maker project is not runnable: ${manifest.missingRequired.join(', ') || 'required runtime files are missing'}.`);
   }
-  const pluginValidation = validatePluginConfiguration(workflowRoot, project);
+  const pluginValidation = validatePluginConfiguration(workflowRoot, project, { enabledOnly: true });
   blockers.push(...pluginValidation.issues
     .filter((issue) => issue.severity === 'error')
     .map((issue) => `Plugin configuration: ${issue.message}`));
@@ -201,7 +203,7 @@ export function preflightGameBuild(
   }
   if (preset.target === 'windows') {
     try {
-      resolveWindowsRuntime(workflowRoot, project, manifest.engine, preset.architecture);
+      resolveWindowsRuntime(workflowRoot, project, manifest.engine, preset.architecture, input.windowsRuntimeExecutables?.[manifest.engine]);
     } catch (error) {
       blockers.push(message(error));
     }
@@ -249,6 +251,7 @@ export async function buildGame(
     assertNotCanceled();
     preflight = preflightGameBuild(workflowRoot, project, {
       presetId: request.presetId,
+      windowsRuntimeExecutables: request.windowsRuntimeExecutables,
       ...(request.releaseConfig ? { releaseConfig: request.releaseConfig } : {}),
     });
   } catch (error) {
@@ -294,7 +297,7 @@ export async function buildGame(
         installRuntimePlugins: true,
       });
     }
-    const verified = preflightGameBuild(workflowRoot, project, { presetId: request.presetId });
+    const verified = preflightGameBuild(workflowRoot, project, { presetId: request.presetId, windowsRuntimeExecutables: request.windowsRuntimeExecutables });
     if (!verified.ok || verified.managedChanges.length) {
       throw new Error([...verified.blockers, ...verified.managedChanges.map((change) => change.description)].join('\n'));
     }
@@ -313,7 +316,7 @@ export async function buildGame(
     failedStage = 'copy-project';
     progress('copy-project', 24);
     assertNotCanceled();
-    const runtime = prepareCompleteContent(workflowRoot, project, preset, completeContent);
+    const runtime = prepareCompleteContent(workflowRoot, project, preset, completeContent, request.windowsRuntimeExecutables);
     failedStage = 'process-content';
     progress('process-content', 38);
     assertNotCanceled();
@@ -535,7 +538,14 @@ export async function buildGame(
       ...(contentChanges ? { contentChanges } : {}),
     };
   } catch (error) {
-    if (stagingRoot) cleanupStaging(stagingRoot);
+    if (stagingRoot) {
+      try {
+        cleanupStaging(stagingRoot);
+      } catch (cleanupError) {
+        return failedBuildWithReport(project, preflight, releaseId, startedAt, failedStage,
+          new AggregateError([error, cleanupError], `${message(error)}\nTemporary build cleanup failed: ${message(cleanupError)}`));
+      }
+    }
     if (error instanceof GameBuildCanceledError || cancellationRequested()) return canceledResult(preflight.warnings);
     return failedBuildWithReport(project, preflight, releaseId, startedAt, failedStage, error);
   }
@@ -643,6 +653,7 @@ function prepareCompleteContent(
   project: string,
   preset: GameBuildPreset,
   target: string,
+  windowsRuntimeExecutables?: GameBuildRequest['windowsRuntimeExecutables'],
 ): Record<string, string | null> {
   const manifest = inspectRmmvProject(project);
   if (preset.target === 'web') {
@@ -654,11 +665,12 @@ function prepareCompleteContent(
     return { engine: manifest.engine, engineVersion: manifest.engineVersion, platformRuntime: 'managed-android-webview-shell' };
   }
   if (preset.target !== 'windows') throw new Error(`Unsupported build target: ${preset.target}.`);
-  const runtime = resolveWindowsRuntime(workflowRoot, project, manifest.engine, preset.architecture);
+  const runtime = resolveWindowsRuntime(workflowRoot, project, manifest.engine, preset.architecture, windowsRuntimeExecutables?.[manifest.engine]);
   if (runtime.source === 'project') {
     copyGameDirectory(project, target);
   } else {
     copyGameDirectory(runtime.root, target);
+    if (runtime.executableName === 'nw.exe') fs.renameSync(path.join(target, 'nw.exe'), path.join(target, 'Game.exe'));
     const contentRoot = runtime.contentDirectory === '.'
       ? target
       : path.join(target, ...runtime.contentDirectory.split('/'));
@@ -771,10 +783,22 @@ function resolveWindowsRuntime(
   project: string,
   engine: string,
   architecture: string,
-): { source: 'project' | 'managed'; root: string; contentDirectory: string; runtimeVersion: string } {
+  configuredExecutable?: string,
+): { source: 'project' | 'managed' | 'configured'; root: string; contentDirectory: string; runtimeVersion: string; executableName?: string } {
   if (hasCompleteWindowsRuntime(project)) {
     assertWindowsRuntimeArchitecture(project, architecture);
     return { source: 'project', root: path.resolve(project), contentDirectory: '.', runtimeVersion: 'project-local' };
+  }
+  if (configuredExecutable && (engine === 'rpg-maker-mv' || engine === 'rpg-maker-mz')) {
+    const selected = inspectSelectedInteractiveProjectRuntime(configuredExecutable, engine);
+    if (!selected.valid || !selected.runtimeRoot) throw new Error('The configured RPG Maker runtime is invalid. Select it again from the Play menu.');
+    // MV playtest executables are not deployment runtimes. Use the editor's sibling deployment directory.
+    const root = engine === 'rpg-maker-mv' ? path.join(path.dirname(selected.runtimeRoot), 'nwjs-win') : selected.runtimeRoot;
+    const executableName = engine === 'rpg-maker-mz' ? 'nw.exe' : 'Game.exe';
+    if (!hasCompleteWindowsRuntime(root, executableName)) throw new Error('The configured RPG Maker installation is missing its Windows deployment runtime. Repair the RPG Maker installation.');
+    const actual = inspectWindowsExecutableArchitecture(path.join(root, executableName));
+    if (actual !== architecture) throw new Error(`The configured Windows runtime is ${actual}, but the packaging preset requires ${architecture}.`);
+    return { source: 'configured', root, executableName, contentDirectory: engine === 'rpg-maker-mv' ? 'www' : '.', runtimeVersion: 'configured-rpg-maker' };
   }
   const root = path.join(path.resolve(workflowRoot), 'runtime', 'game-build', 'windows', engine, architecture);
   const manifestPath = path.join(root, 'rpg-agent-runtime.json');
@@ -804,10 +828,10 @@ function resolveWindowsRuntime(
   };
 }
 
-function hasCompleteWindowsRuntime(root: string): boolean {
+function hasCompleteWindowsRuntime(root: string, executableName = 'Game.exe'): boolean {
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) return false;
   if (!WINDOWS_REQUIRED_RUNTIME_FILES.every((relative) => {
-    const file = path.join(root, relative);
+    const file = path.join(root, relative === 'Game.exe' ? executableName : relative);
     return fs.existsSync(file) && fs.statSync(file).isFile();
   })) return false;
   const locales = path.join(root, 'locales');

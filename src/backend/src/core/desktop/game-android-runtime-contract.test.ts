@@ -114,7 +114,9 @@ test('Android toolchain publication stops its isolated Gradle daemon and retains
   const source = fs.readFileSync(path.join(import.meta.dirname, 'game-android-toolchain-service.ts'), 'utf8');
   const preparation = source.slice(source.indexOf('function prepareGradleDependencies('), source.indexOf('function runGradle('));
   assert.match(preparation, /GRADLE_USER_HOME: path\.join\(root, 'gradle-cache'\)/);
-  assert.match(preparation, /runGradle\(root, java, \['--stop'\], gradleEnvironment\);\s*fs\.rmSync\(project/);
+  assert.match(preparation, /copyAndroidShellProject\(project, workflowRoot\)/);
+  assert.match(preparation, /finally\s*\{[\s\S]*await runGradle\(root, java, \['--stop'\], gradleEnvironment, \{\}\)/);
+  assert.ok(preparation.indexOf("['--stop']") < preparation.indexOf('fs.rmSync(project'));
   assert.match(source, /!fs\.existsSync\(path\.join\(staging, MANIFEST_NAME\)\)/);
   assert.match(source, /new AggregateError\(\[error, cleanupError\]/);
 });

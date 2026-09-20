@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { escapeJavaProperty } from './game-tool-install-context.ts';
 
 import sharp from 'sharp';
 import { ANDROID_MINIMUM_SDK } from '../../../../contract/game-release.ts';
@@ -20,8 +21,8 @@ import {
   sha256File,
   writeJsonAtomically,
 } from './game-build-file-service.ts';
-import { runGameBuildProcess } from './game-build-process-service.ts';
-import { copyAndroidShellProject, assertAndroidShellTemplate } from './game-android-shell-service.ts';
+import { javaToolArguments, runGameBuildProcess } from './game-build-process-service.ts';
+import { copyAndroidShellProject, assertAndroidShellTemplate, assertAndroidToolchainPath, withAndroidShellWorkspace } from './game-android-shell-service.ts';
 import {
   ANDROID_TOOLCHAIN_VERSIONS,
   inspectAndroidToolchain,
@@ -50,6 +51,11 @@ export function preflightAndroidBuild(
   const blockers: string[] = [];
   const warnings: string[] = [];
   const toolchain = inspectAndroidToolchain(workflowRoot, settings.androidToolchainRoot);
+  try {
+    assertAndroidToolchainPath(toolchain.root);
+  } catch (error) {
+    blockers.push(message(error));
+  }
   if (!toolchain.configured) {
     blockers.push(`Install the managed Android toolchain before building. Missing: ${toolchain.missing.join(', ')}.`);
   }
@@ -105,7 +111,7 @@ export function preflightAndroidBuild(
   return { blockers, warnings, toolchain };
 }
 
-export async function buildAndroidApks(input: {
+interface AndroidBuildInput {
   workflowRoot: string;
   project: string;
   settings: GameReleaseProjectSettings;
@@ -118,13 +124,18 @@ export async function buildAndroidApks(input: {
   releaseId: string;
   allowCleartext: boolean;
   isCanceled?: () => boolean;
-}): Promise<AndroidBuildOutput> {
+}
+
+export async function buildAndroidApks(input: AndroidBuildInput): Promise<AndroidBuildOutput> {
   const android = input.preset.android;
   if (!android) throw new Error('The Android build configuration is missing.');
   const checked = preflightAndroidBuild(input.workflowRoot, input.project, input.settings, input.preset);
   if (checked.blockers.length) throw new Error(checked.blockers.join('\n'));
-  const toolchain = checked.toolchain;
-  const projectDirectory = path.join(path.dirname(input.outputContainer), 'android-gradle-project');
+  return withAndroidShellWorkspace(checked.toolchain.root, directory => buildAndroidApksInWorkspace(input, checked.toolchain, directory));
+}
+
+async function buildAndroidApksInWorkspace(input: AndroidBuildInput, toolchain: AndroidToolchainStatus, projectDirectory: string): Promise<AndroidBuildOutput> {
+  const android = input.preset.android!;
   copyAndroidShellProject(projectDirectory, input.workflowRoot);
   const verificationDirectory = path.join(projectDirectory, 'gradle');
   fs.mkdirSync(verificationDirectory, { recursive: true });
@@ -351,7 +362,7 @@ function writeStringResources(projectDirectory: string, displayName: string): vo
 }
 
 function writeLocalProperties(projectDirectory: string, sdkRoot: string): void {
-  const escaped = path.resolve(sdkRoot).replace(/\\/g, '\\\\').replace(/:/g, '\\:');
+  const escaped = escapeJavaProperty(path.resolve(sdkRoot));
   fs.writeFileSync(path.join(projectDirectory, 'local.properties'), `sdk.dir=${escaped}\n`, 'utf8');
 }
 
@@ -407,7 +418,7 @@ async function runTool(
   label: string,
   isCanceled?: () => boolean,
 ): Promise<string> {
-  const result = await runGameBuildProcess(executable, args, {
+  const result = await runGameBuildProcess(executable, javaToolArguments(executable, args), {
     cwd,
     env: environment,
     maxBuffer: 64 * 1024 * 1024,
@@ -427,7 +438,7 @@ function runToolSync(
   cwd: string,
   label: string,
 ): string {
-  const result = spawnSync(executable, args, {
+  const result = spawnSync(executable, javaToolArguments(executable, args), {
     cwd,
     env: environment,
     encoding: 'utf8',

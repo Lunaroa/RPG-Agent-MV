@@ -233,6 +233,7 @@ export interface GameBuildPreflightResult {
 }
 
 export interface GameBuildRequest {
+  windowsRuntimeExecutables?: Partial<Record<'rpg-maker-mv' | 'rpg-maker-mz', string>>;
   operationId?: string;
   presetId: string;
   outputConflict: 'overwrite' | 'new-directory' | 'cancel';
@@ -425,8 +426,30 @@ export interface AndroidToolchainStatus {
 }
 
 export interface AndroidToolchainInstallRequest {
+  operationId?: string;
   root?: string;
   acceptAndroidSdkLicense: boolean;
+}
+
+export type GameToolKind = 'android' | 'media';
+export interface MediaToolInstallRequest {
+  operationId?: string;
+  acceptLicense: boolean;
+}
+export interface GameToolInstallProgress {
+  logPath?: string;
+  operationId: string;
+  kind: GameToolKind;
+  stage: 'download' | 'extract' | 'sdk' | 'dependencies' | 'verify' | 'publish';
+  component?: string;
+  received?: number;
+  total?: number;
+  detail?: string;
+}
+
+export interface MediaToolStatus {
+  configured: boolean;
+  wavFiles: number;
 }
 
 export type GameReleaseCredentialKind = 'android-signing' | 'upload' | 'manifest-signing';

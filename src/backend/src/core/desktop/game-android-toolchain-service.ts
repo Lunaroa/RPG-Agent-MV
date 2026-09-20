@@ -11,8 +11,11 @@ import type {
   AndroidToolchainStatus,
 } from '../../../../contract/game-release.ts';
 import { writeJsonAtomically } from './game-build-file-service.ts';
-import { copyAndroidShellProject } from './game-android-shell-service.ts';
+import { assertAndroidToolchainPath, copyAndroidShellProject } from './game-android-shell-service.ts';
 import { extractZipArchive } from './zip-extraction-service.ts';
+import { downloadVerifiedTool } from './game-tool-download.ts';
+import { javaToolArguments, runGameBuildProcess } from './game-build-process-service.ts';
+import { escapeJavaProperty, type GameToolInstallContext } from './game-tool-install-context.ts';
 
 export const ANDROID_TOOLCHAIN_VERSIONS = Object.freeze({
   jdk: '17.0.20.1',
@@ -87,6 +90,8 @@ export function inspectAndroidToolchain(workflowRoot: string, configuredRoot?: s
   const dependencyVerification = existingFile(path.join(root, 'gradle-verification-metadata.xml'));
   const debugIdentity = existingFile(path.join(root, 'identities', 'debug.keystore'));
   const missing: string[] = [];
+  try { assertAndroidToolchainPath(root); }
+  catch (error) { missing.push(error instanceof Error ? error.message : String(error)); }
   const manifest = readManifest(path.join(root, MANIFEST_NAME));
   if (!manifest) missing.push('managed toolchain manifest');
   else if (JSON.stringify(manifest.versions) !== JSON.stringify(ANDROID_TOOLCHAIN_VERSIONS)) {
@@ -121,6 +126,7 @@ export function inspectAndroidToolchain(workflowRoot: string, configuredRoot?: s
 export async function installAndroidToolchain(
   workflowRoot: string,
   request: AndroidToolchainInstallRequest,
+  context: GameToolInstallContext = {},
 ): Promise<AndroidToolchainStatus> {
   if (!request || request.acceptAndroidSdkLicense !== true) {
     throw new Error('Accept the Android SDK license before installing the managed Android toolchain.');
@@ -129,6 +135,7 @@ export async function installAndroidToolchain(
     throw new Error('The managed Android toolchain installer currently supports Windows x64 only.');
   }
   const root = path.resolve(request.root || defaultAndroidToolchainRoot(workflowRoot));
+  assertAndroidToolchainPath(root);
   assertReplaceableToolchainRoot(root);
   const parent = path.dirname(root);
   fs.mkdirSync(parent, { recursive: true });
@@ -139,7 +146,11 @@ export async function installAndroidToolchain(
   try {
     for (const source of TOOLCHAIN_SOURCES) {
       const archive = path.join(downloads, source.fileName);
-      await downloadVerified(source.url, archive, source.sha256);
+      await downloadVerifiedTool(source.url, archive, source.sha256, {
+        isCanceled: context.isCanceled,
+        onProgress: (received, total) => context.reportProgress?.({ stage: 'download', component: source.id, received, total }),
+      });
+      context.reportProgress?.({ stage: 'extract', component: source.id });
       extractZipArchive(archive, path.join(extracted, source.id));
     }
     moveSingleRoot(path.join(extracted, 'jdk'), path.join(staging, 'jdk'));
@@ -170,17 +181,22 @@ export async function installAndroidToolchain(
       '-classpath', sdkManagerClasspath,
       'com.android.sdklib.tool.sdkmanager.SdkManagerCli',
     ];
-    runTool(path.join(javaHome, 'bin', 'java.exe'), [...sdkManagerPrefix, `--sdk_root=${sdkRoot}`, '--licenses'], environment, 'y\n'.repeat(100));
-    runTool(path.join(javaHome, 'bin', 'java.exe'), [...sdkManagerPrefix,
+    context.reportProgress?.({ stage: 'sdk' });
+    const sdkContext: GameToolInstallContext = { ...context, reportProgress: event => context.reportProgress?.({ ...event, stage: 'sdk' }) };
+    await runInstallTool(path.join(javaHome, 'bin', 'java.exe'), [...sdkManagerPrefix, `--sdk_root=${sdkRoot}`, '--licenses'], environment, sdkContext, 'y\n'.repeat(100));
+    await runInstallTool(path.join(javaHome, 'bin', 'java.exe'), [...sdkManagerPrefix,
       `--sdk_root=${sdkRoot}`,
       'platform-tools',
       `platforms;android-${ANDROID_TOOLCHAIN_VERSIONS.compileSdk}`,
       `build-tools;${ANDROID_TOOLCHAIN_VERSIONS.buildTools}`,
-    ], environment);
+    ], environment, sdkContext);
     const java = path.join(javaHome, 'bin', 'java.exe');
-    assertOutput(runTool(java, ['-version'], environment), /version "17\./, 'managed JDK 17');
-    assertOutput(runGradle(staging, java, ['--version', '--no-daemon'], environment), /Gradle 9\.4\.1/, 'Gradle 9.4.1');
-    prepareGradleDependencies(staging, environment);
+    context.reportProgress?.({ stage: 'verify' });
+    const verifyContext: GameToolInstallContext = { ...context, reportProgress: event => context.reportProgress?.({ ...event, stage: 'verify' }) };
+    assertOutput(await runInstallTool(java, ['-version'], environment, verifyContext), /version "17\./, 'managed JDK 17');
+    assertOutput(await runGradle(staging, java, ['--version', '--no-daemon'], environment, verifyContext), /Gradle 9\.4\.1/, 'Gradle 9.4.1');
+    context.reportProgress?.({ stage: 'dependencies' });
+    await prepareGradleDependencies(staging, workflowRoot, environment, context);
     const manifest: ToolchainManifest = {
       schemaVersion: 1,
       installedAt: new Date().toISOString(),
@@ -193,6 +209,7 @@ export async function installAndroidToolchain(
       ],
     };
     writeJsonAtomically(path.join(staging, MANIFEST_NAME), manifest);
+    context.reportProgress?.({ stage: 'publish' });
     publishToolchain(staging, root);
     const status = inspectAndroidToolchain(workflowRoot, root);
     if (!status.configured) throw new Error(`Managed Android toolchain installation is incomplete: ${status.missing.join(', ')}.`);
@@ -272,9 +289,9 @@ export function createAndroidReleaseKeystore(
   }
 }
 
-function prepareGradleDependencies(root: string, environment: NodeJS.ProcessEnv): void {
+async function prepareGradleDependencies(root: string, workflowRoot: string, environment: NodeJS.ProcessEnv, context: GameToolInstallContext): Promise<void> {
   const project = path.join(root, 'dependency-bootstrap');
-  copyAndroidShellProject(project);
+  copyAndroidShellProject(project, workflowRoot);
   const app = path.join(project, 'app');
   writeJsonAtomically(path.join(app, 'rpg-agent-build.json'), {
     schemaVersion: 1,
@@ -288,19 +305,19 @@ function prepareGradleDependencies(root: string, environment: NodeJS.ProcessEnv)
     abis: ['arm64-v8a'],
     abiVersionOffsets: { 'armeabi-v7a': 2, x86_64: 3, 'arm64-v8a': 4 },
   });
-  const escapedSdk = path.join(root, 'sdk').replace(/\\/g, '\\\\').replace(/:/g, '\\:');
+  const escapedSdk = escapeJavaProperty(path.join(root, 'sdk'));
   fs.writeFileSync(path.join(project, 'local.properties'), `sdk.dir=${escapedSdk}\n`, 'utf8');
   writeBootstrapResources(project);
   const identityDirectory = path.join(root, 'identities');
   const debugKeystore = path.join(identityDirectory, 'debug.keystore');
   fs.mkdirSync(identityDirectory, { recursive: true });
   const debugEnvironment = { ...environment, RPG_AGENT_DEBUG_KEYSTORE_PASSWORD: 'android' };
-  runTool(path.join(root, 'jdk', 'bin', 'keytool.exe'), [
+  await runInstallTool(path.join(root, 'jdk', 'bin', 'keytool.exe'), [
     '-genkeypair', '-noprompt', '-keystore', debugKeystore,
     '-storepass:env', 'RPG_AGENT_DEBUG_KEYSTORE_PASSWORD', '-keypass:env', 'RPG_AGENT_DEBUG_KEYSTORE_PASSWORD',
     '-alias', 'rpg-agent-debug', '-keyalg', 'RSA', '-keysize', '2048', '-validity', '10000',
     '-dname', 'CN=RPG Agent MV Debug,O=RPG Agent MV,C=XX',
-  ], debugEnvironment);
+  ], debugEnvironment, context);
   const gradleEnvironment = {
     ...environment,
     GRADLE_USER_HOME: path.join(root, 'gradle-cache'),
@@ -311,33 +328,45 @@ function prepareGradleDependencies(root: string, environment: NodeJS.ProcessEnv)
   };
   const java = path.join(root, 'jdk', 'bin', 'java.exe');
   const launcher = path.join(root, 'gradle', 'lib', `gradle-gradle-cli-main-${ANDROID_TOOLCHAIN_VERSIONS.gradle}.jar`);
-  const result = spawnSync(java, [
+  let preparationError: unknown;
+  try {
+    await runInstallTool(java, [
     '-Dorg.gradle.appname=gradle', '-classpath', launcher, 'org.gradle.launcher.GradleMain',
     ':app:assembleDebug', '--no-daemon', '--console=plain', '--write-verification-metadata', 'sha256',
-  ], {
-    cwd: project,
-    encoding: 'utf8',
-    env: gradleEnvironment,
-    windowsHide: true,
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  const output = `${result.stdout || ''}\n${result.stderr || ''}`.trim();
-  if (result.error || result.status !== 0) {
-    throw new Error(`Android build dependencies could not be prepared: ${result.error?.message || output || `exit ${result.status}`}`);
+    ], gradleEnvironment, context, undefined, project);
+  } catch (error) {
+    preparationError = error;
+    throw error;
+  } finally {
+    // Stop this installation's daemon on failure/cancel as well, before any directory cleanup.
+    try { await runGradle(root, java, ['--stop'], gradleEnvironment, {}); }
+    catch (stopError) {
+      if (preparationError) throw new AggregateError([preparationError, stopError], `${preparationError instanceof Error ? preparationError.message : String(preparationError)}\nThe isolated Gradle daemon could not be stopped: ${stopError instanceof Error ? stopError.message : String(stopError)}`);
+      throw stopError;
+    }
   }
   const verification = path.join(project, 'gradle', 'verification-metadata.xml');
   if (!fs.existsSync(verification)) throw new Error('Gradle did not generate dependency verification metadata.');
   fs.copyFileSync(verification, path.join(root, 'gradle-verification-metadata.xml'));
-  // A single-use daemon can still be shutting down after its launcher exits on Windows.
-  runGradle(root, java, ['--stop'], gradleEnvironment);
   fs.rmSync(project, { recursive: true, force: false });
 }
 
-function runGradle(root: string, java: string, args: string[], environment: NodeJS.ProcessEnv): string {
+function runGradle(root: string, java: string, args: string[], environment: NodeJS.ProcessEnv, context: GameToolInstallContext): Promise<string> {
   const launcher = path.join(root, 'gradle', 'lib', `gradle-gradle-cli-main-${ANDROID_TOOLCHAIN_VERSIONS.gradle}.jar`);
-  return runTool(java, [
+  return runInstallTool(java, [
     '-Dorg.gradle.appname=gradle', '-classpath', launcher, 'org.gradle.launcher.GradleMain', ...args,
-  ], environment);
+  ], environment, context);
+}
+
+async function runInstallTool(executable: string, args: string[], env: NodeJS.ProcessEnv, context: GameToolInstallContext, input?: string, cwd?: string): Promise<string> {
+  const result = await runGameBuildProcess(executable, javaToolArguments(executable, args), {
+    env, cwd, input, maxBuffer: 64 * 1024 * 1024, timeoutMs: args.includes('--stop') ? 30_000 : 30 * 60_000,
+    isCanceled: context.isCanceled,
+    onOutput: text => context.reportProgress?.({ stage: 'dependencies', detail: text.replace(/\x1b\[[0-9;]*m/g, '').trim().slice(-1600) }),
+  });
+  const output = `${result.stdout}\n${result.stderr}`.trim();
+  if (result.status !== 0) throw new Error(`Android toolchain command failed: ${output || `exit ${result.status}`}`);
+  return output;
 }
 
 function writeBootstrapResources(project: string): void {
@@ -365,51 +394,6 @@ function writeBootstrapResources(project: string): void {
   });
 }
 
-async function downloadVerified(url: string, destination: string, expectedSha256: string): Promise<void> {
-  const response = await fetch(url, { redirect: 'follow' });
-  if (!response.ok || !response.body) throw new Error(`Toolchain download failed with HTTP ${response.status}: ${url}.`);
-  const temporary = `${destination}.${crypto.randomUUID()}.tmp`;
-  const output = fs.createWriteStream(temporary, { flags: 'wx' });
-  const hash = crypto.createHash('sha256');
-  let streamError: Error | null = null;
-  output.once('error', (error) => { streamError = error; });
-  try {
-    for await (const chunk of response.body) {
-      if (streamError) throw streamError;
-      const buffer = Buffer.from(chunk);
-      hash.update(buffer);
-      if (!output.write(buffer)) {
-        await new Promise<void>((resolve, reject) => {
-          const onDrain = () => {
-            output.off('error', onError);
-            resolve();
-          };
-          const onError = (error: Error) => {
-            output.off('drain', onDrain);
-            reject(error);
-          };
-          output.once('drain', onDrain);
-          output.once('error', onError);
-        });
-      }
-    }
-    await new Promise<void>((resolve, reject) => {
-      const onError = (error: Error) => reject(error);
-      output.once('error', onError);
-      output.end(() => {
-        output.off('error', onError);
-        resolve();
-      });
-    });
-    if (streamError) throw streamError;
-    const actual = hash.digest('hex');
-    if (actual !== expectedSha256) throw new Error(`Toolchain download SHA-256 mismatch for ${url}.`);
-    fs.renameSync(temporary, destination);
-  } finally {
-    output.destroy();
-    if (fs.existsSync(temporary)) fs.rmSync(temporary);
-  }
-}
 
 function runTool(
   executable: string,
@@ -417,7 +401,7 @@ function runTool(
   environment: NodeJS.ProcessEnv,
   input?: string,
 ): string {
-  const result = spawnSync(executable, args, {
+  const result = spawnSync(executable, javaToolArguments(executable, args), {
     encoding: 'utf8',
     env: environment,
     input,
@@ -442,6 +426,7 @@ function moveSingleRoot(source: string, target: string): void {
 }
 
 function publishToolchain(staging: string, root: string): void {
+  assertReplaceableToolchainRoot(root);
   const backup = `${root}.previous-${crypto.randomUUID()}`;
   if (fs.existsSync(root)) fs.renameSync(root, backup);
   try {
@@ -458,7 +443,8 @@ function assertReplaceableToolchainRoot(root: string): void {
   const parsed = path.parse(resolved);
   if (resolved === parsed.root || resolved === path.dirname(resolved)) throw new Error('Android toolchain root is too broad.');
   if (!fs.existsSync(resolved)) return;
-  if (!fs.statSync(resolved).isDirectory() || !readManifest(path.join(resolved, MANIFEST_NAME))) {
+  if (fs.lstatSync(resolved).isSymbolicLink() || !fs.statSync(resolved).isDirectory()
+    || (fs.readdirSync(resolved).length > 0 && !readManifest(path.join(resolved, MANIFEST_NAME)))) {
     throw new Error('The selected Android toolchain folder already exists and is not managed by RPG Agent MV.');
   }
 }

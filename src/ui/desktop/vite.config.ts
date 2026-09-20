@@ -72,6 +72,19 @@ export default defineConfig({
           },
         },
       },
+      {
+        entry: '../../backend/src/core/desktop/game-tool-install-worker.ts',
+        vite: {
+          build: {
+            rollupOptions: {
+              external: ['electron'],
+              output: {
+                entryFileNames: 'game-tool-install-worker.js',
+              },
+            },
+          },
+        },
+      },
     ]),
   ],
   resolve: {

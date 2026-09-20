@@ -53,6 +53,9 @@ import type {
 import type { ProjectAssetChangeManifest } from '@contract/types';
 import type {
   AndroidToolchainInstallRequest,
+  GameToolInstallProgress,
+  MediaToolStatus,
+  MediaToolInstallRequest,
   AndroidToolchainStatus,
   AndroidKeystoreCreateRequest,
   AndroidKeystoreCreateResult,
@@ -249,11 +252,15 @@ declare global {
         publish(request: unknown, project?: string): Promise<unknown>;
         getAndroidToolchain(project?: string): Promise<unknown>;
         installAndroidToolchain(request: unknown): Promise<unknown>;
+        getMediaTools(project?: string): Promise<unknown>;
+        installMediaTools(request: unknown): Promise<unknown>;
+        cancelToolInstall(operationId: string): Promise<unknown>;
+        onToolInstallProgress(callback: (event: unknown) => void): () => void;
         getCredentialStatus(kind?: string, credentialId?: string): Promise<unknown>;
         forgetCredential(kind: string, credentialId: string): Promise<unknown>;
         createManifestSigningIdentity(request: unknown, project?: string): Promise<unknown>;
         createAndroidKeystore(request: unknown, project?: string): Promise<unknown>;
-        selectOutputDirectory(initialPath?: string): Promise<string | null>;
+        selectOutputDirectory(initialPath?: string, purpose?: 'android-toolchain'): Promise<string | null>;
         reveal(target: string): Promise<{ ok: true }>;
       };
       globalSearch: {
@@ -775,6 +782,18 @@ export const gameBuild = {
   installAndroidToolchain(request: AndroidToolchainInstallRequest) {
     return desktopApi().gameBuild.installAndroidToolchain(toPlain(request)) as Promise<AndroidToolchainStatus>;
   },
+  getMediaTools(project?: string) {
+    return desktopApi().gameBuild.getMediaTools(project) as Promise<MediaToolStatus>;
+  },
+  installMediaTools(request: MediaToolInstallRequest) {
+    return desktopApi().gameBuild.installMediaTools(toPlain(request));
+  },
+  cancelToolInstall(operationId: string) {
+    return desktopApi().gameBuild.cancelToolInstall(operationId);
+  },
+  onToolInstallProgress(callback: (event: GameToolInstallProgress) => void) {
+    return desktopApi().gameBuild.onToolInstallProgress(event => callback(event as GameToolInstallProgress));
+  },
   getCredentialStatus(kind?: GameReleaseCredentialKind, credentialId?: string) {
     return desktopApi().gameBuild.getCredentialStatus(kind, credentialId) as Promise<GameReleaseCredentialStatus>;
   },
@@ -787,8 +806,8 @@ export const gameBuild = {
   createAndroidKeystore(request: AndroidKeystoreCreateRequest, project?: string) {
     return desktopApi().gameBuild.createAndroidKeystore(toPlain(request), project) as Promise<AndroidKeystoreCreateResult | null>;
   },
-  selectOutputDirectory(initialPath?: string) {
-    return desktopApi().gameBuild.selectOutputDirectory(initialPath);
+  selectOutputDirectory(initialPath?: string, purpose?: 'android-toolchain') {
+    return desktopApi().gameBuild.selectOutputDirectory(initialPath, purpose);
   },
   reveal(target: string) {
     return desktopApi().gameBuild.reveal(target);

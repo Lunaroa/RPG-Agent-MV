@@ -392,6 +392,7 @@ async function loadBackendModules(roots: AppRoots) {
     gamePublication: await import(new URL('desktop/game-release-publication-service.ts', coreUrl).href),
     gameManifestSigning: await import(new URL('desktop/game-manifest-signing-service.ts', coreUrl).href),
     gameAndroidToolchain: await import(new URL('desktop/game-android-toolchain-service.ts', coreUrl).href),
+    gameToolInstaller: await import(new URL('desktop/game-tool-install-service.ts', coreUrl).href),
     projectSearch: await import(new URL('desktop/project-search-service.ts', coreUrl).href),
     pluginTranslation: await import(new URL('desktop/plugin-translation-service.ts', coreUrl).href),
     commonEvents: await import(new URL('desktop/common-event-service.ts', coreUrl).href),
@@ -1473,6 +1474,7 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
   registerClipboardIpcHandlers(ipcMain, clipboard);
   registerGameReleaseIpcHandlers(ipcMain, dialog, shell, {
     workflowRoot,
+    windowsRuntimeExecutables: () => getWorkspaceSettings().playtestRuntimes,
     resolveProject: (value) => desktop.project.resolveProjectPath(workflowRoot, value),
     release: desktop.gameRelease,
     build: desktop.gameBuild,
@@ -1480,6 +1482,7 @@ export async function initializeIpcHandlers(roots: AppRoots): Promise<void> {
     publication: desktop.gamePublication,
     manifestSigning: desktop.gameManifestSigning,
     androidToolchain: desktop.gameAndroidToolchain,
+    toolInstaller: desktop.gameToolInstaller,
     credentials: new GameReleaseCredentialStore(roots.userDataRoot, safeStorage),
     serialize: toIpcPayload,
     parentWindow: (sender) => BrowserWindow.fromWebContents(sender) || undefined,

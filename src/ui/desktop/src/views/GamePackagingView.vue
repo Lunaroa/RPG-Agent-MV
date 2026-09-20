@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, h, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, FolderOpened, Plus } from '@element-plus/icons-vue'
 import { ANDROID_MINIMUM_SDK } from '@contract/game-release'
@@ -7,6 +7,8 @@ import { ANDROID_MINIMUM_SDK } from '@contract/game-release'
 import type {
   AndroidBuildConfig,
   AndroidToolchainStatus,
+  GameToolInstallProgress,
+  MediaToolStatus,
   GameBuildProgressEvent,
   GameBuildPreflightResult,
   GameBuildResult,
@@ -27,6 +29,7 @@ import { useProjectStore } from '../stores/project'
 import { cloneDraft } from '../utils/clone-draft'
 import { registerProductPluginLifecycleGuard } from '../utils/productPluginLifecycle'
 import { formatUserFacingErrorMessage } from '../utils/user-facing-error'
+import { packagingErrorKey } from '../utils/game-packaging-errors'
 
 const projectStore = useProjectStore()
 const { language, t } = useI18n()
@@ -37,6 +40,15 @@ const cancelingBuild = ref(false)
 const buildProgress = ref<GameBuildProgressEvent | null>(null)
 const publishing = ref(false)
 const installingAndroidToolchain = ref(false)
+const installingMediaTools = ref(false)
+const mediaTools = ref<MediaToolStatus | null>(null)
+const toolProgress = ref<GameToolInstallProgress | null>(null)
+const toolOutcome = ref<'success' | 'exception' | null>(null)
+const toolError = ref('')
+const toolCanceling = ref(false)
+const toolRunning = computed(() => installingAndroidToolchain.value || installingMediaTools.value)
+const toolPercent = computed(() => toolOutcome.value === 'success' ? 100 : toolProgress.value?.total ? Math.min(100, Math.floor((toolProgress.value.received || 0) * 100 / toolProgress.value.total)) : 0)
+let unsubscribeToolProgress: (() => void) | null = null
 const creatingAndroidKeystore = ref(false)
 const creatingManifestSigningIdentity = ref(false)
 const error = ref('')
@@ -155,6 +167,9 @@ onMounted(() => {
   unsubscribeBuildProgress = gameBuild.onProgress((event) => {
     if (building.value && event.operationId === buildProgress.value?.operationId) buildProgress.value = event
   })
+  unsubscribeToolProgress = gameBuild.onToolInstallProgress(event => {
+    if (event.operationId === toolProgress.value?.operationId) toolProgress.value = event
+  })
 })
 
 onUnmounted(() => {
@@ -162,6 +177,8 @@ onUnmounted(() => {
   unregisterLifecycle = null
   unsubscribeBuildProgress?.()
   unsubscribeBuildProgress = null
+  unsubscribeToolProgress?.()
+  if (toolRunning.value && toolProgress.value) void gameBuild.cancelToolInstall(toolProgress.value.operationId)
 })
 
 async function load(): Promise<boolean> {
@@ -191,13 +208,14 @@ async function load(): Promise<boolean> {
   if (!project) return true
   loading.value = true
   try {
-    const [nextRelease, nextSettings, nextKeys, nextToolchain, credentialCapability, nextIconCandidates] = await Promise.all([
+    const [nextRelease, nextSettings, nextKeys, nextToolchain, credentialCapability, nextIconCandidates, nextMediaTools] = await Promise.all([
       gameRelease.status(project),
       gameBuild.getSettings(project),
       gameBuild.listEncryptionKeys(project),
       gameBuild.getAndroidToolchain(project),
       gameBuild.getCredentialStatus(),
       gameBuild.listAndroidIconCandidates(project),
+      gameBuild.getMediaTools(project),
     ])
     if (!isCurrentProjectRequest(project, requestId)) return false
     releaseStatus.value = nextRelease
@@ -205,6 +223,7 @@ async function load(): Promise<boolean> {
     settings.value = cloneDraft(nextSettings)
     encryptionKeys.value = nextKeys
     androidToolchain.value = nextToolchain
+    mediaTools.value = nextMediaTools
     secureCredentialStorageAvailable.value = credentialCapability.available
     androidIconCandidates.value = nextIconCandidates
     restorePublicationDraft(nextSettings, nextRelease.config.gameId, nextRelease.config.update.defaultLanguage || 'zh-CN')
@@ -328,6 +347,7 @@ function defaultAndroid(): AndroidBuildConfig {
 }
 
 async function installAndroidToolchain() {
+  if (toolRunning.value) return
   const project = projectStore.currentProject
   const requestId = loadRequestId
   if (!project) return
@@ -344,22 +364,65 @@ async function installAndroidToolchain() {
   } catch {
     return
   }
-  if (!isCurrentProjectRequest(project, requestId)) return
+  if (!isCurrentProjectRequest(project, requestId) || toolRunning.value) return
   installingAndroidToolchain.value = true
+  toolProgress.value = null
   error.value = ''
   try {
-    const installed = await gameBuild.installAndroidToolchain({ acceptAndroidSdkLicense: true })
+    const root = await gameBuild.selectOutputDirectory(settings.value?.androidToolchainRoot || androidToolchain.value?.root, 'android-toolchain')
+    if (!root || !isCurrentProjectRequest(project, requestId) || !settings.value) return
+    if (/[^\x20-\x7e]/.test(root)) throw new Error(t('gamePackaging.error.androidPath'))
+    settings.value.androidToolchainRoot = root
+    await persistSettings(project, requestId)
+    startToolTask('android')
+    const installed = await gameBuild.installAndroidToolchain({ operationId: toolProgress.value!.operationId, root, acceptAndroidSdkLicense: true })
+    toolOutcome.value = 'success'
     if (!isCurrentProjectRequest(project, requestId)) return
     androidToolchain.value = installed
+    preflight.value = null
     ElMessage.success(t('gamePackaging.androidToolchainInstalled'))
   } catch (cause) {
+    toolOutcome.value = 'exception'
+    toolError.value = errorText(cause)
     if (isCurrentProjectRequest(project, requestId)) {
       error.value = errorText(cause)
       ElMessage.error(error.value)
     }
   } finally {
-    if (isCurrentProjectRequest(project, requestId)) installingAndroidToolchain.value = false
+    installingAndroidToolchain.value = false
   }
+}
+
+function startToolTask(kind: 'android' | 'media') {
+  toolProgress.value = { operationId: crypto.randomUUID(), kind, stage: 'download' }
+  toolOutcome.value = null
+  toolError.value = ''
+  toolCanceling.value = false
+}
+
+async function installMediaTools() {
+  if (toolRunning.value) return
+  try {
+    await ElMessageBox.confirm(t('gamePackaging.mediaConsent'), t('gamePackaging.installMedia'), { confirmButtonText: t('gamePackaging.installMedia'), cancelButtonText: t('ui.cancel') })
+  } catch { return }
+  if (toolRunning.value) return
+  installingMediaTools.value = true
+  startToolTask('media')
+  try {
+    await gameBuild.installMediaTools({ operationId: toolProgress.value!.operationId, acceptLicense: true })
+    toolOutcome.value = 'success'
+    if (projectStore.currentProject) mediaTools.value = await gameBuild.getMediaTools(projectStore.currentProject)
+  } catch (cause) {
+    toolOutcome.value = 'exception'
+    toolError.value = errorText(cause)
+  } finally { installingMediaTools.value = false }
+}
+
+async function cancelToolInstall() {
+  if (!toolProgress.value) return
+  toolCanceling.value = true
+  try { await gameBuild.cancelToolInstall(toolProgress.value.operationId) }
+  catch (cause) { toolCanceling.value = false; ElMessage.error(errorText(cause)) }
 }
 
 async function selectOutput() {
@@ -732,7 +795,10 @@ async function build() {
   if (checked.managedChanges.length) {
     try {
       await ElMessageBox.confirm(
-        checked.managedChanges.map((change) => change.relativePath).join('\n'),
+        h('ul', { class: 'managed-file-list' }, checked.managedChanges.map((change) => h('li', [
+          h('span', `${t(change.kind === 'create' ? 'gameVersion.create' : 'gameVersion.update')} · `),
+          h('code', { style: { overflowWrap: 'anywhere' } }, change.relativePath),
+        ]))),
         t('gamePackaging.managedChangesTitle'),
         { type: 'warning', confirmButtonText: t('gamePackaging.continueBuild'), cancelButtonText: t('ui.cancel') },
       )
@@ -787,7 +853,7 @@ async function build() {
       if (!isCurrentProjectRequest(project, requestId)) return
       if (preset.upload?.enabled) releaseToPublish = built.releaseId
     } else if (built.status === 'failed') {
-      error.value = built.error || t('gamePackaging.buildFailed')
+      error.value = built.error ? errorText(built.error) : t('gamePackaging.buildFailed')
       ElMessage.error(error.value)
     } else {
       ElMessage.info(t('gamePackaging.buildCanceled'))
@@ -937,7 +1003,9 @@ function revealResult() {
 }
 
 function errorText(value: unknown): string {
-  return formatUserFacingErrorMessage(value, 'general', language.value)
+  const message = formatUserFacingErrorMessage(value, 'general', language.value)
+  const key = packagingErrorKey(message)
+  return key ? t(key) : message
 }
 
 function operationError(key: MessageKey, value: unknown): string {
@@ -953,10 +1021,10 @@ function operationError(key: MessageKey, value: unknown): string {
         <p v-if="release">{{ release.version }} · {{ release.channel }}</p>
       </div>
       <div class="header-actions">
-        <el-button :loading="checking" :disabled="!activePreset || building" data-ui-id="game-packaging-check" @click="runPreflight">
+        <el-button :loading="checking" :disabled="!activePreset || building || toolRunning" data-ui-id="game-packaging-check" @click="runPreflight">
           {{ t('gamePackaging.check') }}
         </el-button>
-        <el-button v-if="!building" type="primary" :disabled="!activePreset || checking" data-ui-id="game-packaging-build" @click="build">
+        <el-button v-if="!building" type="primary" :disabled="!activePreset || checking || toolRunning" data-ui-id="game-packaging-build" @click="build">
           {{ t('gamePackaging.build') }}
         </el-button>
         <el-button v-else type="danger" plain :loading="cancelingBuild" data-ui-id="game-packaging-cancel" @click="cancelBuild">
@@ -981,6 +1049,7 @@ function operationError(key: MessageKey, value: unknown): string {
         :aria-busy="building || checking || publishing || creatingManifestSigningIdentity"
       >
         <el-alert v-if="error" class="page-error" :title="error" type="error" show-icon @close="error = ''" />
+        <el-button v-if="result?.status === 'failed' && result.reportPath" link @click="gameBuild.reveal(result.reportPath)">{{ t('gamePackaging.showDiagnostics') }}</el-button>
         <section class="preset-bar">
           <el-select :model-value="activePreset.id" data-ui-id="game-packaging-preset" @update:model-value="selectPreset(String($event))">
             <el-option v-for="preset in settings.presets" :key="preset.id" :value="preset.id" :label="preset.name" />
@@ -1030,10 +1099,12 @@ function operationError(key: MessageKey, value: unknown): string {
         <section class="form-section">
           <h2>{{ t('gamePackaging.processing') }}</h2>
           <p class="section-note">{{ t('gamePackaging.processingNote') }}</p>
+          <el-button v-if="mediaTools && !mediaTools.configured" :loading="installingMediaTools" :disabled="toolRunning" @click="installMediaTools">{{ t('gamePackaging.installMedia') }}</el-button>
+          <p v-if="mediaTools?.wavFiles" class="section-note">{{ t('gamePackaging.wavUnavailable') }}</p>
           <div class="processing-grid">
             <el-form-item v-for="category in processingCategories" :key="category" :label="t(`gamePackaging.processing.${category}`)">
               <el-select v-model="activePreset.processing[category]" @change="processingChanged">
-                <el-option v-for="mode in processingModes" :key="mode" :value="mode" :label="t(`gamePackaging.processingMode.${mode}`)" />
+                <el-option v-for="mode in processingModes" :key="mode" :value="mode" :label="t(`gamePackaging.processingMode.${mode}`)" :disabled="mode === 'compress' && ((category === 'audio' || category === 'video') && !mediaTools?.configured || category === 'audio' && !!mediaTools?.wavFiles)" />
               </el-select>
             </el-form-item>
           </div>
@@ -1052,7 +1123,7 @@ function operationError(key: MessageKey, value: unknown): string {
           <h2>{{ t('gamePackaging.android') }}</h2>
           <div class="toolchain-line">
             <span>{{ androidToolchain?.configured ? t('gamePackaging.androidToolchainReady') : t('gamePackaging.androidToolchainMissing') }}</span>
-            <el-button v-if="!androidToolchain?.configured" :loading="installingAndroidToolchain" @click="installAndroidToolchain">
+            <el-button v-if="!androidToolchain?.configured" :loading="installingAndroidToolchain" :disabled="toolRunning" @click="installAndroidToolchain">
               {{ t('gamePackaging.androidToolchainInstall') }}
             </el-button>
           </div>
@@ -1201,15 +1272,10 @@ function operationError(key: MessageKey, value: unknown): string {
 
         <section v-if="preflight" class="check-result" :class="preflight.ok ? 'is-ok' : 'is-error'">
           <h2>{{ preflight.ok ? t('gamePackaging.checkPassed') : t('gamePackaging.checkFailed') }}</h2>
-          <ul v-if="preflight.blockers.length"><li v-for="item in preflight.blockers" :key="item">{{ item }}</li></ul>
+          <ul v-if="preflight.blockers.length"><li v-for="item in preflight.blockers" :key="item">{{ errorText(item) }}</li></ul>
           <p v-if="preflight.ok && preflight.preset.packageType !== 'full'" class="section-note">
             {{ t('gamePackaging.contentChangesAfterBuild') }}
           </p>
-        </section>
-
-        <section v-if="preflight?.warnings.length" class="check-result">
-          <h2>{{ t('gamePackaging.checkWarnings') }}</h2>
-          <ul><li v-for="item in preflight.warnings" :key="item">{{ item }}</li></ul>
         </section>
 
         <section
@@ -1244,9 +1310,24 @@ function operationError(key: MessageKey, value: unknown): string {
       </div>
     </el-scrollbar>
   </main>
+  <Teleport to="body">
+    <el-card v-if="toolProgress" class="packaging-tool-task" data-ui-id="packaging-tool-task" shadow="always">
+      <strong>{{ toolProgress.kind === 'android' ? 'Android' : 'FFmpeg' }} · {{ toolOutcome === 'success' ? t('gamePackaging.toolComplete') : toolOutcome === 'exception' ? t('gamePackaging.toolFailed') : t(`gamePackaging.tool.${toolProgress.stage}`) }}</strong>
+      <p v-if="toolRunning">{{ toolProgress.component }}</p>
+      <el-progress :percentage="toolRunning && !toolProgress.total ? 50 : toolPercent" :indeterminate="toolRunning && !toolProgress.total" :show-text="!!toolProgress.total || !!toolOutcome" :status="toolOutcome || undefined" />
+      <p v-if="toolProgress.received !== undefined">{{ (toolProgress.received / 1048576).toFixed(1) }} MiB<span v-if="toolProgress.total"> / {{ (toolProgress.total / 1048576).toFixed(1) }} MiB</span></p>
+      <p v-if="toolError" class="tool-detail">{{ toolError }}</p>
+      <pre v-else-if="toolProgress.detail" class="tool-detail">{{ toolProgress.detail }}</pre>
+      <el-button v-if="toolProgress.logPath" link @click="gameBuild.reveal(toolProgress.logPath)">{{ t('gamePackaging.showDiagnostics') }}</el-button>
+      <el-button v-if="toolRunning" :loading="toolCanceling" @click="cancelToolInstall">{{ t('ui.cancel') }}</el-button>
+      <el-button v-else @click="toolProgress = null">{{ t('gamePackaging.toolClose') }}</el-button>
+    </el-card>
+  </Teleport>
 </template>
 
 <style scoped>
+.packaging-tool-task { position: fixed; right: 24px; bottom: 36px; width: min(420px, calc(100vw - 48px)); z-index: 2100; }
+.tool-detail { max-height: 150px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 .packaging-page { height: 100%; min-width: 0; display: flex; flex-direction: column; background: var(--app-bg); }
 .page-header { min-height: 64px; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--app-border); }
 h1, h2, p { margin: 0; }

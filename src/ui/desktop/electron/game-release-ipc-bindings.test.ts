@@ -108,6 +108,32 @@ test('rejects a second packaging operation from the same renderer until the firs
   await first;
 });
 
+test('tool installation forwards progress and allows only the owning window to cancel', async () => {
+  const fixture = createFixture([]);
+  let finish!: (value: unknown) => void;
+  let canceled = 0;
+  let report!: (value: unknown) => void;
+  (fixture.dependencies as any).toolInstaller = {
+    startGameToolInstall(_root: string, _kind: string, _request: unknown, progress: (value: unknown) => void) {
+      report = progress;
+      return { result: new Promise(resolve => { finish = resolve; }), cancel: () => { canceled++; } };
+    },
+  };
+  const sent: unknown[] = [];
+  const sender = { id: 7, isDestroyed: () => false, send: (_channel: string, value: unknown) => sent.push(value), once() {}, removeListener() {} };
+  registerGameReleaseIpcHandlers(fixture.ipc as never, fixture.dialog as never, fixture.shell as never, fixture.dependencies as never);
+  const pending = fixture.invokeWithEvent({ sender }, 'gameBuild:installAndroidToolchain', { operationId: 'sample-install', acceptAndroidSdkLicense: true });
+  report({ operationId: 'sample-install', stage: 'download', received: 10, total: 20 });
+  assert.equal(sent.length, 1);
+  await fixture.invokeWithEvent({ sender: { id: 8 } }, 'gameBuild:cancelToolInstall', 'sample-install');
+  assert.equal(canceled, 0);
+  await fixture.invokeWithEvent({ sender }, 'gameBuild:cancelToolInstall', 'sample-install');
+  assert.equal(canceled, 1);
+  await assert.rejects(async () => fixture.invokeWithEvent({ sender }, 'gameBuild:installAndroidToolchain', { operationId: 'another-install', acceptAndroidSdkLicense: true }), /already running/);
+  finish({ configured: true });
+  await pending;
+});
+
 function createFixture(calls: string[], failSecret = false) {
   const handlers = new Map<string, (...args: any[]) => unknown>();
   let currentRelease = structuredClone(releaseConfig);

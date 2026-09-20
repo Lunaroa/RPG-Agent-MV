@@ -210,6 +210,14 @@ contextBridge.exposeInMainWorld('api', {
     publish: (request: unknown, project?: string) => ipcRenderer.invoke('gameBuild:publish', request, project),
     getAndroidToolchain: (project?: string) => ipcRenderer.invoke('gameBuild:getAndroidToolchain', project),
     installAndroidToolchain: (request: unknown) => ipcRenderer.invoke('gameBuild:installAndroidToolchain', request),
+    getMediaTools: (project?: string) => ipcRenderer.invoke('gameBuild:getMediaTools', project),
+    installMediaTools: (request: unknown) => ipcRenderer.invoke('gameBuild:installMediaTools', request),
+    cancelToolInstall: (operationId: string) => ipcRenderer.invoke('gameBuild:cancelToolInstall', operationId),
+    onToolInstallProgress: (callback: (event: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, progress: unknown) => callback(progress);
+      ipcRenderer.on('gameBuild:toolInstallProgress', handler);
+      return () => ipcRenderer.removeListener('gameBuild:toolInstallProgress', handler);
+    },
     getCredentialStatus: (kind?: string, credentialId?: string) =>
       ipcRenderer.invoke('gameBuild:getCredentialStatus', kind, credentialId),
     forgetCredential: (kind: string, credentialId: string) =>
@@ -218,7 +226,7 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('gameBuild:createManifestSigningIdentity', request, project),
     createAndroidKeystore: (request: unknown, project?: string) =>
       ipcRenderer.invoke('gameBuild:createAndroidKeystore', request, project),
-    selectOutputDirectory: (initialPath?: string) => ipcRenderer.invoke('gameBuild:selectOutputDirectory', initialPath),
+    selectOutputDirectory: (initialPath?: string, purpose?: 'android-toolchain') => ipcRenderer.invoke('gameBuild:selectOutputDirectory', initialPath, purpose),
     reveal: (target: string) => ipcRenderer.invoke('gameBuild:reveal', target),
   },
 

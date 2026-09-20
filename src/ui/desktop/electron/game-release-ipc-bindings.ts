@@ -6,6 +6,9 @@ import type { BrowserWindow, Dialog, IpcMain, Shell } from 'electron';
 import type {
   AndroidKeystoreCreateRequest,
   AndroidToolchainInstallRequest,
+  GameToolInstallProgress,
+  GameToolKind,
+  MediaToolInstallRequest,
   GameReleaseCredentialKind,
   GameBuildRequest,
   GameManifestSigningSaveRequest,
@@ -31,6 +34,9 @@ const CHANNELS = [
   'gameBuild:publish',
   'gameBuild:getAndroidToolchain',
   'gameBuild:installAndroidToolchain',
+  'gameBuild:getMediaTools',
+  'gameBuild:installMediaTools',
+  'gameBuild:cancelToolInstall',
   'gameBuild:getCredentialStatus',
   'gameBuild:forgetCredential',
   'gameBuild:createManifestSigningIdentity',
@@ -49,7 +55,7 @@ interface GameBuildModule {
   readGameBuildSettings(project: string): unknown;
   listAndroidIconCandidates(project: string): string[];
   saveGameBuildSettings(project: string, value: unknown): unknown;
-  preflightGameBuild(workflowRoot: string, project: string, input: { presetId: string; releaseConfig?: unknown }): unknown;
+  preflightGameBuild(workflowRoot: string, project: string, input: { presetId: string; releaseConfig?: unknown; windowsRuntimeExecutables?: GameBuildRequest['windowsRuntimeExecutables'] }): unknown;
   buildGame(workflowRoot: string, project: string, request: GameBuildRequest): Promise<unknown>;
   startGameBuildWorker(
     workflowRoot: string,
@@ -60,6 +66,7 @@ interface GameBuildModule {
 }
 
 const activeBuilds = new Map<string, { senderId: number; cancel: () => void }>();
+const activeToolInstalls = new Map<string, { senderId: number; cancel: () => void }>();
 
 interface GameEncryptionModule {
   listGameEncryptionKeys(project: string): unknown;
@@ -100,12 +107,17 @@ export function registerGameReleaseIpcHandlers(
   dependencies: {
     workflowRoot: string;
     resolveProject: (value?: string) => string;
+    windowsRuntimeExecutables?: () => GameBuildRequest['windowsRuntimeExecutables'];
     release: GameReleaseModule;
     build: GameBuildModule;
     encryption: GameEncryptionModule;
     publication: GamePublicationModule;
     manifestSigning: GameManifestSigningModule;
     androidToolchain: GameAndroidToolchainModule;
+    toolInstaller: {
+      inspectMediaTools(workflowRoot: string, project: string): unknown;
+      startGameToolInstall(workflowRoot: string, kind: GameToolKind, request: AndroidToolchainInstallRequest | MediaToolInstallRequest, onProgress: (event: GameToolInstallProgress) => void): { result: Promise<unknown>; cancel: () => void };
+    };
     credentials: GameReleaseCredentialStore;
     serialize: (value: unknown) => unknown;
     parentWindow: (sender: Electron.WebContents) => BrowserWindow | undefined;
@@ -142,12 +154,13 @@ export function registerGameReleaseIpcHandlers(
     dependencies.build.preflightGameBuild(
       dependencies.workflowRoot,
       dependencies.resolveProject(project),
-      dependencies.serialize(input) as { presetId: string; releaseConfig?: unknown },
+      { ...dependencies.serialize(input) as { presetId: string; releaseConfig?: unknown }, windowsRuntimeExecutables: dependencies.windowsRuntimeExecutables?.() },
     ),
   ));
   ipcMain.handle('gameBuild:build', async (event, request: GameBuildRequest, project?: string) => {
     const resolvedProject = dependencies.resolveProject(project);
     const plain = dependencies.serialize(request) as GameBuildRequest;
+    plain.windowsRuntimeExecutables = dependencies.windowsRuntimeExecutables?.();
     plain.operationId ||= crypto.randomUUID();
     if (activeBuilds.has(plain.operationId)) throw new Error('A packaging operation with this id is already running.');
     if ([...activeBuilds.values()].some((active) => active.senderId === event.sender.id)) {
@@ -219,12 +232,30 @@ export function registerGameReleaseIpcHandlers(
       ),
     );
   });
-  ipcMain.handle('gameBuild:installAndroidToolchain', async (_event, request: AndroidToolchainInstallRequest) => dependencies.serialize(
-    await dependencies.androidToolchain.installAndroidToolchain(
-      dependencies.workflowRoot,
-      dependencies.serialize(request) as AndroidToolchainInstallRequest,
-    ),
-  ));
+  for (const kind of ['android', 'media'] as const) {
+    ipcMain.handle(kind === 'android' ? 'gameBuild:installAndroidToolchain' : 'gameBuild:installMediaTools', async (event, request: AndroidToolchainInstallRequest | MediaToolInstallRequest) => {
+      if (activeToolInstalls.size) throw new Error('A packaging tool installation is already running.');
+      const plain = dependencies.serialize(request) as AndroidToolchainInstallRequest | MediaToolInstallRequest;
+      plain.operationId ||= crypto.randomUUID();
+      const handle = dependencies.toolInstaller.startGameToolInstall(dependencies.workflowRoot, kind, plain, progress => {
+        if (!event.sender.isDestroyed()) event.sender.send('gameBuild:toolInstallProgress', dependencies.serialize(progress));
+      });
+      activeToolInstalls.set(plain.operationId, { senderId: event.sender.id, cancel: handle.cancel });
+      event.sender.once('destroyed', handle.cancel);
+      try { return dependencies.serialize(await handle.result); }
+      finally {
+        event.sender.removeListener('destroyed', handle.cancel);
+        activeToolInstalls.delete(plain.operationId);
+      }
+    });
+  }
+  ipcMain.handle('gameBuild:getMediaTools', (_event, project?: string) => dependencies.serialize(dependencies.toolInstaller.inspectMediaTools(dependencies.workflowRoot, dependencies.resolveProject(project))));
+  ipcMain.handle('gameBuild:cancelToolInstall', (event, operationId: string) => {
+    const active = activeToolInstalls.get(operationId);
+    if (!active || active.senderId !== event.sender.id) return { canceled: false };
+    active.cancel();
+    return { canceled: true };
+  });
   ipcMain.handle('gameBuild:getCredentialStatus', (_event, kind?: GameReleaseCredentialKind, credentialId?: string) => (
     dependencies.credentials.status(kind, credentialId)
   ));
@@ -325,9 +356,9 @@ export function registerGameReleaseIpcHandlers(
       dependencies.serialize(request) as AndroidKeystoreCreateRequest,
     ));
   });
-  ipcMain.handle('gameBuild:selectOutputDirectory', async (event, initialPath?: string) => {
+  ipcMain.handle('gameBuild:selectOutputDirectory', async (event, initialPath?: string, purpose?: string) => {
     const options: Electron.OpenDialogOptions = {
-      title: 'Select game build output folder',
+      title: purpose === 'android-toolchain' ? 'Select Android toolchain installation folder (ASCII path)' : 'Select game build output folder',
       defaultPath: typeof initialPath === 'string' && initialPath.trim() ? initialPath : undefined,
       properties: ['openDirectory', 'createDirectory'],
     };
@@ -437,6 +468,8 @@ function errorMessage(value: unknown): string {
 }
 
 export function cleanupGameReleaseIpcHandlers(ipcMain: IpcMain): void {
+  for (const active of activeToolInstalls.values()) active.cancel();
+  activeToolInstalls.clear();
   for (const active of activeBuilds.values()) active.cancel();
   activeBuilds.clear();
   for (const channel of CHANNELS) ipcMain.removeHandler(channel);

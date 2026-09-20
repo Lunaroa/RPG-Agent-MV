@@ -11,12 +11,16 @@ Each project can keep named presets for target, architecture, output, full or de
 ## Targets
 
 - **Web** produces a deployable directory and optional ZIP. Updating the hosted site updates browser players.
-- **Windows** produces a runnable directory from the project's complete RPG Maker/NW.js export and an optional ZIP. A separately installed, engine- and architecture-matched managed runtime can also be used. The product does not download NW.js distributions with unresolved redistribution terms; when neither source is available, preflight lists the required runtime files and stops. An external updater applies verified content after the game exits and keeps rollback data.
+- **Windows** produces a runnable directory from the project's complete RPG Maker/NW.js export, the current engine's configured RPG Maker installation in the Play menu, or an engine- and architecture-matched managed runtime, with an optional ZIP. MV packages the editor's deployment runtime, not the playtest runner. MZ creates the game executable only in the build copy, leaving the installation unchanged. The product does not download NW.js distributions with unresolved redistribution terms; when no source is available, preflight lists the required runtime files and stops. An external updater applies verified content after the game exits and keeps rollback data.
 - **Android** uses the managed WebView shell and Gradle toolchain to build real per-ABI APKs for `arm64-v8a`, `armeabi-v7a`, and `x86_64`.
 
 Content categories can be compressed, obfuscated, or encrypted independently. Encryption uses AES-256-GCM and installs a matching runtime loader into the build copy. Because the client must decrypt its own content, the key is ultimately recoverable; this raises the casual extraction barrier but is not DRM.
 
 With JavaScript encryption enabled, engine bootstrap scripts and startup libraries in `js/libs/` stay readable so the engine and content loader can start. Plugin scripts are decrypted when loaded.
+
+Audio/video compression requires **Install media compression tools**, which downloads and verifies a pinned FFmpeg build, preserves its license and leaves system environment variables unchanged. Audio compression is unavailable for projects containing WAV files; files are not silently skipped or transcoded to another format.
+
+Android and media-tool installation show their phase, downloaded bytes and command output in a bottom-right task card, with cancellation and bounded download/command waits. Diagnostic logs are stored in `runtime/game-build/logs/`. Plugin-parser warnings remain in build reports rather than filling the packaging page. Disabled plugins do not block packaging as active plugins.
 
 ## Publication And Trust
 
@@ -39,6 +43,8 @@ The first release preserves saves across upgrades on the same platform, but it d
 All three targets still use the same game-save data contract and version fields. A later player-initiated export/import adapter can therefore validate the game, origin version, channel, and content digest before importing. That route does not require accounts or cloud saves, but it needs separate acceptance with real old saves and each platform's plugin set; it does not block the first Web, Windows, and Android packages.
 
 The first Android build installs a pinned, verified toolchain after explicit license acceptance: Microsoft OpenJDK 17, Android command-line tools, Gradle 9.4.1, Android Gradle Plugin 9.2.1, Compile SDK 36, Build Tools 36.0.0, and AndroidX WebKit 1.17.0. Release APKs require a stable JKS identity. Changing the application ID or signing identity creates a new app rather than an in-place update.
+
+Select a dedicated empty folder or an existing managed toolchain folder during installation. Its full path must contain only ASCII characters. Temporary Android compiler projects are owned by that toolchain directory and cleaned up after success, failure, or cancellation; game and APK output directories may contain Unicode characters. Unsupported toolchain paths are rejected before downloading tools or copying game content, without disabling Android's path checks.
 
 APKs require Android 7.0 (API 24) or newer. Older presets retain their original minimum API and show an error until the developer explicitly corrects it; opening a preset never silently migrates it.
 

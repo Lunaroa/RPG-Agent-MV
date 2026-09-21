@@ -750,7 +750,7 @@ async function runPreflight(): Promise<GameBuildPreflightResult | null> {
     }, project)
     if (!isCurrentProjectRequest(project, requestId)) return null
     preflight.value = checked
-    if (checked.ok) ElMessage.success(t('gamePackaging.checkPassed'))
+    if (checked.ok && !checked.androidAudioPreparation) ElMessage.success(t('gamePackaging.checkPassed'))
     return checked
   } catch (cause) {
     if (isCurrentProjectRequest(project, requestId)) {
@@ -791,7 +791,12 @@ async function build() {
   }
   const checked = await runPreflight()
   if (!isCurrentProjectRequest(project, requestId)) return
-  if (!checked || !checked.ok) return
+  if (!checked) return
+  if (!checked.ok) {
+    await ElMessageBox.alert(h('ul', { class: 'managed-file-list' }, checked.blockers.map(item => h('li', errorText(item)))), t('gamePackaging.checkFailed'), { type: 'warning' }).catch(() => {})
+    return
+  }
+  if (checked.androidAudioPreparation && !await confirmAndroidAudioPreparation(checked, project, requestId)) return
   if (checked.managedChanges.length) {
     try {
       await ElMessageBox.confirm(
@@ -825,6 +830,7 @@ async function build() {
       releaseConfig: cloneDraft(release.value),
       releaseExpectedSourceHash: releaseStatus.value.sourceHash,
       confirmManagedChanges: true,
+      ...(checked.androidAudioPreparation ? { androidAudioPreparationId: checked.androidAudioPreparation.id } : {}),
       ...(preset.target === 'android' && preset.android?.signing === 'release' ? {
         signingCredential: {
           ...(signingStorePassword.value ? { storePassword: signingStorePassword.value } : {}),
@@ -995,6 +1001,29 @@ async function chooseConflict(checked: GameBuildPreflightResult): Promise<'overw
   } catch (action) {
     return action === 'cancel' ? 'new-directory' : null
   }
+}
+
+async function confirmAndroidAudioPreparation(checked: GameBuildPreflightResult, project: string, requestId: number): Promise<boolean> {
+  const preparation = checked.androidAudioPreparation!
+  try {
+    await ElMessageBox.confirm(
+      t(preparation.toolsReady ? 'gamePackaging.audioPreparationConfirm' : 'gamePackaging.audioPreparationInstallConfirm', { count: preparation.files.length }),
+      t('gamePackaging.audioPreparationTitle'),
+      { type: 'warning', confirmButtonText: t(preparation.toolsReady ? 'gamePackaging.audioPrepareAndBuild' : 'gamePackaging.audioInstallAndPrepare'), cancelButtonText: t('ui.cancel') },
+    )
+  } catch { return false }
+  if (!isCurrentProjectRequest(project, requestId)) return false
+  if (!preparation.toolsReady) {
+    await installMediaTools()
+    if (!isCurrentProjectRequest(project, requestId)) return false
+    const fresh = await runPreflight()
+    if (!fresh?.ok || !fresh.androidAudioPreparation?.toolsReady) return false
+    if (fresh.preset.id !== checked.preset.id || fresh.androidAudioPreparation.id !== preparation.id) {
+      ElMessage.error(t('gamePackaging.audioPreparationChanged'))
+      return false
+    }
+  }
+  return true
 }
 
 function revealResult() {
@@ -1270,8 +1299,8 @@ function operationError(key: MessageKey, value: unknown): string {
           <p class="section-note">{{ t('gamePackaging.manifestSigningRisk') }}</p>
         </section>
 
-        <section v-if="preflight" class="check-result" :class="preflight.ok ? 'is-ok' : 'is-error'">
-          <h2>{{ preflight.ok ? t('gamePackaging.checkPassed') : t('gamePackaging.checkFailed') }}</h2>
+        <section v-if="preflight" class="check-result" :class="preflight.ok ? (preflight.androidAudioPreparation ? '' : 'is-ok') : 'is-error'">
+          <h2>{{ !preflight.ok ? t('gamePackaging.checkFailed') : preflight.androidAudioPreparation ? t('gamePackaging.audioPreparationPending', { count: preflight.androidAudioPreparation.files.length }) : t('gamePackaging.checkPassed') }}</h2>
           <ul v-if="preflight.blockers.length"><li v-for="item in preflight.blockers" :key="item">{{ errorText(item) }}</li></ul>
           <p v-if="preflight.ok && preflight.preset.packageType !== 'full'" class="section-note">
             {{ t('gamePackaging.contentChangesAfterBuild') }}
@@ -1346,6 +1375,7 @@ h2 { font-size: 14px; color: var(--app-ink); }
 .main-grid :deep(.el-form-item) { margin-bottom: 14px; }
 .output-field { grid-column: span 2; }
 .processing-grid, .android-grid, .upload-grid, .publication-grid { margin-top: 14px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 14px; }
+.android-grid :deep(.el-form-item__error) { position: static; flex-basis: 100%; overflow-wrap: anywhere; }
 .publication-locales { display: grid; gap: 10px; margin-top: 12px; }
 .publication-locale { padding: 12px; border: 1px solid var(--app-border); border-radius: var(--app-radius-md); }
 .publication-locale-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }

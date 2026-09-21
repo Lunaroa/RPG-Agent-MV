@@ -67,6 +67,82 @@ test('packaging confirmation renders one labeled row per changed file without ra
   assert.equal(confirmation.children[1].children[1].children, 'js/plugins.js');
 });
 
+test('Android audio confirmation counts files, respects cancellation, and rechecks installed tools', async () => {
+  const preparation = { id: 'sample-plan', toolsReady: true, files: [{ sourcePath: 'audio/bgm/Sample.ogg', targetPath: 'audio/bgm/Sample.m4a' }] };
+  const checked = { ok: true, preset: { id: 'sample-android' }, androidAudioPreparation: preparation };
+  let cancel = true;
+  let current = true;
+  let installs = 0;
+  let refreshes = 0;
+  let fresh = structuredClone(checked);
+  const messages: string[] = [];
+  const errors: string[] = [];
+  const state = {
+    checked, project,
+    t: (key: string, args?: { count: number }) => `${key}${args ? ':' + args.count : ''}`,
+    ElMessageBox: { confirm: async (message: string) => { messages.push(message); if (cancel) throw 'cancel'; } },
+    ElMessage: { error: (message: string) => errors.push(message) },
+    isCurrentProjectRequest: () => current,
+    installMediaTools: async () => { installs++; },
+    runPreflight: async () => { refreshes++; return fresh; },
+  };
+  const context = functions('GamePackagingView.vue', ['confirmAndroidAudioPreparation'], state);
+  const confirm = () => vm.runInContext('confirmAndroidAudioPreparation(checked, project, 1)', context);
+  assert.equal(await confirm(), false);
+  assert.equal(installs, 0);
+  cancel = false;
+  assert.equal(await confirm(), true);
+  assert.equal(messages.at(-1), 'gamePackaging.audioPreparationConfirm:1');
+  assert.equal(refreshes, 0);
+  current = false;
+  assert.equal(await confirm(), false);
+  current = true;
+  preparation.toolsReady = false;
+  fresh.androidAudioPreparation.toolsReady = false;
+  assert.equal(await confirm(), false, 'canceled or failed installation must not start a build');
+  fresh.androidAudioPreparation.toolsReady = true;
+  assert.equal(await confirm(), true);
+  assert.equal(messages.at(-1), 'gamePackaging.audioPreparationInstallConfirm:1');
+  assert.equal(installs, 2);
+  assert.equal(refreshes, 2);
+  fresh.androidAudioPreparation.id = 'changed-plan';
+  assert.equal(await confirm(), false);
+  assert.equal(errors.at(-1), 'gamePackaging.audioPreparationChanged');
+});
+
+test('Android audio build sends consent only after confirmation and displays blocking errors in a dialog', async () => {
+  const preparation = { id: 'sample-plan', toolsReady: true, files: [{ sourcePath: 'audio/bgm/Sample.ogg', targetPath: 'audio/bgm/Sample.m4a' }] };
+  let checked: any = { ok: true, managedChanges: [], existingOutput: false, androidAudioPreparation: preparation };
+  let approved = false;
+  const requests: any[] = [];
+  const alerts: any[] = [];
+  const state = {
+    checking: ref(false), building: ref(false), publishing: ref(false), cancelingBuild: ref(false),
+    projectStore: { currentProject: project }, loadRequestId: 1, activePreset: ref({ id: 'sample-android', target: 'android' }),
+    release: ref({}), releaseStatus: ref({ sourceHash: null }), error: ref(''), published: ref(null), result: ref(null), buildProgress: ref(null),
+    runPreflight: async () => checked, isCurrentProjectRequest: () => true,
+    confirmAndroidAudioPreparation: async () => approved, chooseConflict: async () => 'new-directory',
+    crypto: { randomUUID: () => 'sample-operation' }, cloneDraft: structuredClone, h,
+    t: (key: string) => key, errorText: (message: string) => 'localized:' + message,
+    ElMessage: { info() {}, error() {} }, ElMessageBox: { alert: async (message: any) => { alerts.push(message); } },
+    gameBuild: { build: async (request: unknown) => { requests.push(request); return { status: 'canceled' }; } },
+    operationError: (_key: string, error: unknown) => String(error),
+  };
+  const context = functions('GamePackagingView.vue', ['build'], state);
+  await vm.runInContext('build()', context);
+  assert.equal(requests.length, 0);
+  approved = true;
+  await vm.runInContext('build()', context);
+  assert.equal(state.error.value, '');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].androidAudioPreparationId, preparation.id);
+  assert.equal(state.building.value, false);
+  checked = { ok: false, blockers: ['minimum Android API is 24'] };
+  await vm.runInContext('build()', context);
+  assert.equal(requests.length, 1);
+  assert.equal(alerts[0].children[0].children, 'localized:minimum Android API is 24');
+});
+
 test('packaging tool installation settles after project switches and cancellation reaches the active operation', async () => {
   let finish!: (value: unknown) => void;
   let canceled = '';

@@ -28,6 +28,15 @@ describe('normalizeProductLanguage', () => {
 });
 
 describe('translate', () => {
+  it('interpolates Android audio preparation counts in both languages', () => {
+    for (const language of ['zh-CN', 'en-US'] as const) {
+      for (const key of ['gamePackaging.audioPreparationPending', 'gamePackaging.audioPreparationConfirm', 'gamePackaging.audioPreparationInstallConfirm'] as const) {
+        const text = translate(key, language, { count: 12 });
+        assert.match(text, /12/);
+        assert.doesNotMatch(text, /\{count\}/);
+      }
+    }
+  });
   it('returns Chinese and English labels for the same key', () => {
     assert.equal(translate('app.nav.settings', 'zh-CN'), '设置');
     assert.equal(translate('app.nav.settings', 'en-US'), 'Settings');

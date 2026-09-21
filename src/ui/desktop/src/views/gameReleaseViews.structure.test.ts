@@ -52,4 +52,5 @@ test('Android minimum SDK defaults to the shared floor and preserves invalid leg
   assert.match(packagingView, /minSdk: ANDROID_MINIMUM_SDK/);
   assert.match(packagingView, /activePreset\.android\.minSdk < ANDROID_MINIMUM_SDK \? t\('gamePackaging\.minimumAndroidVersion'\)/);
   assert.match(packagingView, /v-model="activePreset\.android\.minSdk" :min="21"/);
+  assert.match(packagingView, /\.android-grid :deep\(\.el-form-item__error\) \{ position: static; flex-basis: 100%;/);
 });

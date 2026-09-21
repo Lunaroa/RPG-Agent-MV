@@ -18,6 +18,10 @@ export function managedFfmpegPath(workflowRoot: string): string {
   return path.join(path.resolve(workflowRoot), 'runtime', 'game-build', 'tools', 'ffmpeg', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
 }
 
+export function managedFfprobePath(workflowRoot: string): string {
+  return path.join(path.dirname(managedFfmpegPath(workflowRoot)), 'bin', process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe');
+}
+
 export async function installMediaTools(workflowRoot: string, acceptLicense: boolean, context: GameToolInstallContext): Promise<void> {
   if (!acceptLicense) throw new Error('Accept the FFmpeg GPL-3.0 license before installing media tools.');
   if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Managed media tools require Windows x64.');
@@ -41,6 +45,10 @@ export async function installMediaTools(workflowRoot: string, acceptLicense: boo
       maxBuffer: 1024 * 1024, timeoutMs: 30_000, isCanceled: context.isCanceled,
     });
     if (verified.status !== 0 || !verified.stdout.startsWith(`ffmpeg version ${MEDIA_TOOL_SOURCE.version}`)) throw new Error('The installed FFmpeg version could not be verified.');
+    const probeVerified = await runGameBuildProcess(path.join(contents, 'bin', 'ffprobe.exe'), ['-version'], {
+      maxBuffer: 1024 * 1024, timeoutMs: 30_000, isCanceled: context.isCanceled,
+    });
+    if (probeVerified.status !== 0 || !probeVerified.stdout.startsWith(`ffprobe version ${MEDIA_TOOL_SOURCE.version}`)) throw new Error('The installed FFprobe version could not be verified.');
     writeJsonAtomically(path.join(contents, 'rpg-agent-media-tools.json'), MEDIA_TOOL_SOURCE);
     context.reportProgress?.({ stage: 'publish', component: 'FFmpeg' });
     fs.renameSync(contents, target);

@@ -15,6 +15,25 @@ import {
   preflightAndroidAudio,
   preflightContentProcessing,
 } from './game-content-processing-service.ts';
+import { managedFfmpegPath } from './game-media-tools-service.ts';
+
+test('Android audio preparation is not encoded again by the compression stage', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prepared-mobile-audio-'));
+  const project = path.join(root, 'project');
+  const build = path.join(root, 'build');
+  const relative = 'audio/bgm/Sample.m4a';
+  try {
+    write(project, 'data/System.json', '{}');
+    write(build, relative, 'already encoded AAC with verified loop metadata');
+    const ffmpeg = managedFfmpegPath(root);
+    fs.mkdirSync(path.dirname(ffmpeg), { recursive: true });
+    fs.writeFileSync(ffmpeg, 'must not be executed', 'utf8');
+    const processing: GameContentProcessingConfig = { images: 'none', audio: 'compress', video: 'none', data: 'none', javascript: 'none', ui: 'none' };
+    const result = await applyContentProcessing(root, project, build, processing, 'rpg-maker-mv', { preparedAudioFiles: [relative] });
+    assert.equal(result.processed[relative], 'compress');
+    assert.equal(fs.readFileSync(path.join(build, relative), 'utf8'), 'already encoded AAC with verified loop metadata');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 test('media preflight requires FFmpeg only for compression and reports unsupported WAV without modifying audio', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'packaging-media-preflight-'));

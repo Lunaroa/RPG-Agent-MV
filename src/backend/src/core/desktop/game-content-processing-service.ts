@@ -15,6 +15,7 @@ import { resolveRmmvLayout } from '../rmmv/rmmv-layout.ts';
 import { GameBuildProcessCanceledError, runGameBuildProcess } from './game-build-process-service.ts';
 import { readGameEncryptionKey } from './game-encryption-key-service.ts';
 import { managedFfmpegPath } from './game-media-tools-service.ts';
+export { preflightAndroidAudio } from './game-android-audio-service.ts';
 
 interface RuntimeContentRecord {
   sourcePath: string;
@@ -38,6 +39,7 @@ export interface GameContentProcessingPreflight {
 
 export interface GameContentProcessingExecutionOptions {
   isCanceled?: () => boolean;
+  preparedAudioFiles?: string[];
 }
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
@@ -50,20 +52,6 @@ const BOOTSTRAP_JAVASCRIPT = new Set([
 ]);
 const ENCRYPTED_MAGIC = Buffer.from('RPGAGENTENC1\n', 'ascii');
 const OBFUSCATED_MAGIC = Buffer.from('RPGOBF1\n', 'ascii');
-
-export function preflightAndroidAudio(project: string, engine: RpgMakerEngine, encryptedAudio: boolean): string[] {
-  if (engine !== 'rpg-maker-mv') return [];
-  const audioRoot = path.join(resolveRmmvLayout(project).resourceRoot, 'audio');
-  if (!fs.existsSync(audioRoot)) return [];
-  const files = listFiles(audioRoot);
-  const mobileExtension = encryptedAudio ? '.rpgmvm' : '.m4a';
-  const required = new Set(files
-    .filter(file => /\.(ogg|rpgmvo)$/i.test(file))
-    .map(file => file.replace(/\.(ogg|rpgmvo)$/i, mobileExtension)));
-  const missing = [...required].filter(file => !files.includes(file) || fs.statSync(resolveRelative(audioRoot, file)).size === 0);
-  if (!missing.length) return [];
-  return [`RPG Maker MV on Android requires ${mobileExtension} audio. ${missing.length} mobile audio file(s) are missing or empty: ${missing.slice(0, 5).map(file => `audio/${file}`).join(', ')}. Prepare the matching mobile audio before building; the source files will not be converted automatically.`];
-}
 
 export function preflightContentProcessing(
   workflowRoot: string,
@@ -129,6 +117,11 @@ export async function applyContentProcessing(
     if (mode === 'none') continue;
     const absolutePath = resolveRelative(buildRoot, relativePath);
     if (mode === 'compress') {
+      // Prepared AAC already uses this pipeline's audio bitrate. Do not encode it twice or lose loop timing.
+      if (category === 'audio' && options.preparedAudioFiles?.includes(relativePath)) {
+        processed[relativePath] = 'compress';
+        continue;
+      }
       await compressFile(workflowRoot, absolutePath, relativePath, category, options);
       processed[relativePath] = 'compress';
       continue;

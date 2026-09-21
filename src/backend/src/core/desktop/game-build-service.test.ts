@@ -15,7 +15,7 @@ import {
   startGameBuildWorker,
 } from './game-build-service.ts';
 
-test('Android build preflight blocks missing MV mobile audio without blocking Web output', async () => {
+test('Android build preflight plans missing MV audio without converting files or affecting Web output', async () => {
   await withProject(async ({ workflowRoot, project, release, preset }) => {
     write(project, 'audio/se/Sample.ogg', 'audio fixture');
     saveGameBuildSettings(project, { presets: [preset], selectedPresetId: preset.id });
@@ -27,7 +27,9 @@ test('Android build preflight blocks missing MV mobile audio without blocking We
     } };
     saveGameBuildSettings(project, { presets: [android], selectedPresetId: android.id });
     const result = preflightGameBuild(workflowRoot, project, { presetId: android.id, releaseConfig: release });
-    assert.ok(result.blockers.some(item => item.includes('audio/se/Sample.m4a')));
+    assert.deepEqual(result.androidAudioPreparation?.files, [{ sourcePath: 'audio/se/Sample.ogg', targetPath: 'audio/se/Sample.m4a' }]);
+    assert.equal(result.androidAudioPreparation?.toolsReady, false);
+    assert.equal(web.androidAudioPreparation, undefined);
     assert.equal(fs.existsSync(path.join(project, 'audio/se/Sample.m4a')), false);
   });
 });

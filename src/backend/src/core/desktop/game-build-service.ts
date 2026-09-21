@@ -27,9 +27,9 @@ import {
 import { createBinaryPatch } from './game-binary-diff.ts';
 import {
   applyContentProcessing,
-  preflightAndroidAudio,
   preflightContentProcessing,
 } from './game-content-processing-service.ts';
+import { assertAndroidAudioConfirmation, inspectAndroidAudio, prepareAndroidAudio } from './game-android-audio-service.ts';
 import { compareGameBuildContent } from './game-build-content-changes.ts';
 import { readGameEncryptionKey } from './game-encryption-key-service.ts';
 import {
@@ -179,9 +179,10 @@ export function preflightGameBuild(
   const processingPreflight = preflightContentProcessing(workflowRoot, project, preset.processing);
   blockers.push(...processingPreflight.blockers);
   warnings.push(...processingPreflight.warnings);
-  if (preset.target === 'android') {
-    blockers.push(...preflightAndroidAudio(project, manifest.engine, manifest.encryptedAudio));
-  }
+  const androidAudio = preset.target === 'android'
+    ? inspectAndroidAudio(workflowRoot, project, manifest.engine, manifest.encryptedAudio)
+    : undefined;
+  if (androidAudio) blockers.push(...androidAudio.blockers);
 
   const outputRoot = resolveOutputDirectory(project, preset.outputDirectory);
   try {
@@ -227,6 +228,7 @@ export function preflightGameBuild(
     outputPath,
     existingOutput,
     managedChanges,
+    ...(androidAudio?.preparation ? { androidAudioPreparation: androidAudio.preparation } : {}),
   };
 }
 
@@ -272,6 +274,11 @@ export async function buildGame(
   if (preflight.existingOutput && request.outputConflict === 'cancel') {
     return { status: 'canceled', artifacts: [], warnings: preflight.warnings };
   }
+  try {
+    assertAndroidAudioConfirmation(preflight.androidAudioPreparation, request.androidAudioPreparationId);
+  } catch (error) {
+    return failedBuildWithReport(project, preflight, releaseId, startedAt, 'android-audio-confirmation', error);
+  }
   if (preflight.managedChanges.length && request.confirmManagedChanges !== true) {
     return failedBuildWithReport(
       project,
@@ -301,6 +308,7 @@ export async function buildGame(
     if (!verified.ok || verified.managedChanges.length) {
       throw new Error([...verified.blockers, ...verified.managedChanges.map((change) => change.description)].join('\n'));
     }
+    assertAndroidAudioConfirmation(verified.androidAudioPreparation, request.androidAudioPreparationId);
 
     failedStage = 'prepare-output';
     progress('prepare-output', 16);
@@ -317,6 +325,16 @@ export async function buildGame(
     progress('copy-project', 24);
     assertNotCanceled();
     const runtime = prepareCompleteContent(workflowRoot, project, preset, completeContent, request.windowsRuntimeExecutables);
+    let preparedAudioFiles: string[] = [];
+    if (verified.androidAudioPreparation) {
+      failedStage = 'prepare-android-audio';
+      progress('prepare-android-audio', 28);
+      preparedAudioFiles = await prepareAndroidAudio(workflowRoot, project, completeContent, request.androidAudioPreparationId!, {
+        isCanceled: cancellationRequested,
+        onProgress: (completed, total) => progress('prepare-android-audio', 28 + Math.floor(9 * completed / total)),
+      });
+      runtime.androidPreparedAudioFiles = JSON.stringify(preparedAudioFiles);
+    }
     failedStage = 'process-content';
     progress('process-content', 38);
     assertNotCanceled();
@@ -326,7 +344,7 @@ export async function buildGame(
       completeContent,
       preset.processing,
       inspectRmmvProject(project).engine,
-      { isCanceled: cancellationRequested },
+      { isCanceled: cancellationRequested, preparedAudioFiles },
     );
     assertNotCanceled();
     writeJsonAtomically(path.join(completeContent, ...CURRENT_RELEASE_PATH.split('/')), {

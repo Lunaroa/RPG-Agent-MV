@@ -230,6 +230,13 @@ export interface GameBuildPreflightResult {
   outputPath: string;
   existingOutput: boolean;
   managedChanges: GameReleaseManagedChange[];
+  androidAudioPreparation?: AndroidAudioPreparation;
+}
+
+export interface AndroidAudioPreparation {
+  id: string;
+  files: Array<{ sourcePath: string; targetPath: string }>;
+  toolsReady: boolean;
 }
 
 export interface GameBuildRequest {
@@ -240,6 +247,7 @@ export interface GameBuildRequest {
   releaseConfig?: GameReleaseConfig;
   releaseExpectedSourceHash?: string | null;
   confirmManagedChanges?: boolean;
+  androidAudioPreparationId?: string;
   uploadCredential?: {
     username?: string;
     password?: string;
@@ -257,6 +265,7 @@ export type GameBuildProgressStage =
   | 'managed-files'
   | 'prepare-output'
   | 'copy-project'
+  | 'prepare-android-audio'
   | 'process-content'
   | 'android-apk'
   | 'create-package'

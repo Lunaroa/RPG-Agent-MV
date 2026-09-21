@@ -48,7 +48,7 @@ Select a dedicated empty folder or an existing managed toolchain folder during i
 
 APKs require Android 7.0 (API 24) or newer. Older presets retain their original minimum API and show an error until the developer explicitly corrects it; opening a preset never silently migrates it.
 
-RPG Maker MV requires matching M4A audio on mobile, or `.rpgmvm` when native RPG Maker audio encryption is enabled. Android preflight lists missing or empty mobile counterparts for OGG or `.rpgmvo` assets and stops the build. It does not automatically transcode or modify source audio; preserve background-music loop metadata when preparing mobile assets. This requirement does not apply to RPG Maker MZ, which uses OGG.
+RPG Maker MV requires matching M4A audio on mobile. When counterparts are missing or empty, Build asks you to confirm the number to prepare. After confirmation, OGG files are converted to M4A only in the build copy, preserving sample rates and background-music loop metadata, then building continues. Canceling performs no conversion or build; source audio and existing nonempty M4A files are not overwritten. Media tools are required, with a separate license confirmation before their first download. Projects using native RPG Maker audio encryption must supply matching `.rpgmvm` files; encrypted sources are not automatically decrypted or converted. This requirement does not apply to RPG Maker MZ, which uses OGG.
 
 The Android icon is an explicit project-relative preset field. A new Android preset auto-selects an image only when the resource-root `icon/` folder contains exactly one PNG, JPEG, or WebP candidate. No candidate or multiple candidates require a deliberate selection; filenames and sort order are never used as a guess.
 

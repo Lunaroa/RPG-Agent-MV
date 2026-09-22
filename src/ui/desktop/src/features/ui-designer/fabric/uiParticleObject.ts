@@ -99,6 +99,7 @@ export class UiParticleObject extends FabricObject {
       ...objectOptions,
       width: Math.max(1, finite(particleProps.width, 1)),
       height: Math.max(1, finite(particleProps.height, 1)),
+      strokeWidth: 0,
       objectCaching: false,
     })
     this.particleProps = particleProps

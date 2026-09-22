@@ -293,10 +293,10 @@ export function nodeRotationRadians(node: UiNode): number {
 export function nodeVisualRect(node: UiNode): UiRect {
   const rect = nodeRect(node)
   const theta = nodeRotationRadians(node)
-  if (theta % Math.PI === 0) return rect
+  if (theta % (2 * Math.PI) === 0) return rect
   const cosine = Math.abs(Math.cos(theta))
   const sine = Math.abs(Math.sin(theta))
-  const center = rectCenter(rect)
+  const center = nodeVisualCenter(node)
   const width = rect.width * cosine + rect.height * sine
   const height = rect.width * sine + rect.height * cosine
   return { x: center.x - width / 2, y: center.y - height / 2, width, height }
@@ -304,8 +304,7 @@ export function nodeVisualRect(node: UiNode): UiRect {
 
 /** Exact scene-space center of a node's visual rect, honoring scale, rotation, and anchor. */
 export function nodeVisualCenter(node: UiNode): UiPoint {
-  const width = Math.max(1, Math.abs(node.props.width * (Number.isFinite(node.props.scaleX) ? node.props.scaleX : 1)))
-  const height = Math.max(1, Math.abs(node.props.height * (Number.isFinite(node.props.scaleY) ? node.props.scaleY : 1)))
+  const { width, height } = nodeRect(node)
   const offsetX = width * (0.5 - node.props.anchorX)
   const offsetY = height * (0.5 - node.props.anchorY)
   const theta = nodeRotationRadians(node)
@@ -486,26 +485,28 @@ export function topmostNodeAtPoint(
  * scene-space (children are not offset by their parent), so any visible,
  * unlocked node is a valid peer regardless of its parent. `excludeIds`
  * removes nodes that move with the drag (the rest of a multi-selection) so a
- * group never snaps onto its own members' pre-drag positions. Nodes that
- * move together with the source — its ancestors and descendants — are
- * excluded too, since snapping onto them would freeze the gesture in place.
+ * group never snaps onto its own members' pre-drag positions. Descendants of
+ * every moving root are excluded too. Stationary ancestors remain targets.
  */
 export function smartSnapTargetsForNode(document: UiDesignerDocument, nodeId: string, excludeIds: readonly string[] = []): SmartSnapTarget[] {
   const source = findDocumentNode(document, nodeId)
   if (!source) return []
-  const sourceFamily = new Set<string>([nodeId, ...ancestorIds(document, source), ...collectNodeSubtreeIds(document, [nodeId])])
+  const movingIds = new Set(collectNodeSubtreeIds(document, [nodeId, ...excludeIds]))
+  const byId = new Map(document.nodes.map((node) => [node.id, node]))
   return document.nodes
     .filter((node) => node.id !== nodeId
-      && !excludeIds.includes(node.id)
       && node.id !== 'node_root'
-      && !sourceFamily.has(node.id)
+      && !movingIds.has(node.id)
       && node.props.visible !== false
-      && !node.locked)
+      && !node.locked
+      && ancestorIds(document, node, byId).every((id) => {
+        const ancestor = byId.get(id)
+        return ancestor && ancestor.props.visible !== false && !ancestor.locked
+      }))
     .map((node) => ({ id: node.id, rect: nodeVisualRect(node) }))
 }
 
-function ancestorIds(document: UiDesignerDocument, node: UiNode): string[] {
-  const byId = new Map(document.nodes.map((candidate) => [candidate.id, candidate]))
+function ancestorIds(document: UiDesignerDocument, node: UiNode, byId: ReadonlyMap<string, UiNode> = new Map(document.nodes.map((candidate) => [candidate.id, candidate]))): string[] {
   const ids: string[] = []
   const visited = new Set<string>()
   let parentId = node.parentId
@@ -612,7 +613,7 @@ function snapAxis(current: number, axis: 'x' | 'y', options: SnapOptions): AxisS
     const gridValue = Math.round(current / options.gridSize) * options.gridSize
     const gridSnap = nearestAxisSnap(current, [{ value: Math.round(gridValue) }], sensitivity)
     const candidates = snapCandidates(options)[axis]
-    return withAxis(nearestAxisSnap(current, gridSnap ? [{ value: gridSnap.value }, ...candidates] : candidates, sensitivity))
+    return withAxis(nearestAxisSnap(current, gridSnap ? [...candidates, { value: gridSnap.value }] : candidates, sensitivity))
   }
   return withAxis(nearestAxisSnap(current, snapCandidates(options)[axis], sensitivity))
 }

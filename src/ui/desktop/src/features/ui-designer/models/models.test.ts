@@ -777,9 +777,8 @@ describe('ui designer history, geometry and performance', () => {
 
     // Cross-hierarchy: a root node can snap onto a node nested in a container.
     assert.deepEqual(smartSnapTargetsForNode(document, source.id).map((target) => target.id), ['snap_sibling', 'snap_container', 'snap_nested'])
-    // A nested node can snap onto nodes outside its own parent chain, but its
-    // own parent container is excluded because it moves with the drag.
-    assert.deepEqual(smartSnapTargetsForNode(document, nested.id).map((target) => target.id), ['snap_source', 'snap_sibling'])
+    // A nested node can snap to its stationary parent as well as other branches.
+    assert.deepEqual(smartSnapTargetsForNode(document, nested.id).map((target) => target.id), ['snap_source', 'snap_sibling', 'snap_container'])
     // A container excludes its descendants: they move together with it.
     assert.deepEqual(smartSnapTargetsForNode(document, container.id).map((target) => target.id), ['snap_source', 'snap_sibling'])
     assert.deepEqual(smartSnapTargetsForNode(document, 'missing'), [])

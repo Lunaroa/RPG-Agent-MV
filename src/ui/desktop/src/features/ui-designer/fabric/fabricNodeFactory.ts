@@ -23,6 +23,7 @@ import { resizeCursor, resolveUiNodeResizePatch, type UiResizeHandle } from '../
 import { subtreeContainsLockedNode } from '../models/actions'
 import { uiDesignerText } from '../i18n'
 import { UiLayoutTextbox } from './uiLayoutTextbox'
+import { UiLayoutRect } from './uiLayoutRect'
 import { normalizeUiSingleLineText } from './uiSingleLineText'
 import { UiNineSliceImage } from './uiNineSliceImage'
 import { UiParticleObject } from './uiParticleObject'
@@ -216,7 +217,7 @@ const decorate = <T extends FabricObject>(object: T, node: UiNode, signature: st
   return decorated
 }
 
-const boundary = (width: number, height: number, options: { fill?: string; stroke?: string; dash?: number[]; radius?: number } = {}) => new Rect({
+const boundary = (width: number, height: number, options: { fill?: string; stroke?: string; dash?: number[]; radius?: number } = {}) => new UiLayoutRect({
   left: 0,
   top: 0,
   originX: 'center',
@@ -290,6 +291,7 @@ const placeholder = (node: UiNode, label: string, fill = '#1d2230') => new Group
     fill: '#c7cbd6',
     textAlign: 'center',
     splitByGrapheme: true,
+    strokeWidth: 0,
     selectable: false,
     evented: false,
   }),
@@ -452,7 +454,7 @@ const createProgress = (node: Extract<UiNode, { type: 'progressBar' }>) => {
   const fillY = horizontal ? 0 : directionY * (node.props.height - fillHeight) / 2
   return new Group([
     boundary(node.props.width, node.props.height, { fill: node.props.trackColor, radius: node.props.trackRadius }),
-    new Rect({ left: fillX, top: fillY, originX: 'center', originY: 'center', width: Math.max(1, fillWidth), height: Math.max(1, fillHeight), fill: node.props.fillColor, rx: node.props.fillRadius, ry: node.props.fillRadius, selectable: false, evented: false }),
+    new Rect({ left: fillX, top: fillY, originX: 'center', originY: 'center', width: Math.max(1, fillWidth), height: Math.max(1, fillHeight), fill: node.props.fillColor, strokeWidth: 0, rx: node.props.fillRadius, ry: node.props.fillRadius, selectable: false, evented: false }),
   ], { objectCaching: false })
 }
 

@@ -1,4 +1,4 @@
-import { Textbox, type TextboxProps } from 'fabric'
+import { Point, Textbox, type TextboxProps } from 'fabric'
 import type { UiTextVerticalAlign } from '@contract/ui-designer'
 import { normalizeUiSingleLineText, resolveUiSingleLineLeft, resolveUiSingleLineScale } from './uiSingleLineText'
 
@@ -31,6 +31,19 @@ export class UiLayoutTextbox extends Textbox<UiLayoutTextboxOptions> {
   declare horizontalTextScale: number
   declare singleLine: boolean
   declare wrapWidth: number
+
+  // Text outlines decorate glyphs, not the node's explicit layout box.
+  override _getNonTransformedDimensions() {
+    return new Point(this.width, this.height)
+  }
+
+  override _getTransformedDimensions(options: Parameters<Textbox['_getTransformedDimensions']>[0] = {}) {
+    return super._getTransformedDimensions({ ...options, strokeWidth: 0 })
+  }
+
+  protected override isStrokeAccountedForInDimensions() {
+    return true
+  }
 
   override _wrapText(lines: string[], _desiredWidth: number): string[][] {
     if (this.singleLine) return [this.graphemeSplit(normalizeUiSingleLineText(lines.join(' ')))]

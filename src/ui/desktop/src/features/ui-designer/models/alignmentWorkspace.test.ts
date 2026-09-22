@@ -82,17 +82,18 @@ test('axis-locked move snapping never changes the other axis', () => {
   assert.deepEqual(result.hits.map((hit) => hit.axis), ['x'])
 })
 
-test('nodeVisualRect rotates the frame about its visual center', () => {
+test('nodeVisualRect honors the rotation anchor when computing visual bounds', () => {
   const node = createDefaultNode('sprite', { id: 'r', name: 'R', parentId: 'node_root', x: 100, y: 100, width: 100, height: 100 })
   const unrotated = nodeVisualRect(node)
   assert.deepEqual(unrotated, nodeRect(node))
   node.props.rotate = 180
-  assert.deepEqual(nodeVisualRect(node), nodeRect(node))
+  approximately(nodeVisualRect(node).x, 0)
+  approximately(nodeVisualRect(node).y, 0)
   node.props.rotate = 45
   const rotated = nodeVisualRect(node)
-  approximately(rotated.x, 79.29, 0.01)
+  approximately(rotated.x, 29.29, 0.01)
   approximately(rotated.width, 141.42, 0.01)
-  approximately(rotated.x + rotated.width / 2, 150, 0.01)
+  approximately(rotated.x + rotated.width / 2, 100, 0.01)
 })
 
 test('align puts rotated nodes visually flush, not frame-aligned', () => {
@@ -104,7 +105,7 @@ test('align puts rotated nodes visually flush, not frame-aligned', () => {
   const movedPlain = aligned.nodes.find((node) => node.id === 'plain')!
   const plainRect = nodeVisualRect(movedPlain)
   approximately(rotRect.x, plainRect.x)
-  approximately(movedPlain.props.x, 79.29)
+  approximately(movedPlain.props.x, 29.29)
 
   const centered = alignNodes(documentWith(rotated, plain), ['rot', 'plain'], 'centerY', 'selection') as UiDesignerDocument
   const rotCenter = nodeVisualRect(centered.nodes.find((node) => node.id === 'rot')!)

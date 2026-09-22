@@ -1164,10 +1164,10 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   }
 
   const nudgeSelected = (delta: UiPoint) => {
-    const targetId = selectedIds.value[0]
-    if (!targetId || !getNodeActionPolicy(targetId).canTransform) return false
+    const rootIds = selectionRootNodeIds(document.value, selectedIds.value)
+    if (!rootIds.length || !resolveNodeActionPolicy(document.value, rootIds, rootIds[0], false).canTransform) return false
     let next = cloneUiDocument(document.value)
-    for (const id of selectedIds.value) {
+    for (const id of collectNodeSubtreeIds(document.value, rootIds)) {
       const node = findNode(next, id)
       if (!node) continue
       next = applyNodeGeometryTransaction(next, id, { kind: 'properties', patch: { x: node.props.x + delta.x, y: node.props.y + delta.y } })

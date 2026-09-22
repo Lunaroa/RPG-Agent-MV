@@ -200,6 +200,7 @@ const THUMB_ARM_BATCH = 6
 
 type TreeNodeView = {
   id: string
+  targetId?: string
   label: string
   entryCount: number
   children?: TreeNodeView[]
@@ -675,6 +676,25 @@ const thumbnailBucket = computed(() =>
   selectProjectAssetThumbnailBucket(thumbSize.value, window.devicePixelRatio || 1),
 )
 
+/** Shared first-level shortcuts for the favorites tree and grid. */
+const favoriteFolderItems = computed<FolderGridItem[]>(() => {
+  const items: FolderGridItem[] = favoritesGroups.value
+    .filter(categoryAllowedInSelectionMode)
+    .map((nodeId) => ({
+      kind: 'folder',
+      id: `${FAVORITES_GROUP_PREFIX}${nodeId}`,
+      label: projectAssetCategoryLabel(nodeId, language.value),
+      entryCount: countFavoriteFilesInNode(nodeId),
+    }))
+  for (const id of favorites.value) {
+    if (id.includes(':')) continue
+    const node = findTreeNode(treeNodes.value, id)
+    if (!node || !categoryAllowedInSelectionMode(node.id)) continue
+    items.push({ kind: 'folder', id: node.id, label: projectAssetCategoryLabel(node.id, language.value), entryCount: node.entryCount })
+  }
+  return items.sort((left, right) => left.label.localeCompare(right.label))
+})
+
 const treeData = computed<TreeNodeView[]>(() => {
   const nodes = selectionTreeNodes(treeNodes.value).map((node) => mapTreeNode(node))
   if (nodes.length === 0) return nodes
@@ -688,11 +708,12 @@ const treeData = computed<TreeNodeView[]>(() => {
           id: FAVORITES_NODE_ID,
           label: t('projectAssets.favoritesNode'),
           entryCount: favorites.value.size,
-          children: favoritesGroups.value.length
-            ? favoritesGroups.value.map((nodeId) => ({
-              id: `${FAVORITES_GROUP_PREFIX}${nodeId}`,
-              label: projectAssetCategoryLabel(nodeId, language.value),
-              entryCount: countFavoriteFilesInNode(nodeId),
+          children: favoriteFolderItems.value.length
+            ? favoriteFolderItems.value.map((item) => ({
+              id: item.id.startsWith(FAVORITES_GROUP_PREFIX) ? item.id : `__favorite_folder__:${item.id}`,
+              targetId: item.id,
+              label: item.label,
+              entryCount: item.entryCount,
             }))
             : undefined,
         },
@@ -731,26 +752,7 @@ const folderItems = computed<FolderGridItem[]>(() => {
         entryCount: child.entryCount,
       }))
     }
-    // Favorites root: subgroup folders per directory plus favorited folders.
-    const items: FolderGridItem[] = favoritesGroups.value.map((nodeId) => ({
-      kind: 'folder' as const,
-      id: `${FAVORITES_GROUP_PREFIX}${nodeId}`,
-      label: projectAssetCategoryLabel(nodeId, language.value),
-      entryCount: countFavoriteFilesInNode(nodeId),
-    }))
-    for (const id of favorites.value) {
-      if (id.includes(':')) continue
-      const node = findTreeNode(treeNodes.value, id)
-      if (!node) continue
-      if (!categoryAllowedInSelectionMode(node.id)) continue
-      items.push({
-        kind: 'folder' as const,
-        id: node.id,
-        label: projectAssetCategoryLabel(node.id, language.value),
-        entryCount: node.entryCount,
-      })
-    }
-    return items.sort((left, right) => left.label.localeCompare(right.label))
+    return favoriteFolderItems.value
   }
   const node = selectedNode.value
   if (!node?.children?.length) return []
@@ -1514,9 +1516,11 @@ async function loadCategory(categoryId: string, options: { preserveViewState?: b
   const project = projectStore.currentProject
   const bucket = thumbnailBucket.value
   const token = listingCoordinator.begin({ project, categoryId, bucket })
+  const isCurrent = () => listingCoordinator.isCurrent(token) && projectStore.currentProject === project
   categoryLoading.value = true
   categoryError.value = ''
   if (!options.preserveViewState) {
+    categoryEntries.value = []
     selectedFolderId.value = null
     scrollTop.value = 0
     if (gridHost.value) gridHost.value.scrollTop = 0
@@ -1526,45 +1530,43 @@ async function loadCategory(categoryId: string, options: { preserveViewState?: b
     thumbnailArmGeneration += 1
   }
 
-  await listingCoordinator.runExclusive(token, async (context) => {
-    try {
-      const listing = await projectAssets.browseCategory(categoryId, project, bucket, browseOptions.value)
-      if (!context.isCurrent()) return
-      categoryEntries.value = listing.entries
-      categoryDirectory.value = listing.directory || ''
-      categoryError.value = ''
-      selection.value = pruneProjectAssetSelection(
-        selection.value,
-        new Set(listing.entries.map((entry) => entry.id)),
-      )
-      if (isSelectionMode.value && props.currentPath) {
-        let currentPath = ''
-        try {
-          currentPath = normalizeUiDesignerProjectRelativeResourcePath(props.currentPath)
-        } catch {
-          currentPath = ''
-        }
-        const current = currentPath
-          ? listing.entries.find((entry) => entry.variants.some((variant) => {
-            try {
-              return normalizeUiDesignerProjectRelativeResourcePath(variant.relativePath) === currentPath
-            } catch {
-              return false
-            }
-          }))
-          : undefined
-        if (current) applyFileSelection(selectProjectAssetExclusive(current.id))
+  try {
+    const listing = await projectAssets.browseCategory(categoryId, project, bucket, browseOptions.value)
+    if (!isCurrent()) return
+    categoryEntries.value = listing.entries
+    categoryDirectory.value = listing.directory || ''
+    categoryError.value = ''
+    selection.value = pruneProjectAssetSelection(
+      selection.value,
+      new Set(listing.entries.map((entry) => entry.id)),
+    )
+    if (isSelectionMode.value && props.currentPath) {
+      let currentPath = ''
+      try {
+        currentPath = normalizeUiDesignerProjectRelativeResourcePath(props.currentPath)
+      } catch {
+        currentPath = ''
       }
-    } catch (error) {
-      if (!context.isCurrent()) return
-      categoryEntries.value = []
-      categoryDirectory.value = ''
-      categoryError.value = t('projectAssets.loadCategoryFailed', { message: formatError(error) })
-      clearFileSelection()
-    } finally {
-      if (context.isCurrent()) categoryLoading.value = false
+      const current = currentPath
+        ? listing.entries.find((entry) => entry.variants.some((variant) => {
+          try {
+            return normalizeUiDesignerProjectRelativeResourcePath(variant.relativePath) === currentPath
+          } catch {
+            return false
+          }
+        }))
+        : undefined
+      if (current) applyFileSelection(selectProjectAssetExclusive(current.id))
     }
-  })
+  } catch (error) {
+    if (!isCurrent()) return
+    categoryEntries.value = []
+    categoryDirectory.value = ''
+    categoryError.value = t('projectAssets.loadCategoryFailed', { message: formatError(error) })
+    clearFileSelection()
+  } finally {
+    if (isCurrent()) categoryLoading.value = false
+  }
 }
 
 /** Load the virtual favorites listing: browse every node a favorited file lives in, keep only favorites. */
@@ -1573,10 +1575,12 @@ async function loadFavoritesListing(options: { preserveViewState?: boolean } = {
   if (!project) return
   const bucket = thumbnailBucket.value
   const token = listingCoordinator.begin({ project, categoryId: selectedCategoryId.value || FAVORITES_NODE_ID, bucket })
+  const isCurrent = () => listingCoordinator.isCurrent(token) && projectStore.currentProject === project
   categoryLoading.value = true
   categoryError.value = ''
   categoryDirectory.value = ''
   if (!options.preserveViewState) {
+    categoryEntries.value = []
     selectedFolderId.value = null
     scrollTop.value = 0
     if (gridHost.value) gridHost.value.scrollTop = 0
@@ -1586,43 +1590,41 @@ async function loadFavoritesListing(options: { preserveViewState?: boolean } = {
     thumbnailArmGeneration += 1
   }
 
-  await listingCoordinator.runExclusive(token, async (context) => {
-    try {
-      const ids = favorites.value
-      const nodes = favoriteListingNodes(ids)
-      const listings = await boundedAsyncMap(nodes, 4, async (node) => {
-        try {
-          return await projectAssets.browseCategory(node, project, bucket, browseOptions.value)
-        } catch {
-          return null // node vanished on disk; its favorites simply do not resolve
-        }
-      })
-      if (!context.isCurrent()) return
-      const seen = new Set<string>()
-      const entries: ProjectAssetBrowseEntry[] = []
-      for (const listing of listings) {
-        if (!listing) continue
-        for (const entry of listing.entries) {
-          if (!ids.has(entry.id) || seen.has(entry.id)) continue
-          seen.add(entry.id)
-          entries.push(entry)
-        }
+  try {
+    const ids = favorites.value
+    const nodes = favoriteListingNodes(ids)
+    const listings = await boundedAsyncMap(nodes, 4, async (node) => {
+      try {
+        return await projectAssets.browseCategory(node, project, bucket, browseOptions.value)
+      } catch {
+        return null // node vanished on disk; its favorites simply do not resolve
       }
-      categoryEntries.value = entries
-      categoryError.value = ''
-      selection.value = pruneProjectAssetSelection(
-        selection.value,
-        new Set(entries.map((entry) => entry.id)),
-      )
-    } catch (error) {
-      if (!context.isCurrent()) return
-      categoryEntries.value = []
-      categoryError.value = t('projectAssets.loadCategoryFailed', { message: formatError(error) })
-      clearFileSelection()
-    } finally {
-      if (context.isCurrent()) categoryLoading.value = false
+    })
+    if (!isCurrent()) return
+    const seen = new Set<string>()
+    const entries: ProjectAssetBrowseEntry[] = []
+    for (const listing of listings) {
+      if (!listing) continue
+      for (const entry of listing.entries) {
+        if (!ids.has(entry.id) || seen.has(entry.id)) continue
+        seen.add(entry.id)
+        entries.push(entry)
+      }
     }
-  })
+    categoryEntries.value = entries
+    categoryError.value = ''
+    selection.value = pruneProjectAssetSelection(
+      selection.value,
+      new Set(entries.map((entry) => entry.id)),
+    )
+  } catch (error) {
+    if (!isCurrent()) return
+    categoryEntries.value = []
+    categoryError.value = t('projectAssets.loadCategoryFailed', { message: formatError(error) })
+    clearFileSelection()
+  } finally {
+    if (isCurrent()) categoryLoading.value = false
+  }
 }
 
 function selectCategory(categoryId: string) {
@@ -1638,7 +1640,7 @@ function selectCategory(categoryId: string) {
 }
 
 function onTreeNodeClick(data: TreeNodeView) {
-  selectCategory(data.id)
+  selectCategory(data.targetId ?? data.id)
 }
 
 /** ArrowRight on a leaf (or already expanded) tree node hands focus to the grid, Explorer-style. */
@@ -3635,17 +3637,17 @@ watch(gridHost, (el, previous) => {
         <template #default="{ data }">
           <span
             class="project-assets-tree-node"
-            :class="{ 'is-drop-target': treeDropTargetId === data.id }"
+            :class="{ 'is-drop-target': treeDropTargetId === (data.targetId ?? data.id) }"
             :title="`${data.label} (${data.entryCount})`"
-            @contextmenu="openTreeContextMenu($event, data.id)"
-            @dragenter="onTreeNodeDragEnter($event, data.id)"
-            @dragover="onTreeNodeDragOver($event, data.id)"
-            @dragleave="onTreeNodeDragLeave($event, data.id)"
-            @drop="onTreeNodeDrop($event, data.id)"
+            @contextmenu="openTreeContextMenu($event, data.targetId ?? data.id)"
+            @dragenter="onTreeNodeDragEnter($event, data.targetId ?? data.id)"
+            @dragover="onTreeNodeDragOver($event, data.targetId ?? data.id)"
+            @dragleave="onTreeNodeDragLeave($event, data.targetId ?? data.id)"
+            @drop="onTreeNodeDrop($event, data.targetId ?? data.id)"
           >
             <span>{{ data.label }}</span>
             <el-icon
-              v-if="isFavorite(data.id)"
+              v-if="isFavorite(data.targetId ?? data.id)"
               class="project-assets-tree-favorite"
               :aria-label="t('projectAssets.favorite')"
             ><StarFilled /></el-icon>

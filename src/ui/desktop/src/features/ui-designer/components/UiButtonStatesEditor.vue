@@ -91,15 +91,21 @@ const updateCode = (state: keyof UiButtonImageStates, code: string, sceneId?: st
         </span>
         <span class="state-resource-control">
           <UiResourceReferenceControl
+            editable
+            :draft-coordinator="draftCoordinator"
+            :scene-id="sceneId"
+            :node-id="nodeId"
             :model-value="value[state]"
             :placeholder="resourcePickerDisabled ? t('noProject') : t('chooseImageResource')"
             :select-label="t('chooseImageResource')"
             :clear-label="t('clearResource')"
             :select-disabled="!pickResource || resourcePickerDisabled"
+            :value-ui-id="`ui-designer-button-state-${state}-value`"
             :select-ui-id="`ui-designer-button-state-${state}-select`"
             :clear-ui-id="`ui-designer-button-state-${state}-clear`"
             @select="void choose(state)"
             @clear="update(state, '')"
+            @change="update(state, $event)"
           />
         </span>
       </label>
@@ -109,13 +115,15 @@ const updateCode = (state: keyof UiButtonImageStates, code: string, sceneId?: st
 
 <style scoped>
 .states-editor { display: flex; flex-direction: column; gap: 5px; }.field-label { color: var(--app-ink-soft); font-size: 11px; }
-.state-row { display: flex; flex-direction: column; gap: 4px; }
-.state-head { display: flex; align-items: center; justify-content: space-between; gap: 5px; }
-.state-name { color: var(--app-ink-soft); font-size: 10px; }
-.state-head .el-button-group { white-space: nowrap; }.state-head .el-button { padding: 3px 6px; font-size: 10px; }
-.state-value { display: grid; grid-template-columns: 60px minmax(0, 1fr); align-items: center; gap: 5px; }
-.state-thumbnail { display: grid; place-items: center; width: 60px; height: 32px; overflow: hidden; border: 1px solid var(--app-border); border-radius: 3px; background: var(--app-bg-sunken); color: var(--app-ink-soft); }.state-thumbnail.empty { border-style: dashed; }.state-thumbnail img { width: 100%; height: 100%; object-fit: contain; }
+.state-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 3px; }
+.state-head { display: contents; }
+.state-name { grid-column: 1; grid-row: 1; color: var(--app-ink-soft); font-size: 10px; white-space: nowrap; }
+.state-head .el-button-group { grid-column: 3; grid-row: 1; white-space: nowrap; }.state-head .el-button { padding: 3px 6px; font-size: 10px; }
+.state-value { grid-column: 2; grid-row: 1; min-width: 0; display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: center; gap: 3px; }
+.state-thumbnail { display: grid; place-items: center; width: 32px; height: 32px; overflow: hidden; border: 1px solid var(--app-border); border-radius: 3px; background: var(--app-bg-sunken); color: var(--app-ink-soft); font-size: 10px; }.state-thumbnail.empty { border-style: dashed; }.state-thumbnail img { width: 100%; height: 100%; object-fit: contain; }
 .state-resource-control { min-width: 0; }.state-resource-control > * { width: 100%; min-width: 0; }
-.state-code { position: relative; }
+.state-resource-control :deep(.resource-actions .el-button) { padding: 0 6px; font-size: 11px; }
+.state-resource-control :deep(.resource-actions .resource-clear) { width: 22px; padding: 0; }
+.state-code { grid-column: 1 / -1; min-width: 0; position: relative; }
 .code-note { position: absolute; right: 6px; bottom: 4px; color: var(--app-ink-soft); font-size: 9px; pointer-events: none; }
 </style>

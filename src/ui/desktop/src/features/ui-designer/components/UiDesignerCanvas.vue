@@ -45,6 +45,7 @@ const editStack = ref<string[]>([])
 const editingRootId = computed(() => editStack.value.at(-1) ?? 'node_root')
 const editingRoot = computed(() => document.value.nodes.find((node) => node.id === editingRootId.value))
 const panning = ref<{ pointerId: number; mode: 'space' | 'middle'; startX: number; startY: number; scrollLeft: number; scrollTop: number }>()
+const selectedDragging = ref<{ pointerId: number; startX: number; startY: number; moved: boolean }>()
 const guideDragging = ref<{ id: string; type: 'vertical' | 'horizontal'; pointerId: number }>()
 const guideMenu = ref<{ x: number; y: number; guideId?: string }>()
 const nodeMenu = ref<{ x: number; y: number; nodeId: string }>()
@@ -372,10 +373,52 @@ const endPan = (event?: PointerEvent) => {
   window.removeEventListener('pointerup', endPan)
   window.removeEventListener('pointercancel', endPan)
 }
+const moveSelectedDrag = (event: PointerEvent) => {
+  const active = selectedDragging.value
+  if (!active || active.pointerId !== event.pointerId) return
+  if (event.clientX === active.startX && event.clientY === active.startY) return
+  active.moved = true
+  event.preventDefault()
+  fabricCanvas.value?.moveSelectedDrag(event)
+}
+const endSelectedDrag = (event?: PointerEvent, commit = true) => {
+  const active = selectedDragging.value
+  if (!active || event && active.pointerId !== event.pointerId) return
+  selectedDragging.value = undefined
+  window.removeEventListener('pointermove', moveSelectedDrag, true)
+  window.removeEventListener('pointerup', completeSelectedDrag, true)
+  window.removeEventListener('pointercancel', cancelSelectedDrag, true)
+  fabricCanvas.value?.endSelectedDrag(commit && active.moved, commit ? event : undefined)
+}
+const completeSelectedDrag = (event: PointerEvent) => endSelectedDrag(event)
+const cancelSelectedDrag = (event?: PointerEvent) => endSelectedDrag(event, false)
+const beginSelectedDrag = (event: PointerEvent) => {
+  if (event.button !== 0 || !event.ctrlKey || spacePressed.value || editorPreviewing.value || !selectedActionPolicy.value?.canTransform) return false
+  if (!fabricCanvas.value?.beginSelectedDrag(event)) return false
+  event.preventDefault()
+  event.stopPropagation()
+  event.stopImmediatePropagation()
+  clearNativeCanvasSelection()
+  selectedDragging.value = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, moved: false }
+  window.addEventListener('pointermove', moveSelectedDrag, true)
+  window.addEventListener('pointerup', completeSelectedDrag, true)
+  window.addEventListener('pointercancel', cancelSelectedDrag, true)
+  return true
+}
+const suppressSelectedMouseDown = (event: MouseEvent) => {
+  if (!selectedDragging.value || event.button !== 0) return
+  event.preventDefault()
+  event.stopPropagation()
+  event.stopImmediatePropagation()
+}
 const handleViewportPointerDown = (event: PointerEvent) => {
-  if (!beginPan(event)) clearNativeCanvasSelection(event)
+  if (!beginSelectedDrag(event) && !beginPan(event)) clearNativeCanvasSelection(event)
 }
 const worldFromClient = (event: PointerEvent | MouseEvent) => viewportClientToWorld({ x: event.clientX, y: event.clientY }, viewportFrame(), canvasViewport.value)
+const newNodeParentId = () => {
+  const selected = selectedIds.value.map((id) => document.value.nodes.find((node) => node.id === id)).find((node) => node && node.id !== 'node_root')
+  return selected?.parentId ?? editingRootId.value
+}
 
 const beginGuideFromRuler = (event: PointerEvent, type: 'vertical' | 'horizontal') => {
   const point = worldFromClient(event)
@@ -532,7 +575,7 @@ const dropResource = (event: DragEvent) => {
   event.preventDefault()
   const nodeType = event.dataTransfer?.getData('text/ui-node-type')?.trim() as UiDesignerDocument['nodes'][number]['type'] | ''
   if (nodeType && ['container', 'list', 'sprite', 'nineSlice', 'frameAnimation', 'button', 'text', 'progressBar', 'video', 'particle'].includes(nodeType)) {
-    designer.addNode(nodeType, editingRootId.value, worldFromClient(event))
+    designer.addNode(nodeType, newNodeParentId(), worldFromClient(event))
     return
   }
   const path = event.dataTransfer?.getData('text/ui-resource-path')?.trim() ?? ''
@@ -541,7 +584,7 @@ const dropResource = (event: DragEvent) => {
   let node = selectedNode.value
   if (!node) {
     const type = category === 'video' ? 'video' : category === 'font' ? 'text' : category === 'audio' ? 'button' : 'sprite'
-    const nodeId = designer.addNode(type, editingRootId.value, worldFromClient(event))
+    const nodeId = designer.addNode(type, newNodeParentId(), worldFromClient(event))
     node = nodeId ? document.value.nodes.find((candidate) => candidate.id === nodeId) : undefined
   }
   if (!node) return
@@ -550,7 +593,7 @@ const dropResource = (event: DragEvent) => {
   const property = preferred && preferred in nodeProps ? preferred : ['path', 'backgroundPath', 'imagePath', 'trackImage', 'fillImage', 'posterPath'].find((key) => key in nodeProps)
   if (property) designer.updateNodeProperty(node.id, property, path)
 }
-const clearSpacePressed = () => { spacePressed.value = false; if (panning.value?.mode === 'space') endPan() }
+const clearSpacePressed = () => { spacePressed.value = false; if (panning.value?.mode === 'space') endPan(); cancelSelectedDrag() }
 
 let viewportResizeObserver: ResizeObserver | undefined
 let unregisterThumbnailProvider: (() => void) | undefined
@@ -568,6 +611,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   endPan()
+  cancelSelectedDrag()
   endGuide()
   closeContextMenus()
   window.removeEventListener('keydown', keyDown)
@@ -630,7 +674,7 @@ onBeforeUnmount(() => {
     <el-dialog v-model="rendererFailureDetailsVisible" append-to-body width="min(620px, calc(100vw - 32px))" :title="t('previewErrorDetails')">
       <pre class="renderer-error-details" data-ui-id="ui-designer-runtime-canvas-details-content" data-testid="ui-designer-runtime-canvas-details-content">{{ rendererFailureDetailsText }}</pre>
     </el-dialog>
-    <div ref="viewportElement" class="canvas-viewport" :class="{ 'pan-ready': spacePressed, panning: Boolean(panning) }" @wheel="zoom" @pointerdown.capture="handleViewportPointerDown" @selectstart="preventNativeCanvasSelection" @dragstart="preventNativeCanvasDrag" @dragover.prevent @drop="dropResource">
+    <div ref="viewportElement" class="canvas-viewport" :class="{ 'pan-ready': spacePressed, panning: Boolean(panning), 'selected-dragging': Boolean(selectedDragging) }" @wheel="zoom" @pointerdown.capture="handleViewportPointerDown" @mousedown.capture="suppressSelectedMouseDown" @selectstart="preventNativeCanvasSelection" @dragstart="preventNativeCanvasDrag" @dragover.prevent @drop="dropResource">
       <div class="canvas-scroll-content" :style="scrollContentStyle">
       <div v-if="document.canvas.rulers" class="canvas-ruler horizontal" aria-hidden="true" @pointerdown.stop="beginGuideFromRuler($event, 'horizontal')"><span v-for="tick in rulerTicks.horizontal" :key="`h-${tick}`" class="ruler-tick" :style="{ left: `${worldPointToViewport({ x: tick, y: 0 }, viewportFrame(), canvasViewport).x}px` }">{{ tick }}</span></div>
       <div v-if="document.canvas.rulers" class="canvas-ruler vertical" aria-hidden="true" @pointerdown.stop="beginGuideFromRuler($event, 'vertical')"><span v-for="tick in rulerTicks.vertical" :key="`v-${tick}`" class="ruler-tick" :style="{ top: `${worldPointToViewport({ x: 0, y: tick }, viewportFrame(), canvasViewport).y}px` }">{{ tick }}</span></div>
@@ -683,9 +727,9 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .canvas-panel { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; background: #12141b; }
-.canvas-toolbar { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 5px 10px; border-bottom: 1px solid var(--app-border); color: var(--app-ink-soft); font-size: 11px; }
+.canvas-toolbar { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 5px 10px; border-bottom: 1px solid var(--app-border); color: var(--app-ink-soft); background: color-mix(in srgb, var(--app-bg) 96%, var(--app-accent) 4%); font-size: 11px; }
 .canvas-title { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.canvas-zoom { font-variant-numeric: tabular-nums; }
-.canvas-viewport { position: relative; flex: 1; min-height: 0; overflow: auto; background: #20232c; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; scrollbar-width: none; }.canvas-viewport::-webkit-scrollbar { display: none; }.canvas-viewport * { -webkit-user-drag: none; }.canvas-viewport.pan-ready { cursor: grab; }.canvas-viewport.panning { cursor: grabbing; }
+.canvas-viewport { position: relative; flex: 1; min-height: 0; overflow: auto; background: #20232c; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; scrollbar-width: none; }.canvas-viewport::-webkit-scrollbar { display: none; }.canvas-viewport * { -webkit-user-drag: none; }.canvas-viewport.pan-ready { cursor: grab; }.canvas-viewport.panning, .canvas-viewport.selected-dragging { cursor: grabbing; }
 .canvas-scroll-content { position: relative; flex: none; }
 .canvas-ruler { position: absolute; z-index: 5; pointer-events: auto; cursor: crosshair; background: repeating-linear-gradient(to right, #ffffff55 0 1px, transparent 1px 32px); opacity: .35; }.canvas-ruler.horizontal { inset: 0 0 auto; height: 18px; }.canvas-ruler.vertical { inset: 0 auto 0 0; width: 18px; background: repeating-linear-gradient(to bottom, #ffffff55 0 1px, transparent 1px 32px); }.ruler-tick { position: absolute; color: #fff; font-size: 8px; line-height: 12px; pointer-events: none; transform: translateX(-1px); }.canvas-ruler.vertical .ruler-tick { transform: translateY(-1px) rotate(-90deg); transform-origin: left top; }
 .canvas-guide { position: absolute; z-index: 4; pointer-events: auto; cursor: ew-resize; background: var(--el-color-warning); opacity: .55; }.canvas-guide.vertical { top: 0; bottom: 0; width: 3px; margin-left: -1px; }.canvas-guide.horizontal { right: 0; left: 0; height: 3px; margin-top: -1px; cursor: ns-resize; }.canvas-guide.locked { cursor: not-allowed; opacity: .35; }.canvas-guide.snapped { opacity: 1; }.canvas-snap-line { position: absolute; z-index: 4; pointer-events: none; box-shadow: 0 0 0 1px #fff; }.canvas-snap-line.vertical { width: 1px; margin-left: -1px; background: repeating-linear-gradient(to bottom, #ff2d2d 0 6px, transparent 6px 10px); }.canvas-snap-line.horizontal { height: 1px; margin-top: -1px; background: repeating-linear-gradient(to right, #ff2d2d 0 6px, transparent 6px 10px); }

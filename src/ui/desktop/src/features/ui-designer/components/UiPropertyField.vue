@@ -59,6 +59,8 @@ const resourceActionLabel = computed(() => props.resourceCategory === 'image'
 const issueLabels: Partial<Record<UiValidationIssue['code'], UiDesignerMessageKey>> = { 'invalid-value': 'invalidValue', 'invalid-code': 'invalidCode', 'invalid-reference': 'invalidReference', 'missing-resource': 'missingResource' }
 const issueLabel = (issue: UiValidationIssue) => t(issueLabels[issue.code] ?? 'validationIssue')
 const draftValue = ref<unknown>(props.value)
+const colorText = ref(typeof props.value === 'string' ? props.value : '')
+const colorInputError = ref(false)
 const resourceDropError = ref('')
 let valueDraftPending = false
 let valueDraftBaseline: unknown = props.value
@@ -122,7 +124,21 @@ watch(() => props.value, (value) => {
   valueDraftPending = false
   valueDraftBaseline = value
   draftValue.value = value
+  if (props.kind === 'color') { colorText.value = typeof value === 'string' ? value : ''; colorInputError.value = false }
 })
+const updateColorFromPicker = (value: string | null) => {
+  const color = value ?? '#ffffff'
+  colorText.value = color
+  colorInputError.value = false
+  updateDraft(color)
+}
+const commitColorText = () => {
+  const color = colorText.value.trim()
+  if (!CSS.supports('color', color)) { colorInputError.value = true; return }
+  colorInputError.value = false
+  updateDraft(color)
+  commitValue()
+}
 const numberListText = ref('')
 const formatNumberList = (value: unknown) => Array.isArray(value) ? (value as unknown[]).filter((entry) => typeof entry === 'number' && Number.isFinite(entry)).join(', ') : ''
 const parseNumberList = (text: string): number[] | null => {
@@ -215,15 +231,17 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
       size="small"
       @update:model-value="emitValue($event)"
     />
-    <el-color-picker
-      v-else-if="props.mode === 'value' && props.kind === 'color'"
-      :model-value="typeof draftValue === 'string' ? draftValue : '#ffffff'"
-      show-alpha
-      size="small"
-      @active-change="updateDraft($event ?? '#ffffff')"
-      @update:model-value="updateDraft($event ?? '#ffffff')"
-      @change="commitValue"
-    />
+    <div v-else-if="props.mode === 'value' && props.kind === 'color'" class="color-control">
+      <el-color-picker
+        :model-value="typeof draftValue === 'string' ? draftValue : '#ffffff'"
+        show-alpha
+        size="small"
+        @active-change="updateColorFromPicker($event)"
+        @update:model-value="updateColorFromPicker($event)"
+        @change="commitValue"
+      />
+      <el-input :model-value="colorText" size="small" :aria-label="props.label" @update:model-value="colorText = $event; colorInputError = false" @blur="commitColorText" @keydown.enter.prevent="commitColorText" />
+    </div>
     <el-select
       v-else-if="props.mode === 'value' && props.kind === 'enum'"
       :model-value="typeof props.value === 'string' ? props.value : undefined"
@@ -280,6 +298,7 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
       <span v-else class="code-note">{{ t('unavailable') }}</span>
     </div>
     <p v-if="props.kind === 'resource' && resourceDropError" class="resource-drop-error">{{ resourceDropError }}</p>
+    <p v-if="props.kind === 'color' && colorInputError" class="field-error color-error">{{ t('invalidValue') }}</p>
     <div v-for="issue in props.issues ?? []" :key="`${issue.code}-${issue.path ?? ''}`" class="field-error"><span>{{ issueLabel(issue) }}</span><details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ issue.message }}</span></details></div>
   </div>
 </template>
@@ -296,6 +315,7 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
 .property-field > .el-select,
 .property-field > .el-switch,
 .property-field > .el-color-picker,
+.property-field > .color-control,
 .property-field > .number-control,
 .property-field > .resource-control,
 .property-field > .code-field {
@@ -304,6 +324,10 @@ onBeforeUnmount(() => { flushDraft(); unregisterDraft?.() })
 .number-control { display: grid; grid-template-columns: minmax(0, 1fr) 88px; align-items: center; gap: 8px; }
 .number-control :deep(.el-slider) { box-sizing: border-box; min-width: 0; padding-inline: 10px; }
 .number-control :deep(.el-input-number) { width: 88px; }
+.color-control { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.color-control :deep(.el-color-picker), .color-control :deep(.el-color-picker__trigger) { width: 50px; height: 24px; }
+.color-control :deep(.el-input) { min-width: 0; flex: 1; }
+.color-error { grid-column: 2 / -1; }
 .code-field { position: relative; }
 .code-note { position: absolute; right: 6px; bottom: 4px; color: var(--app-ink-soft); font-size: 9px; pointer-events: none; }
 .resource-drop-error, .resource-picker-hint { margin: 0; color: var(--app-ink-soft); font-size: 10px; line-height: 1.3; }.property-field > .resource-drop-error, .property-field > .field-error { grid-column: 2 / -1; }

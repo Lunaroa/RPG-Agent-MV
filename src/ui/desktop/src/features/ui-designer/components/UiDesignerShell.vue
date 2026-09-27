@@ -37,6 +37,7 @@ let rawDesigner!: ReturnType<typeof useUiDesigner>
 const surface = ref<'settings' | 'sceneSettings' | 'about' | 'shortcuts' | 'tour' | 'newScene' | 'openScene' | 'saveAs' | 'globalData' | null>(null)
 const tourStep = ref(0)
 const showWelcome = ref(true)
+const homeTabOpen = ref(true)
 const saveAsInitialName = ref('')
 const saveAsBusy = ref(false)
 const newSceneDraft = reactive({ name: '', width: 816, height: 624, sceneBase: 'Scene_Base' })
@@ -138,6 +139,19 @@ const openScenePicker = async () => {
   if (!rawDesigner.hasProject.value) return
   await rawDesigner.loadWelcomeRecords()
   surface.value = 'openScene'
+}
+const openHome = () => {
+  homeTabOpen.value = true
+  showWelcome.value = true
+  void rawDesigner.loadWelcomeRecords()
+}
+const closeHome = () => {
+  homeTabOpen.value = false
+  if (rawDesigner.scenes.value.length) showWelcome.value = false
+}
+const selectSceneTab = (sceneId: string) => {
+  rawDesigner.selectScene(sceneId)
+  showWelcome.value = false
 }
 const openProjectScene = async (sourcePath: string) => {
   if (!(await rawDesigner.open({ path: sourcePath }))) return
@@ -278,7 +292,7 @@ watch(() => [designer.preferences.leftPaneWidth, designer.preferences.centerPane
   }
 }, { immediate: true })
 watch(() => designer.scenes.length, (count, previous) => {
-  if (count === 0) showWelcome.value = true
+  if (count === 0) { showWelcome.value = true; homeTabOpen.value = true }
   else if (count > (previous ?? 0)) showWelcome.value = false
 })
 watch(() => props.projectPath, (next, previous) => {
@@ -300,7 +314,7 @@ onMounted(async () => {
   modifier('c', () => designer.copy(), false, 'shortcutCopy')
   modifier('x', () => { if (designer.selectedIds[0]) designer.executeNodeAction('cut', designer.selectedIds[0]) }, false, 'shortcutCut')
   modifier('v', () => designer.paste(), false, 'shortcutPaste')
-  modifier('w', () => { void designer.closeScene(designer.activeSceneId) }, false, 'shortcutCloseScene')
+  modifier('w', () => { if (showWelcome.value && homeTabOpen.value) closeHome(); else void designer.closeScene(designer.activeSceneId) }, false, 'shortcutCloseScene')
   modifier('y', () => designer.redo(), false, 'shortcutRedo')
   modifier('d', () => { designer.duplicateSelected() }, false, 'shortcutDuplicate')
   modifier('a', () => { designer.selectNodes(designer.document.nodes.filter((node) => node.id !== 'node_root').map((node) => node.id)) }, false, 'shortcutSelectAll')
@@ -308,6 +322,8 @@ onMounted(async () => {
   modifier('g', () => { designer.ungroup() }, true, 'shortcutUngroup')
   modifier('[', () => { if (designer.selectedIds.length) designer.moveStep(designer.selectedIds[0], 'up') }, false, 'shortcutMoveUp')
   modifier(']', () => { if (designer.selectedIds.length) designer.moveStep(designer.selectedIds[0], 'down') }, false, 'shortcutMoveDown')
+  modifier('ArrowUp', () => { if (designer.selectedIds.length) designer.moveStep(designer.selectedIds[0], 'up') }, false, 'shortcutMoveUp')
+  modifier('ArrowDown', () => { if (designer.selectedIds.length) designer.moveStep(designer.selectedIds[0], 'down') }, false, 'shortcutMoveDown')
   modifier('[', () => { if (designer.selectedIds.length) designer.moveToEdge(designer.selectedIds[0], 'top') }, true, 'shortcutToTop')
   modifier(']', () => { if (designer.selectedIds.length) designer.moveToEdge(designer.selectedIds[0], 'bottom') }, true, 'shortcutToBottom')
   modifier('0', () => designer.setZoom(1), false, 'shortcutResetZoom')
@@ -355,8 +371,8 @@ onBeforeUnmount(() => {
 
 <template>
     <section class="ui-designer-shell" :class="{ 'code-mode-active': designer.editingMode === 'code' || designer.editingMode === 'json' }" data-ui-id="ui-designer-shell">
-    <UiDesignerToolbar :designer="designer" @home="showWelcome = true" @open="void openScenePicker()" @import="void importSceneFile()" @save-as="openSaveAs" @editing-mode="showEditingMode" @scene-settings="surface = 'sceneSettings'" @global-data="surface = 'globalData'" />
-    <UiDesignerSceneTabs :designer="designer" @new-scene="openNewScene" />
+    <UiDesignerToolbar :designer="designer" @home="openHome" @open="void openScenePicker()" @import="void importSceneFile()" @save-as="openSaveAs" @editing-mode="showEditingMode" @scene-settings="surface = 'sceneSettings'" @global-data="surface = 'globalData'" />
+    <UiDesignerSceneTabs :designer="designer" :home-open="homeTabOpen" :home-active="showWelcome && homeTabOpen" @open-home="openHome" @close-home="closeHome" @select-scene="selectSceneTab" @new-scene="openNewScene" />
     <div class="designer-workspace" :class="{ 'welcome-active': showWelcome }" :style="workspaceStyle">
       <aside v-if="!showWelcome" class="left-pane">
         <UiDesignerNodePanel :designer="designer" @activate-node="activateNode" />

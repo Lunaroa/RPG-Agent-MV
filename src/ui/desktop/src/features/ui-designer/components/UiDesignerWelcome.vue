@@ -72,7 +72,7 @@ const loadSceneTemplate = async (name: string) => {
               <img v-if="item.thumbnailUrl" :src="item.thumbnailUrl" alt="" />
               <span v-else class="scene-thumbnail-placeholder">UI</span>
             </span>
-            <span class="scene-card-name">{{ item.sceneName }}</span>
+            <span class="scene-card-name">{{ [item.title, item.sceneName].filter(Boolean).join(' ') }}</span>
             <span class="scene-card-meta">{{ t('modifiedTime') }} {{ formatDate(item.modifiedAt) }}</span>
           </button>
           <template #dropdown><el-dropdown-menu><el-dropdown-item command="delete">{{ t('deleteScene') }}</el-dropdown-item></el-dropdown-menu></template>
@@ -124,7 +124,7 @@ h2 { margin: 0; font-size: 19px; }
 p { margin: 2px 0 0; color: var(--app-ink-soft); font-size: 12px; line-height: 1.6; }
 .welcome-actions { display: flex; grid-column: 2; flex-wrap: wrap; justify-content: flex-start; gap: 8px; }
 .welcome-panel .el-alert { width: min(720px, 100%); margin-top: 8px; box-sizing: border-box; text-align: left; }
-.welcome-list { width: min(720px, 100%); margin-top: 12px; text-align: left; }.list-title { margin-bottom: 7px; color: var(--app-ink-soft); font-size: 11px; font-weight: 650; }.welcome-row { display: flex; align-items: center; gap: 8px; min-height: 28px; border-top: 1px solid var(--app-border); font-size: 11px; }.welcome-row > button { flex: 1; overflow: hidden; border: 0; background: none; color: var(--app-ink); cursor: pointer; text-align: left; text-overflow: ellipsis; white-space: nowrap; }.welcome-row > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.welcome-list { width: min(1280px, 100%); margin-top: 12px; text-align: left; }.list-title { margin-bottom: 7px; color: var(--app-ink-soft); font-size: 11px; font-weight: 650; }.welcome-row { display: flex; align-items: center; gap: 8px; min-height: 28px; border-top: 1px solid var(--app-border); font-size: 11px; }.welcome-row > button { flex: 1; overflow: hidden; border: 0; background: none; color: var(--app-ink); cursor: pointer; text-align: left; text-overflow: ellipsis; white-space: nowrap; }.welcome-row > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .welcome-empty { padding: 14px 0; border-top: 1px solid var(--app-border); color: var(--app-ink-soft); font-size: 11px; }
 .scene-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; width: 100%; }
 .project-scene-dropdown { display: block; min-width: 0; width: 100%; }

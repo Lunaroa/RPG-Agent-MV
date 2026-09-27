@@ -368,7 +368,7 @@ const applyTextStyle = (object: Textbox, node: UiTextNode | UiButtonNode, fontFa
     backgroundColor: node.type === 'button' ? '#00000000' : node.props.backgroundColor,
     shadow: textShadow(node),
     splitByGrapheme: true,
-    lineHeight: 1.2,
+    lineHeight: node.props.lineHeight,
     editable: !node.locked,
     lockScalingY: node.locked,
     ...(object instanceof UiLayoutTextbox

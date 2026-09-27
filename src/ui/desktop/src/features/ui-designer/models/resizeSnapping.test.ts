@@ -43,6 +43,17 @@ test('center resizing does not double the drag delta with or without a snap', ()
   assert.equal(result.x + result.width / 2, origin.x + origin.width / 2)
 })
 
+test('resize feedback includes a guide and node at the same alignment', () => {
+  const origin = { x: 100, y: 100, width: 100, height: 50 }
+  const result = snapRect({ ...origin, width: 119 }, origin, 'e', free, {
+    ...options,
+    guides: [{ id: 'vertical', type: 'vertical', position: 220, locked: false }],
+    targets: [{ id: 'peer', rect: { x: 220, y: 300, width: 40, height: 40 } }],
+  })
+  assert.equal(result.width, 120)
+  assert.deepEqual(result.hits.map((hit) => [hit.source, hit.value]), [['guide', 220], ['node', 220]])
+})
+
 test('aspect-preserving corner resize reaches the line without breaking the ratio', () => {
   const node = nodeFor()
   const origin = nodeRect(node)

@@ -65,6 +65,25 @@ test('move snapping aligns visual edges and centers instead of only node anchors
   assert.deepEqual(result.hits.map((hit) => [hit.axis, hit.value, hit.source]), [
     ['x', 200, 'node'],
     ['y', 100, 'node'],
+    ['y', 140, 'node'],
+  ])
+})
+
+test('moving a node shows every distinct edge and center alignment', () => {
+  const result = snapMoveRect({ x: 97, y: 20, width: 100, height: 40 }, {
+    enabled: true,
+    gridEnabled: false,
+    gridSize: 32,
+    smartEnabled: true,
+    sensitivity: 5,
+    guides: [],
+    targets: [{ id: 'peer', rect: { x: 100, y: 200, width: 100, height: 50 } }],
+  }, ['x'])
+  assert.equal(result.x, 100)
+  assert.deepEqual(result.hits.map((hit) => [hit.axis, hit.value, hit.nodeId]), [
+    ['x', 100, 'peer'],
+    ['x', 200, 'peer'],
+    ['x', 150, 'peer'],
   ])
 })
 

@@ -3,8 +3,8 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import type { UiDesignerController, UiDesignerSceneState } from '../composables/useUiDesigner'
 import { useUiDesignerI18n } from '../i18n'
 
-const props = defineProps<{ designer: UiDesignerController }>()
-const emit = defineEmits<{ newScene: [] }>()
+const props = defineProps<{ designer: UiDesignerController; homeOpen: boolean; homeActive: boolean }>()
+const emit = defineEmits<{ newScene: []; openHome: []; closeHome: []; selectScene: [sceneId: string] }>()
 const { t } = useUiDesignerI18n()
 const designer = props.designer
 
@@ -27,30 +27,36 @@ const switchTab = (event: KeyboardEvent) => {
   if (designer.isPreviewing) return
   if (!(event.ctrlKey || event.metaKey) || event.key !== 'Tab' || (typeof HTMLElement !== 'undefined' && event.target instanceof HTMLElement && event.target.matches('input,textarea,select,.CodeMirror'))) return
   event.preventDefault()
-  const current = designer.scenes.findIndex((scene) => scene.id === designer.activeSceneId)
+  const tabs = [...(props.homeOpen ? ['home'] : []), ...designer.scenes.map((scene) => scene.id)]
+  if (!tabs.length) return
+  const current = props.homeActive && props.homeOpen ? 0 : tabs.indexOf(designer.activeSceneId)
   const delta = event.shiftKey ? -1 : 1
-  const next = (current + delta + designer.scenes.length) % designer.scenes.length
-  if (designer.scenes[next]) designer.selectScene(designer.scenes[next].id)
+  const next = (current + delta + tabs.length) % tabs.length
+  if (tabs[next] === 'home') emit('openHome')
+  else if (tabs[next]) emit('selectScene', tabs[next])
 }
 onMounted(() => window.addEventListener('keydown', switchTab))
 onBeforeUnmount(() => window.removeEventListener('keydown', switchTab))
-const tabLabel = (scene: UiDesignerSceneState) => scene.document.meta.sceneName
+const tabLabel = (scene: UiDesignerSceneState) => [scene.document.meta.title, scene.document.meta.sceneName].filter(Boolean).join(' ')
 </script>
 
 <template>
   <nav class="scene-tabs" data-ui-id="ui-designer-scene-tabs" data-testid="ui-designer-scene-tabs" :aria-label="t('scenes')">
+    <button v-if="homeOpen" class="scene-tab" :class="{ active: homeActive }" data-ui-id="ui-designer-home-tab" type="button" :disabled="designer.isPreviewing" @click="emit('openHome')">
+      <span class="scene-tab-content"><span class="scene-tab-label">{{ t('home') }}</span><el-icon class="tab-close" data-ui-id="ui-designer-home-tab-close" :title="t('close')" @click.stop="emit('closeHome')"><Close /></el-icon></span>
+    </button>
     <button
       v-for="scene in designer.scenes"
       :key="scene.id"
       class="scene-tab"
       :data-ui-id="`ui-designer-scene-tab-${scene.id}`"
       :data-testid="`ui-designer-scene-tab-${scene.id}`"
-      :class="{ active: scene.id === designer.activeSceneId }"
+      :class="{ active: !homeActive && scene.id === designer.activeSceneId }"
       :title="tabLabel(scene)"
       type="button"
       :disabled="designer.isPreviewing"
       draggable="true"
-      @click="designer.selectScene(scene.id)"
+      @click="emit('selectScene', scene.id)"
       @dragstart="onDragStart(scene.id, $event)"
       @dragover.prevent
       @drop="onDrop(scene.id, $event)"

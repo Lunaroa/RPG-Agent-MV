@@ -256,7 +256,7 @@ onBeforeUnmount(() => {
 
 const labels: Record<string, UiDesignerMessageKey> = {
   x: 'x' as UiDesignerMessageKey, y: 'y' as UiDesignerMessageKey, width: 'width', height: 'height', scaleX: 'scaleX', scaleY: 'scaleY', rotate: 'rotate', opacity: 'opacity', visible: 'visible', anchorX: 'anchorX', anchorY: 'anchorY', zIndex: 'zIndex',
-  content: 'content', path: 'path', backgroundPath: 'backgroundPath', fontSize: 'fontSize', textColor: 'textColor', backgroundColor: 'backgroundColor', fillColor: 'fillColor', currentValue: 'currentValue', maxValue: 'maxValue', imagePath: 'imagePath', velocityRandomX: 'velocityRandomX', velocityRandomY: 'velocityRandomY', rotationSpeed: 'rotationSpeed', lifetimeRandom: 'lifetimeRandom', startScale: 'startScale', endScale: 'endScale', startOpacity: 'startOpacity', endOpacity: 'endOpacity', glow: 'glow',
+  content: 'content', path: 'path', backgroundPath: 'backgroundPath', fontSize: 'fontSize', lineHeight: 'lineHeight', textColor: 'textColor', backgroundColor: 'backgroundColor', fillColor: 'fillColor', currentValue: 'currentValue', maxValue: 'maxValue', imagePath: 'imagePath', velocityRandomX: 'velocityRandomX', velocityRandomY: 'velocityRandomY', rotationSpeed: 'rotationSpeed', lifetimeRandom: 'lifetimeRandom', startScale: 'startScale', endScale: 'endScale', startOpacity: 'startOpacity', endOpacity: 'endOpacity', glow: 'glow',
   fontFile: 'fontFile', fontWeight: 'fontWeight', italic: 'italic', letterSpacing: 'letterSpacing', strokeColor: 'strokeColor', strokeWidth: 'strokeWidth', shadowColor: 'shadowColor', shadowOffsetX: 'shadowOffsetX', shadowOffsetY: 'shadowOffsetY', shadowBlur: 'shadowBlur', align: 'align', verticalAlign: 'verticalAlign', wrapWidth: 'wrapWidth', richText: 'richText', fillMode: 'fillMode', repeatMode: 'repeatMode', blendMode: 'blendMode', backgroundFillMode: 'backgroundFillMode', backgroundRepeatMode: 'backgroundRepeatMode', clip: 'clip', scrollX: 'scrollX', scrollY: 'scrollY', borderTop: 'borderTop', borderRight: 'borderRight', borderBottom: 'borderBottom', borderLeft: 'borderLeft', showGuides: 'showGuides', defaultFrameDuration: 'defaultFrameDuration', loop: 'loop', speed: 'speed', initialFrame: 'initialFrame', fillDirection: 'fillDirection', animateValue: 'animateValue', clickThrough: 'clickThrough', autoplay: 'autoplay', muted: 'muted', playbackRate: 'playbackRate', posterPath: 'posterPath', maxParticles: 'maxParticles', emissionInterval: 'emissionInterval', emissionArea: 'emissionArea', shape: 'shape', velocityX: 'velocityX', velocityY: 'velocityY', gravityX: 'gravityX', gravityY: 'gravityY', lifetime: 'lifetime', startColor: 'startColor', endColor: 'endColor', trackImage: 'trackImage', fillImage: 'fillImage', trackColor: 'trackColor', borderColor: 'borderColor', borderWidth: 'borderWidth', borderRadius: 'borderRadius', pressedScale: 'pressedScale', hoverTint: 'hoverTint', disabledCondition: 'disabledCondition', focusColor: 'focusColor', focusWidth: 'focusWidth', hoverSe: 'hoverSe', clickSe: 'clickSe', tint: 'tint',
   dataSource: 'dataSource', columns: 'columns', rows: 'rows', autoFlow: 'autoFlow', columnGap: 'columnGap', rowGap: 'rowGap', justifyItems: 'justifyItems', alignItems: 'alignItems', maxItems: 'maxItems', columnWidths: 'columnWidths', rowHeights: 'rowHeights', maxWidth: 'maxWidth', maxHeight: 'maxHeight',
 }
@@ -317,7 +317,7 @@ const enumLabels: Record<string, UiDesignerMessageKey> = {
 }
 const enumOptions = (values: string[]): Array<{ label: string; value: string }> => values.map((value) => ({ label: enumLabels[value] ? t(enumLabels[value]) : value, value }))
 const commonText: FieldDescriptor[] = [
-  { key: 'content', kind: 'text', multiline: true }, { key: 'richText', kind: 'boolean' }, { key: 'fontFile', kind: 'resource', resourceCategory: 'font' }, { key: 'fontSize', kind: 'number', min: 1 }, { key: 'fontWeight', kind: 'enum', options: enumOptions(['normal', 'bold', 'light']) }, { key: 'italic', kind: 'boolean' }, { key: 'letterSpacing', kind: 'number' }, { key: 'textColor', kind: 'color' }, { key: 'strokeColor', kind: 'color' }, { key: 'strokeWidth', kind: 'number', min: 0 }, { key: 'shadowColor', kind: 'color' }, { key: 'shadowOffsetX', kind: 'number' }, { key: 'shadowOffsetY', kind: 'number' }, { key: 'shadowBlur', kind: 'number', min: 0 }, { key: 'align', kind: 'enum', options: enumOptions(['left', 'center', 'right']) }, { key: 'verticalAlign', kind: 'enum', options: enumOptions(['top', 'middle', 'bottom']) }, { key: 'backgroundColor', kind: 'color' },
+  { key: 'content', kind: 'text', multiline: true }, { key: 'richText', kind: 'boolean' }, { key: 'fontFile', kind: 'resource', resourceCategory: 'font' }, { key: 'fontSize', kind: 'number', min: 1 }, { key: 'lineHeight', kind: 'number', min: 0.1, step: 0.1, unit: '×' }, { key: 'fontWeight', kind: 'enum', options: enumOptions(['normal', 'bold', 'light']) }, { key: 'italic', kind: 'boolean' }, { key: 'letterSpacing', kind: 'number' }, { key: 'textColor', kind: 'color' }, { key: 'strokeColor', kind: 'color' }, { key: 'strokeWidth', kind: 'number', min: 0 }, { key: 'shadowColor', kind: 'color' }, { key: 'shadowOffsetX', kind: 'number' }, { key: 'shadowOffsetY', kind: 'number' }, { key: 'shadowBlur', kind: 'number', min: 0 }, { key: 'align', kind: 'enum', options: enumOptions(['left', 'center', 'right']) }, { key: 'verticalAlign', kind: 'enum', options: enumOptions(['top', 'middle', 'bottom']) }, { key: 'backgroundColor', kind: 'color' },
 ]
 const fields = computed<FieldDescriptor[]>(() => {
   const node = selectedNode.value
@@ -488,6 +488,17 @@ const pickFieldResource = async (field: FieldDescriptor) => {
   return selection.path
 }
 const updateMode = (key: string, mode: 'value' | 'code') => { if (selectedNode.value) designer.setPropertyMode(selectedNode.value.id, key, mode) }
+const limitPurposeToggle = (event: MouseEvent) => {
+  const target = event.target as Element
+  if (!target.closest('.el-collapse-item__header')) return
+  event.stopPropagation()
+  if (!target.closest('.el-collapse-item__arrow')) return
+  const purpose = target.closest<HTMLElement>('[data-ui-designer-purpose]')?.dataset.uiDesignerPurpose as InspectorPurpose | undefined
+  if (!purpose || !PURPOSE_ORDER.includes(purpose)) return
+  expandedPurposes.value = expandedPurposes.value.includes(purpose)
+    ? expandedPurposes.value.filter((entry) => entry !== purpose)
+    : [...expandedPurposes.value, purpose]
+}
 const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string) => {
   const targetId = nodeId ?? selectedNode.value?.id
   if (targetId) designer.setPropertyCode(targetId, key, code, sceneId)
@@ -516,8 +527,8 @@ const updateCode = (key: string, code: string, sceneId?: string, nodeId?: string
     <el-alert v-if="selectedRuntimeDiagnostics.length" class="inspector-validation" type="warning" :closable="false" :title="`${t('runtimeDiagnostics')} · ${selectedRuntimeDiagnostics.length}`"><ul><li v-for="diagnostic in selectedRuntimeDiagnostics" :key="`${diagnostic.sessionId}:${diagnostic.code}:${diagnostic.message}`"><span>{{ t('runtimeDiagnostic') }}<template v-if="diagnostic.count > 1"> ×{{ diagnostic.count }}</template></span><details class="status-detail"><summary>{{ t('technicalDetails') }}</summary><span>{{ diagnostic.label }}: {{ diagnostic.message }}</span></details></li></ul></el-alert>
     <div v-if="!selectedNode" class="inspector-empty">{{ t('noSelection') }}</div>
     <div v-else-if="activeSection === 'properties'" class="properties-scroll">
-      <el-collapse v-model="expandedPurposes" class="inspector-purpose-groups">
-        <el-collapse-item v-for="group in fieldGroups" :key="group.purpose" :name="group.purpose" :data-ui-id="`ui-designer-inspector-group-${group.purpose}`">
+      <el-collapse v-model="expandedPurposes" class="inspector-purpose-groups" @click.capture="limitPurposeToggle">
+        <el-collapse-item v-for="group in fieldGroups" :key="group.purpose" :name="group.purpose" :data-ui-id="`ui-designer-inspector-group-${group.purpose}`" :data-ui-designer-purpose="group.purpose">
           <template #title><span class="inspector-purpose-title">{{ group.label }}</span></template>
           <el-input
             v-if="group.purpose === 'identity'"

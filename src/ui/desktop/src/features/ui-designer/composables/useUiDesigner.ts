@@ -588,6 +588,32 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     replaceActiveDocument(next, `Update ${key}`, false, true)
   }
 
+  const applySceneSettings = (draft: UiDesignerDocument) => {
+    if (!isValidUiDesignerSceneName(draft.meta.sceneName)) return false
+    const next = cloneUiDocument(document.value)
+    const before = JSON.stringify({ meta: next.meta, canvas: next.canvas, globalFilter: next.globalFilter, transitions: next.transitions })
+    next.meta.sceneName = draft.meta.sceneName
+    next.meta.title = draft.meta.title.trim()
+    next.meta.sceneBase = draft.meta.sceneBase
+    next.meta.author = draft.meta.author
+    next.meta.description = draft.meta.description
+    next.canvas.width = draft.canvas.width
+    next.canvas.height = draft.canvas.height
+    next.meta.canvasWidth = draft.canvas.width
+    next.meta.canvasHeight = draft.canvas.height
+    next.canvas.backgroundColor = draft.canvas.backgroundColor
+    next.canvas.backgroundPattern = draft.canvas.backgroundPattern
+    next.canvas.mapBackground = { ...draft.canvas.mapBackground }
+    next.globalFilter = { ...draft.globalFilter }
+    next.transitions = { enter: { ...draft.transitions.enter }, exit: { ...draft.transitions.exit } }
+    const root = next.nodes.find((node) => node.id === 'node_root')
+    if (root) { root.props.width = next.canvas.width; root.props.height = next.canvas.height }
+    if (before === JSON.stringify({ meta: next.meta, canvas: next.canvas, globalFilter: next.globalFilter, transitions: next.transitions })) return true
+    next.meta.modified = new Date().toISOString()
+    replaceActiveDocument(next, 'Update scene settings')
+    return true
+  }
+
   const setSourceCode = (value: string) => {
     const next = cloneUiDocument(document.value)
     next.sceneScript.source = value
@@ -2119,6 +2145,13 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     return changed
   }
 
+  const cancelDraftPositions = (ids: readonly string[]) => {
+    const rootIds = selectionRootNodeIds(document.value, ids)
+    const transformIds = new Set(collectNodeSubtreeIds(document.value, rootIds))
+    draftPositions.value = Object.fromEntries(Object.entries(draftPositions.value).filter(([id]) => !transformIds.has(id)))
+    clearSnapFeedback()
+  }
+
   const previewNodeResizeWithSnap = (nodeId: string, originRect: UiRect, handle: UiResizeHandle, delta: UiPoint, modifiers: UiResizeModifiers) => {
     if (!resolveNodeActionPolicy(document.value, [nodeId], nodeId, false).canTransform) return undefined
     const node = findNode(document.value, nodeId)
@@ -2301,6 +2334,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     setNodeAnimation,
     setNodeEvents,
     setSceneMeta,
+    applySceneSettings,
     setSourceCode,
     applyJsonDocument,
     setEditingMode,
@@ -2379,6 +2413,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     commitDraftPosition,
     previewSelectedPositionsWithSnap,
     commitDraftPositions,
+    cancelDraftPositions,
     previewNodeResizeWithSnap,
     commitDraftRect,
     previewNodeRotation,

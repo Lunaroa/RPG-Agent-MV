@@ -134,6 +134,7 @@ export interface UiTextProps extends UiBaseNodeProps {
   richText: boolean
   fontFile: string
   fontSize: number
+  lineHeight: number
   fontWeight: UiTextWeight
   italic: boolean
   letterSpacing: number
@@ -509,6 +510,7 @@ export interface UiGlobalFilter {
 
 export interface UiSceneMeta {
   sceneName: string
+  title: string
   sceneBase: string
   canvasWidth: number
   canvasHeight: number
@@ -964,6 +966,7 @@ export interface UiDesignerSceneFileRecord {
   /** Absolute source path used only when opening the editable document. */
   sourcePath: string
   sceneName: string
+  title?: string
   thumbnailUrl?: string
   modifiedAt: string
 }

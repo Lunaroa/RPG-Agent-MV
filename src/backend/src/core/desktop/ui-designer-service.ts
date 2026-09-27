@@ -256,6 +256,7 @@ export function listUiDesignerSceneFiles(projectRoot: string): UiDesignerSceneFi
       path: path.relative(root, fullPath).split(path.sep).join('/'),
       sourcePath: fullPath,
       sceneName,
+      ...(read.document.meta.title ? { title: read.document.meta.title } : {}),
       modifiedAt: stat.mtime.toISOString(),
       ...(thumbnailUrl ? { thumbnailUrl } : {}),
     });

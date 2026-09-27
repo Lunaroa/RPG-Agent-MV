@@ -1214,7 +1214,7 @@
   function renderTextRuns(view, props, context) {
     if (!view || !view.__mzuiTextRuns || typeof view.addChild === 'undefined') return;
     var resolved = parseTextRuns(props.content, context);
-    var key = JSON.stringify({ content: props.content, variables: context && context.variables, font: props.fontFile, size: props.fontSize, color: props.textColor, width: props.width, height: props.height, wrapWidth: props.wrapWidth, align: props.align, verticalAlign: props.verticalAlign });
+    var key = JSON.stringify({ content: props.content, variables: context && context.variables, font: props.fontFile, size: props.fontSize, lineHeight: props.lineHeight, color: props.textColor, width: props.width, height: props.height, wrapWidth: props.wrapWidth, align: props.align, verticalAlign: props.verticalAlign });
     if (view.__mzuiTextRunsKey === key) return;
     view.__mzuiTextRunsKey = key;
     if (Array.isArray(view.children) && typeof view.removeChild === 'function') {
@@ -1229,7 +1229,7 @@
     var cursorX = 0;
     var cursorY = 0;
     var lineIndex = 0;
-    var lineHeight = Math.max(1, Math.ceil(fontSize * 1.2));
+    var lineHeight = Math.max(1, Math.ceil(fontSize * finite(props.lineHeight, 1.2)));
     var lineWidths = [0];
     var wrapWidth = Math.max(0, finite(props.wrapWidth, 0));
     if (wrapWidth > 0 && (!global.PIXI || !global.PIXI.TextMetrics || typeof global.PIXI.TextMetrics.measureText !== 'function')) {
@@ -1350,6 +1350,7 @@
     var stroke = nativeStroke(props);
     Object.assign(view.style, {
       fontSize: finite(props.fontSize, native.fontSize),
+      lineHeight: Math.max(1, Math.ceil(finite(props.fontSize, native.fontSize) * finite(props.lineHeight, 1.2))),
       fontWeight: props.fontWeight || 'normal',
       fontStyle: props.italic ? 'italic' : 'normal',
       fontFamily: resolveTextFontFamily(props),
@@ -1536,7 +1537,7 @@
     var padding = typeof view.standardPadding === 'function' ? view.standardPadding() : (typeof view.padding === 'number' ? view.padding : 0);
     var contentWidth = Math.max(1, finite(props.width, 0) - padding * 2);
     var contentHeight = Math.max(0, finite(props.height, 0) - padding * 2);
-    var lineHeight = Math.max(1, Math.ceil(contents.fontSize * 1.3));
+    var lineHeight = Math.max(1, Math.ceil(contents.fontSize * finite(props.lineHeight, 1.3)));
     var label = singleLineText(props.content);
     var totalHeight = lineHeight;
     var top = props.verticalAlign === 'middle' || !props.verticalAlign

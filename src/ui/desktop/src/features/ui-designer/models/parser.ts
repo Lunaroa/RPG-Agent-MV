@@ -167,7 +167,7 @@ function validateAction(value: unknown, path: string, issues: UiValidationIssue[
 }
 
 function validatePropsShape(type: UiDesignerNodeType, props: Record<string, unknown>, path: string, issues: UiValidationIssue[]): void {
-  const numeric = new Set(['x', 'y', 'width', 'height', 'scaleX', 'scaleY', 'rotate', 'opacity', 'anchorX', 'anchorY', 'zIndex', 'scrollX', 'scrollY', 'borderTop', 'borderRight', 'borderBottom', 'borderLeft', 'defaultFrameDuration', 'speed', 'initialFrame', 'fontSize', 'wrapWidth', 'letterSpacing', 'strokeWidth', 'shadowOffsetX', 'shadowOffsetY', 'shadowBlur', 'borderWidth', 'borderRadius', 'pressedScale', 'focusWidth', 'trackRadius', 'fillRadius', 'currentValue', 'maxValue', 'playbackRate', 'maxParticles', 'emissionInterval', 'velocityX', 'velocityY', 'velocityRandomX', 'velocityRandomY', 'gravityX', 'gravityY', 'rotationSpeed', 'lifetime', 'lifetimeRandom', 'startScale', 'endScale', 'startOpacity', 'endOpacity', 'glow', 'columns', 'rows', 'columnGap', 'rowGap', 'maxItems', 'maxWidth', 'maxHeight'])
+  const numeric = new Set(['x', 'y', 'width', 'height', 'scaleX', 'scaleY', 'rotate', 'opacity', 'anchorX', 'anchorY', 'zIndex', 'scrollX', 'scrollY', 'borderTop', 'borderRight', 'borderBottom', 'borderLeft', 'defaultFrameDuration', 'speed', 'initialFrame', 'fontSize', 'lineHeight', 'wrapWidth', 'letterSpacing', 'strokeWidth', 'shadowOffsetX', 'shadowOffsetY', 'shadowBlur', 'borderWidth', 'borderRadius', 'pressedScale', 'focusWidth', 'trackRadius', 'fillRadius', 'currentValue', 'maxValue', 'playbackRate', 'maxParticles', 'emissionInterval', 'velocityX', 'velocityY', 'velocityRandomX', 'velocityRandomY', 'gravityX', 'gravityY', 'rotationSpeed', 'lifetime', 'lifetimeRandom', 'startScale', 'endScale', 'startOpacity', 'endOpacity', 'glow', 'columns', 'rows', 'columnGap', 'rowGap', 'maxItems', 'maxWidth', 'maxHeight'])
   const booleans = new Set(['visible', 'clip', 'loop', 'richText', 'italic', 'showGuides', 'animateValue', 'autoplay', 'muted', 'clickThrough'])
   const strings = new Set(['backgroundPath', 'path', 'tint', 'fillMode', 'repeatMode', 'blendMode', 'content', 'fontFile', 'fontWeight', 'textColor', 'strokeColor', 'shadowColor', 'align', 'verticalAlign', 'backgroundColor', 'borderColor', 'hoverTint', 'disabledCondition', 'focusColor', 'hoverSe', 'clickSe', 'trackImage', 'trackColor', 'fillImage', 'fillColor', 'fillDirection', 'posterPath', 'emissionArea', 'imagePath', 'shape', 'startColor', 'endColor', 'dataSource', 'autoFlow', 'justifyItems', 'alignItems'])
   copyExtensions(props, [...numeric, ...booleans, ...strings, 'frames', 'padding', 'imageStates'], path, issues)
@@ -198,7 +198,7 @@ function validatePropsShape(type: UiDesignerNodeType, props: Record<string, unkn
       issues.push(issue(`${type}.${key} has an unsupported value`, 'invalid-value', `${path}.${key}`))
     }
   }
-  const positiveNumbers = new Set(['width', 'height', 'scaleX', 'scaleY', 'fontSize', 'playbackRate', 'maxValue'])
+  const positiveNumbers = new Set(['width', 'height', 'scaleX', 'scaleY', 'fontSize', 'lineHeight', 'playbackRate', 'maxValue'])
   for (const key of positiveNumbers) {
     if (has(props, key) && isFiniteNumber(props[key]) && props[key] <= 0) issues.push(issue(`${type}.${key} must be greater than zero`, 'invalid-value', `${path}.${key}`))
   }
@@ -382,6 +382,7 @@ export function parseUiDocument(input: unknown): UiDocumentParseResult {
   if (!Array.isArray(value.guides)) issues.push(issue('guides must be an array', 'invalid-document-shape', 'guides'))
   if (meta) {
     for (const key of ['sceneName', 'sceneBase', 'author', 'description', 'created', 'modified']) if (typeof meta[key] !== 'string') issues.push(issue(`meta.${key} must be a string`, 'invalid-document-shape', `meta.${key}`))
+    if (has(meta, 'title') && typeof meta.title !== 'string') issues.push(issue('meta.title must be a string', 'invalid-document-shape', 'meta.title'))
     for (const key of ['canvasWidth', 'canvasHeight']) if (!isFiniteNumber(meta[key]) || Number(meta[key]) <= 0) issues.push(issue(`meta.${key} must be a positive number`, 'invalid-value', `meta.${key}`))
   }
   const nodes = Array.isArray(value.nodes) ? value.nodes.map((node, index) => normalizeNode(node, index, issues)).filter((node): node is UiNode => Boolean(node)) : []
@@ -400,8 +401,9 @@ export function parseUiDocument(input: unknown): UiDocumentParseResult {
   const metaValue = meta as Record<string, unknown>
   const base = createUiDocument(String(metaValue.sceneName))
   const normalizedMeta: UiDesignerDocument['meta'] = {
-    ...copyExtensions(metaValue, ['sceneName', 'sceneBase', 'canvasWidth', 'canvasHeight', 'author', 'description', 'created', 'modified'], 'meta', issues),
+    ...copyExtensions(metaValue, ['sceneName', 'title', 'sceneBase', 'canvasWidth', 'canvasHeight', 'author', 'description', 'created', 'modified'], 'meta', issues),
     sceneName: metaValue.sceneName as string,
+    title: typeof metaValue.title === 'string' ? metaValue.title : '',
     sceneBase: metaValue.sceneBase as string,
     canvasWidth: metaValue.canvasWidth as number,
     canvasHeight: metaValue.canvasHeight as number,

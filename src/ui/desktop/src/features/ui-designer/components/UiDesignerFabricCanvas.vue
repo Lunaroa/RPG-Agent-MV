@@ -440,7 +440,41 @@ const captureThumbnail = (): string | undefined => {
   return output.toDataURL('image/png')
 }
 
-defineExpose({ activateNode, captureThumbnail })
+const beginSelectedDrag = (event: PointerEvent) => {
+  if (!canvas || transformState) return false
+  const selectedIds = unwrap(props.designer.selectedIds)
+  const target = canvas.getActiveObject()
+  if (!target || !selectedIds.length) return false
+  const targetIds = selectedObjectIds(target)
+  if (targetIds.length !== selectedIds.length || targetIds.some((id) => !selectedIds.includes(id))) return false
+  if (!resolveNodeActionPolicy(props.document, selectedIds, selectedIds[0], false).canTransform) return false
+  if (target instanceof Textbox && target.isEditing) target.exitEditing()
+  startTransform({ e: event, transform: { target, action: 'drag', corner: '', original: { left: target.left, top: target.top } } })
+  return Boolean(transformState)
+}
+const moveSelectedDrag = (event: PointerEvent) => {
+  const target = canvas?.getActiveObject()
+  if (target && transformState?.action === 'move') moveObject(target, event)
+}
+const endSelectedDrag = (commit: boolean, event?: PointerEvent) => {
+  const state = transformState
+  if (!state) return
+  const clickedId = !commit && event ? objectNodeId(canvas?.findTarget(event).currentTarget) : undefined
+  if (commit) commitTransform()
+  else {
+    transformState = undefined
+    props.designer.cancelDraftPositions(state.nodeIds)
+    void reconcile()
+    if (clickedId) {
+      const selectedIds = unwrap(props.designer.selectedIds)
+      props.designer.selectNodes(selectedIds.includes(clickedId)
+        ? selectedIds.filter((id) => id !== clickedId)
+        : [...selectedIds, clickedId])
+    }
+  }
+}
+
+defineExpose({ activateNode, captureThumbnail, beginSelectedDrag, moveSelectedDrag, endSelectedDrag })
 
 const animationLoop = (timestamp: number) => {
   if (canvas && props.active) {

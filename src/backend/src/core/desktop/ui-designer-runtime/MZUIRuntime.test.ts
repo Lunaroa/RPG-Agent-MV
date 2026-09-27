@@ -1466,6 +1466,43 @@ describe('MZUIRuntime MV/MZ bridge', () => {
     runtime.cleanup();
   });
 
+  test('text line height updates plain and rich rendering after a property change', () => {
+    const context = makeContext();
+    class TextStyleProbe extends context.PIXI.Text { style: Record<string, unknown> = {}; }
+    context.PIXI.Text = TextStyleProbe;
+    vm.runInNewContext(RUNTIME_SOURCE, context, { filename: 'MZUIRuntime.js' });
+    const runtime = context.MZUIRuntime.create();
+    const scene = allNodeScene();
+    scene.nodes = scene.nodes.filter((node: any) => node.type === 'text');
+    scene.zOrder = ['text'];
+    scene.nodes[0].props.content = 'First\nSecond';
+    scene.nodes[0].props.fontSize = 20;
+    scene.nodes[0].props.lineHeight = 1.5;
+    runtime.mount(scene, { root: new context.PIXI.Container() });
+    const view = runtime.nodeViews.text;
+    assert.equal(view.style.lineHeight, 30);
+    runtime.patchNodes([{ nodeId: 'text', props: { lineHeight: 2 } }]);
+    assert.equal(view.style.lineHeight, 40);
+    runtime.cleanup();
+
+    const richRuntime = context.MZUIRuntime.create();
+    const richScene = allNodeScene();
+    richScene.nodes = richScene.nodes.filter((node: any) => node.type === 'text');
+    richScene.zOrder = ['text'];
+    richScene.nodes[0].props.content = 'First\nSecond';
+    richScene.nodes[0].props.fontSize = 20;
+    richScene.nodes[0].props.richText = true;
+    richScene.nodes[0].props.lineHeight = 2;
+    richRuntime.mount(richScene, { root: new context.PIXI.Container() });
+    const richView = richRuntime.nodeViews.text;
+    const lines = richView.children.filter((child: any) => child.__mzuiTextLine !== undefined);
+    assert.deepEqual(lines.map((child: any) => child.y), [0, 40]);
+    richRuntime.patchNodes([{ nodeId: 'text', props: { lineHeight: 1.5 } }]);
+    const compactLines = richView.children.filter((child: any) => child.__mzuiTextLine !== undefined);
+    assert.deepEqual(compactLines.map((child: any) => child.y), [0, 30]);
+    richRuntime.cleanup();
+  });
+
   test('plain text keeps the engine alphabetic baseline and vertical-aligns by offset', () => {
     const context = makeContext();
     class TextStyleProbe extends context.PIXI.Text {

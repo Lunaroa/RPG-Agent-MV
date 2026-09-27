@@ -82,14 +82,14 @@ const TYPE_PROP_KEYS: Record<string, readonly string[]> = {
   nineSlice: ['path', 'borderTop', 'borderRight', 'borderBottom', 'borderLeft', 'showGuides'],
   frameAnimation: ['defaultFrameDuration', 'loop', 'speed', 'initialFrame', 'frames', 'fillMode'],
   button: [
-    'content', 'wrapWidth', 'richText', 'fontFile', 'fontSize', 'fontWeight', 'italic', 'letterSpacing',
+    'content', 'wrapWidth', 'richText', 'fontFile', 'fontSize', 'lineHeight', 'fontWeight', 'italic', 'letterSpacing',
     'textColor', 'strokeColor', 'strokeWidth', 'shadowColor', 'shadowOffsetX', 'shadowOffsetY',
     'shadowBlur', 'align', 'verticalAlign', 'backgroundColor', 'padding', 'imageStates', 'borderColor',
     'borderWidth', 'borderRadius', 'hoverTint', 'pressedScale', 'disabledCondition', 'focusColor',
     'focusWidth', 'hoverSe', 'clickSe',
   ],
   text: [
-    'content', 'wrapWidth', 'richText', 'fontFile', 'fontSize', 'fontWeight', 'italic', 'letterSpacing',
+    'content', 'wrapWidth', 'richText', 'fontFile', 'fontSize', 'lineHeight', 'fontWeight', 'italic', 'letterSpacing',
     'textColor', 'strokeColor', 'strokeWidth', 'shadowColor', 'shadowOffsetX', 'shadowOffsetY',
     'shadowBlur', 'align', 'verticalAlign', 'backgroundColor', 'padding',
   ],
@@ -391,6 +391,7 @@ function validateSceneMeta(value: unknown, addError: AddIssue): void {
   for (const field of ['author', 'description', 'created', 'modified']) {
     if (typeof value[field] !== 'string') addError('invalid-value', `meta.${field} must be a string.`, `meta.${field}`);
   }
+  if ('title' in value && typeof value.title !== 'string') addError('invalid-value', 'meta.title must be a string.', 'meta.title');
   for (const field of ['canvasWidth', 'canvasHeight']) {
     if (!isPositiveFinite(value[field])) addError('invalid-value', `meta.${field} must be positive.`, `meta.${field}`);
   }
@@ -579,6 +580,10 @@ function validateTextProps(value: Record<string, unknown>, addError: AddIssue, p
   requireBoolean(value, 'richText', addError, path, nodeId);
   for (const key of ['fontFile', 'textColor', 'strokeColor', 'shadowColor', 'backgroundColor']) requireString(value, key, addError, path, nodeId);
   requireNumber(value, 'fontSize', addError, path, nodeId, 0);
+  if ('lineHeight' in value) {
+    requireNumber(value, 'lineHeight', addError, path, nodeId, 0);
+    if (typeof value.lineHeight === 'number' && value.lineHeight === 0) addError('invalid-value', 'text.lineHeight must be greater than zero.', `${path}.props.lineHeight`, nodeId);
+  }
   requireEnum(value, 'fontWeight', ['normal', 'bold', 'light'], addError, path, nodeId);
   requireBoolean(value, 'italic', addError, path, nodeId);
   for (const key of ['letterSpacing', 'strokeWidth', 'shadowOffsetX', 'shadowOffsetY', 'shadowBlur']) requireNumber(value, key, addError, path, nodeId, key === 'shadowBlur' || key === 'strokeWidth' ? 0 : undefined);

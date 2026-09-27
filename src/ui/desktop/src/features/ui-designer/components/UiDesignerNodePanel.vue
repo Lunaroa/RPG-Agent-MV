@@ -30,8 +30,15 @@ interface TreeExpose {
   expandAll?: () => void
   collapseAll?: () => void
   setCurrentKey?: (key: string | null) => void
-  getNode?: (key: string) => { expanded?: boolean; expand?: () => void; collapse?: () => void }
+  getNode?: (key: string) => TreeNodeExpose
   $el?: HTMLElement
+}
+interface TreeNodeExpose {
+  expanded?: boolean
+  level: number
+  parent?: TreeNodeExpose
+  expand?: () => void
+  collapse?: () => void
 }
 const treeRef = ref<TreeExpose>()
 let treeDragActive = false
@@ -122,17 +129,25 @@ const flattenTreeIds = (entries: NodeTreeEntry[], result: string[] = []) => {
   return result
 }
 
-const expandedKeys = ref<string[]>([])
+const expandedKeys = ref<string[]>(flattenTreeIds(treeData.value))
 const rememberExpanded = (entry: NodeTreeEntry) => {
   if (!expandedKeys.value.includes(entry.id)) expandedKeys.value = [...expandedKeys.value, entry.id]
 }
 const rememberCollapsed = (entry: NodeTreeEntry) => {
-  expandedKeys.value = expandedKeys.value.filter((id) => id !== entry.id)
+  const collapsed = new Set(flattenTreeIds([entry]))
+  expandedKeys.value = expandedKeys.value.filter((id) => !collapsed.has(id))
 }
 const getExpandedKeys = () => {
   const ids = flattenTreeIds(treeData.value)
-  const observed = ids.filter((id) => treeRef.value?.getNode?.(id)?.expanded)
-  return observed.length ? observed : [...expandedKeys.value]
+  const observed = ids.filter((id) => {
+    const node = treeRef.value?.getNode?.(id)
+    if (!node?.expanded) return false
+    for (let parent = node.parent; parent && parent.level > 0; parent = parent.parent) {
+      if (!parent.expanded) return false
+    }
+    return true
+  })
+  return treeRef.value ? observed : [...expandedKeys.value]
 }
 const setExpandedKeys = (ids: readonly string[]) => {
   const desired = new Set(ids)
@@ -165,6 +180,7 @@ const revealPrimarySelection = async () => {
   }
   await nextTick()
   for (const id of ancestors) treeRef.value?.getNode?.(id)?.expand?.()
+  expandedKeys.value = [...new Set([...expandedKeys.value, ...ancestors])]
   treeRef.value?.setCurrentKey?.(primaryId)
   await nextTick()
   const findRow = () => [...(treeRef.value?.$el?.querySelectorAll<HTMLElement>('[data-key]') ?? [])].find((element) => element.dataset.key === primaryId)
@@ -226,6 +242,8 @@ const toggleVisibility = (id: string) => {
 }
 
 const nodePolicy = (id: string) => designer.getNodeActionPolicy(id) as UiNodeActionPolicy
+const nodeFor = (id: string) => document.value.nodes.find((node) => node.id === id)
+const hasInheritedLock = (id: string) => Boolean(nodeFor(id) && !nodeFor(id)?.locked && !nodePolicy(id).canSelect)
 const selectedMenuNodes = (id: string) => nodePolicy(id).selectionIds
   .map((nodeId) => document.value.nodes.find((node) => node.id === nodeId))
   .filter((node): node is UiNode => Boolean(node))
@@ -262,8 +280,8 @@ const finishRename = () => {
 }
 
 const contextCommand = (command: string, id: string) => {
-  if (command === 'expandAll') { treeRef.value?.expandAll?.(); return }
-  if (command === 'collapseAll') { treeRef.value?.collapseAll?.(); return }
+  if (command === 'expandAll') { setExpandedKeys(flattenTreeIds(treeData.value)); return }
+  if (command === 'collapseAll') { setExpandedKeys([]); return }
   const policy = designer.selectNodeActionTarget(id) as UiNodeActionPolicy
   if (command === 'rename') {
     if (policy.allowed.rename) startRename({ id, label: '', type: document.value.nodes.find((node) => node.id === id)?.type ?? 'container' })
@@ -302,6 +320,7 @@ const handleKeydown = (event: KeyboardEvent) => {
   else if (event.key === 'F2' && selectedIds.value.length) { event.preventDefault(); startRename({ id: selectedIds.value[0], label: '', type: document.value.nodes.find((node) => node.id === selectedIds.value[0])?.type ?? 'container' }) }
   else if (event.key === 'Enter' && selectedIds.value.length) { event.preventDefault(); designer.selectNodes([selectedIds.value[0]]) }
   else if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && flattenedEntries.value.length) {
+    if (event.ctrlKey || event.metaKey) return
     event.preventDefault()
     const step = event.key === 'ArrowUp' ? -1 : 1
     const current = flattenedEntries.value.findIndex((entry) => entry.id === selectedIds.value[0])
@@ -343,7 +362,7 @@ const handleKeydown = (event: KeyboardEvent) => {
       highlight-current
       :expand-on-click-node="false"
       :current-node-key="selectedIds[0]"
-      default-expand-all
+      :default-expanded-keys="expandedKeys"
       :allow-drop="allowDrop"
       :filter-node-method="(value: string, data: NodeTreeEntry) => !value || data.label.toLocaleLowerCase().includes(value.toLocaleLowerCase())"
       @node-expand="rememberExpanded"
@@ -359,6 +378,10 @@ const handleKeydown = (event: KeyboardEvent) => {
           <component :is="UI_DESIGNER_NODE_TYPE_ICONS[data.type]" class="node-type-icon" aria-hidden="true" />
           <el-input v-if="editingId === data.id" v-model="editingName" size="small" :placeholder="t('nodeNamePlaceholder')" @keyup.enter="finishRename" @blur="finishRename" />
           <span v-else class="node-name">{{ data.label }}</span>
+          <span v-if="nodeFor(data.id)?.locked || hasInheritedLock(data.id) || nodeFor(data.id)?.props.visible === false" class="node-state-icons">
+            <Lock v-if="nodeFor(data.id)?.locked || hasInheritedLock(data.id)" class="node-state-lock" :class="{ inherited: hasInheritedLock(data.id) }" :aria-label="t('lockNode')" />
+            <EyeOff v-if="nodeFor(data.id)?.props.visible === false" class="node-state-hidden" :aria-label="t('hideNode')" />
+          </span>
           <span v-if="selectedIds.length < 2" class="node-row-actions">
             <el-button size="small" text @click.stop="toggleVisibility(data.id)"><component :is="document.nodes.find((node) => node.id === data.id)?.props.visible ? Eye : EyeOff" /></el-button>
             <el-button size="small" text @click.stop="toggleLock(data.id)"><component :is="document.nodes.find((node) => node.id === data.id)?.locked ? Lock : Unlock" /></el-button>
@@ -432,7 +455,11 @@ const handleKeydown = (event: KeyboardEvent) => {
 .status-detail { color: var(--app-ink-soft); font-size: 10px; }
 .node-type-icon, .node-menu-icon { width: 14px; height: 14px; flex: 0 0 auto; stroke-width: 1.7; }
 .node-menu-icon { margin-right: 8px; }
-.node-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-name { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-state-icons { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 3px; margin-right: auto; }
+.node-state-icons svg { width: 11px; height: 11px; stroke-width: 2; }
+.node-state-lock { color: #d78332; }.node-state-lock.inherited { opacity: .45; }
+.node-state-hidden { color: #b6a4d6; }
 .node-types { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; width: 100%; min-width: 0; max-height: 220px; overflow-x: hidden; overflow-y: auto; }
 .node-types .el-button { box-sizing: border-box; width: 100%; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; }
 .node-types .el-button > span { display: inline-flex; min-width: 0; align-items: center; gap: 6px; }

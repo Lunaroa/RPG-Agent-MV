@@ -624,6 +624,22 @@ function snapHitFor(snap: AxisSnap): UiSnapHit | undefined {
   return undefined
 }
 
+function alignedFeedback(axis: 'x' | 'y', positions: readonly number[], options: SnapOptions, matches = (position: number, value: number) => Math.abs(position - value) < 1e-8): { hits: UiSnapHit[]; guides: UiGuide[] } {
+  const hits: UiSnapHit[] = []
+  const guides: UiGuide[] = []
+  const seen = new Set<string>()
+  for (const candidate of snapCandidates(options)[axis]) {
+    if (!positions.some((position) => matches(position, candidate.value))) continue
+    const hit = snapHitFor({ axis, ...candidate, delta: 0 })
+    if (hit) {
+      const key = `${hit.axis}:${hit.value}:${hit.source}:${hit.nodeId ?? ''}:${hit.guideId ?? ''}`
+      if (!seen.has(key)) { seen.add(key); hits.push(hit) }
+    }
+    if (candidate.guide && !guides.some((guide) => guide.id === candidate.guide?.id)) guides.push(candidate.guide)
+  }
+  return { hits, guides }
+}
+
 /** Transient world-space feedback for the hits of an active snap: dashed alignment lines plus ruler guides to highlight. */
 export function snapFeedbackFor(document: UiDesignerDocument, draggedRect: UiRect, hits: readonly UiSnapHit[]): UiSnapFeedback {
   const lines: UiSnapFeedbackLine[] = []
@@ -717,8 +733,12 @@ export function snapMoveRect(
   const xSnap = allowed.has('x') ? snapMovingRectAxis(safeRect, 'x', options) : undefined
   const ySnap = allowed.has('y') ? snapMovingRectAxis(safeRect, 'y', options) : undefined
   const snaps = [xSnap?.snap, ySnap?.snap].filter((snap): snap is AxisSnap => Boolean(snap))
-  const guides = snaps.map((snap) => snap.guide).filter((guide): guide is UiGuide => Boolean(guide))
-  const hits = snaps.map(snapHitFor).filter((hit): hit is UiSnapHit => Boolean(hit))
+  const aligned = [
+    xSnap ? alignedFeedback('x', movingAxisValues(safeRect, 'x').map((value) => value + xSnap.translation), options) : undefined,
+    ySnap ? alignedFeedback('y', movingAxisValues(safeRect, 'y').map((value) => value + ySnap.translation), options) : undefined,
+  ].filter((feedback): feedback is { hits: UiSnapHit[]; guides: UiGuide[] } => Boolean(feedback))
+  const guides = aligned.flatMap((feedback) => feedback.guides)
+  const hits = aligned.flatMap((feedback) => feedback.hits)
   const distances = snaps.map((snap) => snap.delta)
   const normalized = normalizeGeometryRect({
     ...safeRect,
@@ -859,8 +879,11 @@ export function snapRect(requested: UiRect, origin: UiRect, handle: UiResizeHand
   const normalized = normalizeGeometryRect(best.rect, origin)
   const finalPoint = resizeHandlePoint(normalized, handle, node)
   const used = best.used.filter((snap) => Math.round(finalPoint[snap.axis]) === snap.value)
-  const guides = used.map((snap) => snap.guide).filter((guide): guide is UiGuide => Boolean(guide))
-  const hits = used.map(snapHitFor).filter((hit): hit is UiSnapHit => Boolean(hit))
+  const aligned = (['x', 'y'] as const)
+    .filter((axis) => used.some((snap) => snap.axis === axis))
+    .map((axis) => alignedFeedback(axis, [finalPoint[axis]], options, (position, value) => Math.round(position) === value))
+  const guides = aligned.flatMap((feedback) => feedback.guides)
+  const hits = aligned.flatMap((feedback) => feedback.hits)
   return { ...normalized, snapped: used.length > 0, guides, hits, distance: best.distance }
 }
 

@@ -208,6 +208,7 @@ export function createDefaultNode(type: UiDesignerNodeType, options: CreateNodeO
         richText: false,
         fontFile: '',
         fontSize: 24,
+        lineHeight: 1.2,
         fontWeight: 'normal',
         italic: false,
         letterSpacing: 0,
@@ -231,6 +232,7 @@ export function createDefaultNode(type: UiDesignerNodeType, options: CreateNodeO
         richText: false,
         fontFile: '',
         fontSize: 24,
+        lineHeight: 1.3,
         fontWeight: 'bold',
         italic: false,
         letterSpacing: 0,
@@ -335,6 +337,7 @@ export function createUiDocument(sceneName = 'Scene_New', now = new Date()): UiD
     editorVersion: UI_DESIGNER_EDITOR_VERSION,
     meta: {
       sceneName: sceneName.trim() || 'Scene_New',
+      title: '',
       sceneBase: 'Scene_Base',
       canvasWidth: 816,
       canvasHeight: 624,

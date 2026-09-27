@@ -367,7 +367,7 @@ describe('ui designer scene file listing', () => {
     const project = path.join(tempRoot, 'project');
     fs.mkdirSync(path.join(project, 'data'), { recursive: true });
     const canonicalPath = projectUiDesignerScenePath(project, 'Scene_Sample');
-    saveUiDesignerFile(canonicalPath, sampleDocument());
+    saveUiDesignerFile(canonicalPath, { ...sampleDocument(), meta: { ...sampleDocument().meta, title: 'Example title' } });
     writeProjectUiDesignerThumbnail(project, 'Scene_Sample', TEST_PNG_DATA_URL);
     const legacyPath = path.join(project, '.luna_rpg', 'ui-designer', 'scenes', 'Scene_Menu_Custom.mzui');
     saveUiDesignerFile(legacyPath, { ...sampleDocument(), meta: { ...sampleDocument().meta, sceneName: 'Scene_Menu_Custom' } });
@@ -378,6 +378,7 @@ describe('ui designer scene file listing', () => {
     assert.deepEqual(records.map((record) => record.sceneName), ['Scene_Menu_Custom', 'Scene_Sample']);
     const canonical = records.find((record) => record.sceneName === 'Scene_Sample');
     assert.equal(canonical?.path, 'data/ui-scenes/Scene_Sample.mzui');
+    assert.equal(canonical?.title, 'Example title');
     assert.equal(canonical?.sourcePath, canonicalPath);
     assert.equal(canonical?.thumbnailUrl, TEST_PNG_DATA_URL);
     assert.equal(Number.isNaN(Date.parse(canonical?.modifiedAt ?? '')), false);
@@ -564,6 +565,7 @@ function sampleDocument(): UiDesignerDocument {
     editorVersion: '1.1.0',
     meta: {
       sceneName: 'Scene_Sample',
+      title: '',
       sceneBase: 'Scene_Base',
       canvasWidth: 816,
       canvasHeight: 624,

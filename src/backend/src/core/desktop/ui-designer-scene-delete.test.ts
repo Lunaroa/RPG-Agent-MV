@@ -120,6 +120,7 @@ function sceneDocument(sceneName: string): UiDesignerDocument {
     editorVersion: '1.1.0',
     meta: {
       sceneName,
+      title: '',
       sceneBase: 'Scene_Base',
       canvasWidth: 816,
       canvasHeight: 624,

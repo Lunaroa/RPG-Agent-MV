@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, test } from 'node:test';
 import {
   clampProjectAssetThumbSize,
@@ -7,6 +9,7 @@ import {
   loadProjectAssetSortPreference,
   loadProjectAssetThumbSize,
   loadProjectAssetPreviewPanelWidth,
+  loadProjectAssetRecentSelectionFolder,
   loadProjectAssetViewMode,
   PROJECT_ASSET_SORT_DEFAULT,
   PROJECT_ASSET_THUMB_SIZE_DEFAULT,
@@ -15,6 +18,7 @@ import {
   saveProjectAssetSortPreference,
   saveProjectAssetThumbSize,
   saveProjectAssetPreviewPanelWidth,
+  saveProjectAssetRecentSelectionFolder,
   saveProjectAssetViewMode,
 } from './projectAssetsViewPrefs';
 
@@ -41,6 +45,19 @@ Object.defineProperty(globalThis, 'localStorage', { value: memoryStorage, config
 function clearPrefs() {
   memoryStorage.clear();
 }
+
+test('recent selection folders stay separate by project and resource type', () => {
+  clearPrefs();
+  const firstProject = path.join(os.tmpdir(), 'sample-a');
+  const secondProject = path.join(os.tmpdir(), 'sample-b');
+  saveProjectAssetRecentSelectionFolder(firstProject, 'image', 'pictures:ui');
+  saveProjectAssetRecentSelectionFolder(firstProject, 'audio', 'audio:se');
+  saveProjectAssetRecentSelectionFolder(secondProject, 'image', 'pictures:icons');
+  assert.equal(loadProjectAssetRecentSelectionFolder(firstProject, 'image'), 'pictures:ui');
+  assert.equal(loadProjectAssetRecentSelectionFolder(firstProject.toUpperCase(), 'image'), 'pictures:ui');
+  assert.equal(loadProjectAssetRecentSelectionFolder(firstProject, 'audio'), 'audio:se');
+  assert.equal(loadProjectAssetRecentSelectionFolder(secondProject, 'image'), 'pictures:icons');
+});
 
 describe('projectAssetsViewPrefs sort', () => {
   test('returns default when nothing stored', () => {

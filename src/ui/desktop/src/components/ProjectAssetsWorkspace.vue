@@ -64,7 +64,6 @@ import PluginFileFolderThumb from './editor/PluginFileFolderThumb.vue'
 import ConsoleSearchInput from './console/ConsoleSearchInput.vue'
 import { useI18n } from '../i18n'
 import { useProjectStore } from '../stores/project'
-import { useWorkbenchUiStore } from '../stores/workbenchUi'
 import type {
   AssetPreviewDialogLabels,
   AssetPreviewItem,
@@ -110,12 +109,14 @@ import {
   clampProjectAssetThumbSize,
   clampProjectAssetPreviewPanelWidth,
   loadProjectAssetPreviewPanelWidth,
+  loadProjectAssetRecentSelectionFolder,
   loadProjectAssetSortPreference,
   loadProjectAssetThumbSize,
   loadProjectAssetViewMode,
   saveProjectAssetSortPreference,
   saveProjectAssetThumbSize,
   saveProjectAssetPreviewPanelWidth,
+  saveProjectAssetRecentSelectionFolder,
   saveProjectAssetViewMode,
   PROJECT_ASSET_PREVIEW_PANEL_WIDTH_MIN,
   PROJECT_ASSET_PREVIEW_PANEL_WIDTH_MAX,
@@ -221,7 +222,6 @@ type FileGridItem = {
 type GridItem = FolderGridItem | FileGridItem
 
 const projectStore = useProjectStore()
-const workbenchUi = useWorkbenchUiStore()
 const route = useRoute()
 const router = useRouter()
 const { language, t } = useI18n()
@@ -295,11 +295,11 @@ function selectionTreeNodes(nodes: ProjectAssetCategoryTreeNode[]): ProjectAsset
   return visit(nodes)
 }
 
-function categoryForCurrentResourcePath(nodes: ProjectAssetCategoryTreeNode[]): string | undefined {
-  if (!isSelectionMode.value || !props.currentPath) return undefined
+function categoryForResourcePath(nodes: ProjectAssetCategoryTreeNode[], resourcePath: string): string | undefined {
+  if (!isSelectionMode.value || !resourcePath) return undefined
   let current = ''
   try {
-    current = normalizeUiDesignerProjectRelativeResourcePath(props.currentPath).replace(/^www\//, '')
+    current = normalizeUiDesignerProjectRelativeResourcePath(resourcePath).replace(/^www\//, '')
   } catch {
     return undefined
   }
@@ -315,6 +315,13 @@ function categoryForCurrentResourcePath(nodes: ProjectAssetCategoryTreeNode[]): 
   }
   visit(selectionTreeNodes(nodes))
   return match?.id
+}
+
+function rememberSelectionFolder(categoryId: string | undefined): void {
+  const project = projectStore.currentProject
+  if (!isSelectionMode.value || !project || !categoryId || isProjectAssetGroupCategory(categoryId)) return
+  if (!findTreeNode(treeNodes.value, categoryId) || !categoryAllowedInSelectionMode(categoryId)) return
+  saveProjectAssetRecentSelectionFolder(project, props.resourceKind, categoryId)
 }
 
 /**
@@ -1178,13 +1185,17 @@ const selectedResourcePaths = computed(() => selectedFileEntries.value.flatMap((
 
 async function confirmResourceSelection(): Promise<void> {
   if (props.multiple) {
-    if (selectedResourcePaths.value.length > 0) emit('selectMany', selectedResourcePaths.value)
+    if (selectedResourcePaths.value.length > 0) {
+      rememberSelectionFolder(categoryForResourcePath(treeNodes.value, selectedResourcePaths.value[0]!))
+      emit('selectMany', selectedResourcePaths.value)
+    }
     return
   }
   if (!selectedResourcePath.value) return
   const dimensions = singleSelectedFile.value && props.resourceKind === 'image'
     ? await ensureImageDimensions(singleSelectedFile.value)
     : undefined
+  rememberSelectionFolder(categoryForResourcePath(treeNodes.value, selectedResourcePath.value))
   emit('select', selectedResourcePath.value, dimensions)
 }
 
@@ -1462,7 +1473,9 @@ async function loadTree(preferredCategoryId?: string) {
     if (!treeCoordinator.isCurrent(token) || projectStore.currentProject !== project) return
     treeNodes.value = tree.nodes
     const compatibleNodes = selectionTreeNodes(tree.nodes)
-    const requestedCategoryId = preferredCategoryId ?? categoryForCurrentResourcePath(tree.nodes)
+    const requestedCategoryId = preferredCategoryId
+      ?? categoryForResourcePath(tree.nodes, props.currentPath)
+      ?? (isSelectionMode.value ? loadProjectAssetRecentSelectionFolder(project, props.resourceKind) : undefined)
     const nextId = requestedCategoryId
       && (requestedCategoryId === FAVORITES_NODE_ID
         || requestedCategoryId === PROJECT_RESOURCES_ROOT_NODE_ID
@@ -1634,6 +1647,7 @@ function selectCategory(categoryId: string) {
   }
   clearAllSelection()
   selectedCategoryId.value = categoryId
+  rememberSelectionFolder(categoryId)
   searchQuery.value = ''
   syncTreeCurrentKey(categoryId)
   void loadCategory(categoryId)

@@ -7,6 +7,7 @@ import {
   type ProjectAssetSortKeySetting,
 } from '../utils/projectAssetSorting.ts';
 import type { AssetPreviewMediaKind } from '../utils/assetPreview.ts';
+import type { UiDesignerManagedAssetKind } from '@contract/ui-designer-resources';
 
 export const PROJECT_ASSETS_VIEW_PREFS_PREFIX = 'rpg-agent-project-assets';
 
@@ -54,6 +55,28 @@ export function clampProjectAssetPreviewPanelWidth(value: unknown): number {
 
 function storageKey(suffix: string): string {
   return `${PROJECT_ASSETS_VIEW_PREFS_PREFIX}.${suffix}`;
+}
+
+function recentSelectionFolderKey(project: string, kind: UiDesignerManagedAssetKind): string {
+  return storageKey(`recentSelectionFolder.${encodeURIComponent(project.replace(/\\/g, '/').toLowerCase())}.${kind}`);
+}
+
+export function loadProjectAssetRecentSelectionFolder(project: string, kind: UiDesignerManagedAssetKind): string | undefined {
+  if (!project) return undefined;
+  try {
+    return localStorage.getItem(recentSelectionFolderKey(project, kind)) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function saveProjectAssetRecentSelectionFolder(project: string, kind: UiDesignerManagedAssetKind, categoryId: string): void {
+  if (!project || !categoryId) return;
+  try {
+    localStorage.setItem(recentSelectionFolderKey(project, kind), categoryId);
+  } catch {
+    /* ignore unavailable preference storage */
+  }
 }
 
 export function loadProjectAssetSortPreference(): ProjectAssetSortPreference {

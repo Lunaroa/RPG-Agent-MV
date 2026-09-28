@@ -978,11 +978,12 @@ function buildPermissionRequest(permission: Record<string, unknown>, at: string,
 
 function formatOpencodeError(value: unknown): string {
   const record = asRecord(value);
+  const data = asRecord(record.data);
   const name = asString(record.name);
-  const message = asString(record.message);
-  const status = Number(record.statusCode || record.status || 0);
-  const responseBody = asString(record.responseBody);
-  const metadata = asRecord(record.metadata);
+  const message = asString(data.message);
+  const status = Number(data.statusCode || 0);
+  const responseBody = asString(data.responseBody);
+  const metadata = asRecord(data.metadata);
   const details = [
     status ? `status ${status}` : "",
     responseBody,

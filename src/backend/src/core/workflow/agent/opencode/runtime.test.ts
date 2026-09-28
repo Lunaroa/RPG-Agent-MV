@@ -725,16 +725,22 @@ test("opencode API errors include available status details", () => {
     properties: {
       error: {
         name: "APIError",
-        message: "APIError",
-        statusCode: 401,
+        data: {
+          message: "The selected model is unavailable",
+          statusCode: 404,
+          isRetryable: false,
+          responseBody: '{"error":{"code":"model_not_found"}}',
+          metadata: { requestId: "example-request" },
+        },
       },
     },
   }, state());
 
+  const expected = 'The selected model is unavailable (status 404; {"error":{"code":"model_not_found"}}; {"requestId":"example-request"})';
   assert.equal(events[0].type, "stderr");
-  assert.match(String(events[0].text), /APIError \(status 401\)/);
+  assert.equal(events[0].text, `${expected}\n`);
   assert.equal(events[1].status, "blocked");
-  assert.equal(events[1].blocker, "APIError (status 401)");
+  assert.equal(events[1].blocker, expected);
 });
 
 test("opencode server env isolates config, database, home and xdg paths under project .opencode", () => {

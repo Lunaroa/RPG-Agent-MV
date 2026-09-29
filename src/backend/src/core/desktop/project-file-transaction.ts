@@ -33,6 +33,11 @@ type PreparedEntry = ProjectFileTransactionHookEntry & {
   createdDirectories: string[];
 };
 
+interface RollbackFailure {
+  entry: PreparedEntry;
+  error: Error;
+}
+
 export function commitProjectFileTransaction(
   entries: readonly ProjectFileTransactionEntry[],
   dependencies: ProjectFileTransactionDependencies = {},
@@ -61,16 +66,24 @@ export function commitProjectFileTransaction(
       committed.push(entry);
     }
   } catch (error) {
-    const rollbackErrors = rollbackCommittedEntries(committed);
-    const cleanupErrors = cleanupPreparedAfterFailure(prepared);
-    if (rollbackErrors.length > 0 || cleanupErrors.length > 0) {
+    const rollbackFailures = rollbackCommittedEntries(committed);
+    const retainedBackups = new Set(rollbackFailures.map(({ entry }) => entry.backupFile).filter((file): file is string => file !== null));
+    const cleanupErrors = cleanupPreparedAfterFailure(prepared, retainedBackups);
+    if (rollbackFailures.length > 0 || cleanupErrors.length > 0) {
+      const conflict = (error instanceof ProjectFileError && error.code === PROJECT_FILE_ERROR_CODES.conflict)
+        || rollbackFailures.some(({ error: rollbackError }) => (
+          rollbackError instanceof ProjectFileError && rollbackError.code === PROJECT_FILE_ERROR_CODES.conflict
+        ));
       throw new ProjectFileError(
         PROJECT_FILE_ERROR_CODES.transactionFailed,
-        'The project write failed and not every file could be restored automatically. Stop editing and restore the affected files from version management or a backup.',
+        conflict
+          ? 'The project write conflicted with an external edit. The external content was preserved, but not every earlier file could be restored automatically. Stop editing and review the affected files and retained backups.'
+          : 'The project write failed and not every file could be restored automatically. Stop editing and restore the affected files from version management or a backup.',
         {
           files: entries.map((entry) => entry.relativePath),
-          rollbackErrors: rollbackErrors.map((item) => item.message),
+          rollbackErrors: rollbackFailures.map(({ error: rollbackError }) => rollbackError.message),
           cleanupErrors: cleanupErrors.map((item) => item.message),
+          retainedBackups: [...retainedBackups],
         },
         { cause: error },
       );
@@ -92,7 +105,7 @@ function prepareEntry(entry: ProjectFileTransactionHookEntry, transactionId: str
 
   try {
     if (backupFile) fs.copyFileSync(targetFile, backupFile, fs.constants.COPYFILE_EXCL);
-    if (replacementFile) fs.writeFileSync(replacementFile, entry.content, { flag: 'wx' });
+    if (!entry.delete && replacementFile) fs.writeFileSync(replacementFile, entry.content, { flag: 'wx' });
   } catch (error) {
     removeFileIfPresent(backupFile);
     removeFileIfPresent(replacementFile);
@@ -110,10 +123,17 @@ function prepareEntry(entry: ProjectFileTransactionHookEntry, transactionId: str
   } as PreparedEntry;
 }
 
-function rollbackCommittedEntries(entries: readonly PreparedEntry[]): Error[] {
-  const errors: Error[] = [];
+function rollbackCommittedEntries(entries: readonly PreparedEntry[]): RollbackFailure[] {
+  const errors: RollbackFailure[] = [];
   for (const entry of [...entries].reverse()) {
     try {
+      if (!matchesCommittedResult(entry)) {
+        throw new ProjectFileError(
+          PROJECT_FILE_ERROR_CODES.conflict,
+          `The project file changed during rollback: ${entry.relativePath}. The external edit was preserved.`,
+          { relativePath: entry.relativePath },
+        );
+      }
       if (!entry.targetExisted) {
         removeFileIfPresent(entry.targetFile);
         removeCreatedDirectories(entry.createdDirectories);
@@ -130,10 +150,22 @@ function rollbackCommittedEntries(entries: readonly PreparedEntry[]): Error[] {
         removeFileIfPresent(restoreFile);
       }
     } catch (error) {
-      errors.push(asError(error));
+      errors.push({ entry, error: asError(error) });
     }
   }
   return errors;
+}
+
+function matchesCommittedResult(entry: PreparedEntry): boolean {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(entry.targetFile);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return entry.delete === true;
+  }
+  if (entry.delete || !stat.isFile() || stat.isSymbolicLink()) return false;
+  return fs.readFileSync(entry.targetFile).equals(entry.content);
 }
 
 function cleanupPreparedFiles(entries: readonly PreparedEntry[]): void {
@@ -143,12 +175,12 @@ function cleanupPreparedFiles(entries: readonly PreparedEntry[]): void {
   }
 }
 
-function cleanupPreparedAfterFailure(entries: readonly PreparedEntry[]): Error[] {
+function cleanupPreparedAfterFailure(entries: readonly PreparedEntry[], retainedBackups: ReadonlySet<string>): Error[] {
   const errors: Error[] = [];
   for (const entry of [...entries].reverse()) {
     try {
       removeFileIfPresent(entry.replacementFile);
-      removeFileIfPresent(entry.backupFile);
+      if (!entry.backupFile || !retainedBackups.has(entry.backupFile)) removeFileIfPresent(entry.backupFile);
       removeCreatedDirectories(entry.createdDirectories);
     } catch (error) {
       errors.push(asError(error));

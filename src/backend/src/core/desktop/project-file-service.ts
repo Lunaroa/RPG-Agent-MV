@@ -244,15 +244,25 @@ export function writeProjectFilesAtomically(
         ? { relativePath: mutation.relativePath, targetFile: mutation.targetFile, delete: true }
         : { relativePath: mutation.relativePath, targetFile: mutation.targetFile, content: mutation.content }
     ));
+    const assertBaseline = (entry: { relativePath: string; index: number }) => {
+      const target = resolveSafeProjectPath(context.project, entry.relativePath);
+      const current = fileVersion(target);
+      assertExpectedSourceHash(entry.relativePath, baselines[entry.index] ?? null, current);
+    };
 
     commitProjectFileTransaction(entries, {
       beforePrepare: (entry) => {
-        const current = fileVersion(entry.targetFile);
-        assertExpectedSourceHash(entry.relativePath, baselines[entry.index] ?? null, current);
+        assertBaseline(entry);
         dependencies.beforePrepare?.(entry);
       },
-      beforeReplace: dependencies.beforeReplace,
-      beforeDelete: dependencies.beforeDelete,
+      beforeReplace: (entry) => {
+        dependencies.beforeReplace?.(entry);
+        assertBaseline(entry);
+      },
+      beforeDelete: (entry) => {
+        dependencies.beforeDelete?.(entry);
+        assertBaseline(entry);
+      },
     });
 
     invalidateProjectAssetReferenceGraphCache(context.project);

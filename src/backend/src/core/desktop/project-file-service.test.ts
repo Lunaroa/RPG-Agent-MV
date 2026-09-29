@@ -76,6 +76,147 @@ test('project file writes reject an external edit made after the caller read the
   }
 });
 
+test('project file writes reject an external edit made after transaction preparation', () => {
+  const fixture = createFixture();
+  try {
+    const target = path.join(fixture.project, 'data', 'System.json');
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, '{"title":"Opened"}\n', 'utf8');
+    const opened = readProjectFileVersion(fixture.project, 'data/System.json');
+
+    assert.throws(
+      () => writeProjectFilesAtomically(fixture.workflowRoot, fixture.project, [{
+        relativePath: 'data/System.json',
+        content: Buffer.from('{"title":"Editor"}\n', 'utf8'),
+        expectedSourceHash: opened.sha256,
+      }], {
+        beforeReplace: () => fs.writeFileSync(target, '{"title":"External"}\n', 'utf8'),
+      }),
+      (error: unknown) => error instanceof ProjectFileError
+        && error.code === PROJECT_FILE_ERROR_CODES.conflict,
+    );
+    assert.equal(fs.readFileSync(target, 'utf8'), '{"title":"External"}\n');
+    assertNoTransactionFiles(fixture.project);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('project file deletions reject an external edit made after transaction preparation', () => {
+  const fixture = createFixture();
+  try {
+    const target = path.join(fixture.project, 'data', 'System.json');
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, '{"title":"Opened"}\n', 'utf8');
+    const opened = readProjectFileVersion(fixture.project, 'data/System.json');
+
+    assert.throws(
+      () => writeProjectFilesAtomically(fixture.workflowRoot, fixture.project, [{
+        relativePath: 'data/System.json',
+        delete: true,
+        expectedSourceHash: opened.sha256,
+      }], {
+        beforeDelete: () => fs.writeFileSync(target, '{"title":"External"}\n', 'utf8'),
+      }),
+      (error: unknown) => error instanceof ProjectFileError
+        && error.code === PROJECT_FILE_ERROR_CODES.conflict,
+    );
+    assert.equal(fs.readFileSync(target, 'utf8'), '{"title":"External"}\n');
+    assertNoTransactionFiles(fixture.project);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('project file creation rejects an external file created after transaction preparation', () => {
+  const fixture = createFixture();
+  try {
+    const target = path.join(fixture.project, 'data', 'System.json');
+    assert.throws(
+      () => writeProjectFilesAtomically(fixture.workflowRoot, fixture.project, [{
+        relativePath: 'data/System.json',
+        content: Buffer.from('{"title":"Editor"}\n', 'utf8'),
+        expectedSourceHash: null,
+      }], {
+        beforeReplace: () => fs.writeFileSync(target, '{"title":"External"}\n', 'utf8'),
+      }),
+      (error: unknown) => error instanceof ProjectFileError
+        && error.code === PROJECT_FILE_ERROR_CODES.conflict,
+    );
+    assert.equal(fs.readFileSync(target, 'utf8'), '{"title":"External"}\n');
+    assertNoTransactionFiles(fixture.project);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('a later external edit rolls back earlier transaction writes without replacing the edit', () => {
+  const fixture = createFixture();
+  try {
+    const first = path.join(fixture.project, 'data', 'Actors.json');
+    const second = path.join(fixture.project, 'data', 'Classes.json');
+    fs.mkdirSync(path.dirname(first), { recursive: true });
+    fs.writeFileSync(first, '["actors-before"]\n', 'utf8');
+    fs.writeFileSync(second, '["classes-before"]\n', 'utf8');
+
+    assert.throws(
+      () => writeProjectFilesAtomically(fixture.workflowRoot, fixture.project, [
+        { relativePath: 'data/Actors.json', content: Buffer.from('["actors-after"]\n', 'utf8') },
+        { relativePath: 'data/Classes.json', content: Buffer.from('["classes-after"]\n', 'utf8') },
+      ], {
+        beforeReplace: (entry) => {
+          if (entry.index === 1) fs.writeFileSync(second, '["classes-external"]\n', 'utf8');
+        },
+      }),
+      (error: unknown) => error instanceof ProjectFileError
+        && error.code === PROJECT_FILE_ERROR_CODES.conflict,
+    );
+    assert.equal(fs.readFileSync(first, 'utf8'), '["actors-before"]\n');
+    assert.equal(fs.readFileSync(second, 'utf8'), '["classes-external"]\n');
+    assertNoTransactionFiles(fixture.project);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('rollback retains an external edit to a committed file and keeps its original backup', () => {
+  const fixture = createFixture();
+  try {
+    const first = path.join(fixture.project, 'data', 'Actors.json');
+    const second = path.join(fixture.project, 'data', 'Classes.json');
+    fs.mkdirSync(path.dirname(first), { recursive: true });
+    fs.writeFileSync(first, '["actors-before"]\n', 'utf8');
+    fs.writeFileSync(second, '["classes-before"]\n', 'utf8');
+
+    let failure: unknown;
+    try {
+      writeProjectFilesAtomically(fixture.workflowRoot, fixture.project, [
+        { relativePath: 'data/Actors.json', content: Buffer.from('["actors-after"]\n', 'utf8') },
+        { relativePath: 'data/Classes.json', content: Buffer.from('["classes-after"]\n', 'utf8') },
+      ], {
+        beforeReplace: (entry) => {
+          if (entry.index !== 1) return;
+          fs.writeFileSync(first, '["actors-external"]\n', 'utf8');
+          fs.writeFileSync(second, '["classes-external"]\n', 'utf8');
+        },
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    assert.ok(failure instanceof ProjectFileError);
+    assert.equal(failure.code, PROJECT_FILE_ERROR_CODES.transactionFailed);
+    assert.match(failure.message, /external edit/i);
+    assert.equal(fs.readFileSync(first, 'utf8'), '["actors-external"]\n');
+    assert.equal(fs.readFileSync(second, 'utf8'), '["classes-external"]\n');
+    const backups = failure.details.retainedBackups as string[];
+    assert.equal(backups.length, 1);
+    assert.equal(fs.readFileSync(backups[0]!, 'utf8'), '["actors-before"]\n');
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test('a failed multi-file commit restores every source file and removes transaction artifacts', () => {
   const fixture = createFixture();
   try {

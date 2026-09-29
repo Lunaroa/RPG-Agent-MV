@@ -230,6 +230,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
   const actionError = ref('')
   const fileConflict = ref<UiDesignerFileConflict | null>(null)
   const pendingSaveAsName = ref<string | null>(null)
+  const targetNameConflict = ref(false)
   const runtimeReplacementRequest = ref<UiDesignerRuntimeReplacementRequest | null>(null)
   const previewDisposers = new Set<(reason: UiDesignerPreviewDisposeReason) => Promise<boolean>>()
   const resourceMutationHandlers = new Set<(manifest: ProjectAssetChangeManifest) => Promise<void> | void>()
@@ -298,7 +299,7 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
     ? { width: projectProfile.value.screenWidth, height: projectProfile.value.screenHeight }
     : null)
   const canCreateScene = computed(() => Boolean(newSceneCanvasSize.value))
-  const saveAsConflict = computed(() => Boolean(fileConflict.value && pendingSaveAsName.value))
+  const saveAsConflict = computed(() => Boolean(fileConflict.value && (pendingSaveAsName.value || targetNameConflict.value)))
   const runtimeReplacementPending = computed(() => Boolean(runtimeReplacementRequest.value))
 
   const persistenceOperations = createUiDesignerPersistenceOperations({
@@ -1388,7 +1389,10 @@ export function useUiDesigner(options: UseUiDesignerOptions = {}) {
       }
       fileStatus.value = result.status
       fileMessage.value = result.message
-      if (result.conflict) fileConflict.value = result.conflict
+      if (result.conflict) {
+        fileConflict.value = result.conflict
+        targetNameConflict.value = result.code === 'UI_DESIGNER_OVERWRITE_REQUIRED'
+      }
       if (result.status === 'success') {
         const currentScene = scenes.value.find((item) => item.id === capturedSceneId)
         if (!currentScene || JSON.stringify(currentScene.document) !== sourceBefore) {

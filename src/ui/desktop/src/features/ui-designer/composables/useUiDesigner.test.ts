@@ -1008,6 +1008,45 @@ test('save as keeps the proposed scene name across one overwrite confirmation', 
   assert.equal(designer.pendingSaveAsName.value, null)
 })
 
+test('ordinary scene name collision confirms overwrite without changing to save as', async () => {
+  const calls: Array<{ sceneName: string; path?: string; force?: boolean }> = []
+  const file = {
+    async save(document: ReturnType<typeof createUiDocument>, request?: { path?: string; force?: boolean }) {
+      calls.push({ sceneName: document.meta.sceneName, path: request?.path, force: request?.force })
+      if (!request?.force) {
+        return {
+          status: 'error' as const,
+          code: 'UI_DESIGNER_OVERWRITE_REQUIRED',
+          message: 'scene exists',
+          conflict: { code: 'UI_DESIGNER_CONFLICT' as const, recoverable: true },
+        }
+      }
+      const sourcePath = 'data/ui-scenes/Scene_Collision.mzui'
+      return {
+        status: 'success' as const,
+        message: 'saved',
+        value: document,
+        sourcePath,
+        metadata: { path: sourcePath, digest: 'saved-digest', mtimeMs: 2, size: 1 },
+      }
+    },
+  } as unknown as UiDesignerPersistenceAdapter
+  const designer = useUiDesigner({ projectPath: 'projects/sample', adapters: { file } })
+
+  assert.equal(designer.newScene('Scene_Collision', { width: 640, height: 360 }), true)
+  assert.equal(await designer.save(), false)
+  assert.equal(designer.saveAsConflict.value, true)
+  assert.equal(designer.pendingSaveAsName.value, null)
+  assert.equal(designer.activeScene.value.sourcePath, undefined)
+
+  assert.equal(await designer.resolveFileConflict('force'), true)
+  assert.deepEqual(calls, [
+    { sceneName: 'Scene_Collision', path: undefined, force: undefined },
+    { sceneName: 'Scene_Collision', path: undefined, force: true },
+  ])
+  assert.equal(designer.activeScene.value.sourcePath, 'data/ui-scenes/Scene_Collision.mzui')
+})
+
 test('runtime replacement confirmation resumes the interrupted scene save', async () => {
   const calls: Array<boolean | undefined> = []
   const file = {

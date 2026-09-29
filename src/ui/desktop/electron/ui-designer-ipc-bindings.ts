@@ -206,7 +206,7 @@ export function registerUiDesignerIpcHandlers(
       if (sourcePath) {
         const source = dependencies.file.readUiDesignerFile(sourcePath)
         const canonicalSourcePath = path.resolve(dependencies.file.projectUiDesignerScenePath(project, source.document.meta.sceneName))
-        if (sourcePath !== canonicalSourcePath) {
+        if (!sameScenePath(sourcePath, canonicalSourcePath)) {
           throw Object.assign(new Error('Only scenes stored in the current project data directory can be saved.'), { code: 'UI_DESIGNER_PROJECT_SCENE_REQUIRED' })
         }
         if (request.force !== true && request.expected && !metadataMatchesExpected(source.metadata, request.expected)) {
@@ -217,7 +217,7 @@ export function registerUiDesignerIpcHandlers(
           })
         }
       }
-      if (mode === 'saveAs' && fs.existsSync(targetPath) && request.force !== true) {
+      if ((mode === 'saveAs' || !sameScenePath(sourcePath, targetPath)) && fs.existsSync(targetPath) && request.force !== true) {
         const existing = dependencies.file.readUiDesignerFile(targetPath)
         throw Object.assign(new Error(`A scene named ${document.meta.sceneName} already exists in the current project.`), {
           code: 'UI_DESIGNER_OVERWRITE_REQUIRED',
@@ -230,14 +230,14 @@ export function registerUiDesignerIpcHandlers(
       }) as { affectedFiles?: unknown; backupRelativePath?: unknown }
       const store = dependencies.userDataStore()
       const metadata = dependencies.file.saveUiDesignerFile(targetPath, document, {
-        expected: mode === 'save' && sourcePath === targetPath ? request.expected : undefined,
-        force: mode === 'saveAs' ? request.force : sourcePath !== targetPath || request.force,
+        expected: mode === 'save' && sameScenePath(sourcePath, targetPath) ? request.expected : undefined,
+        force: request.force === true,
       })
       const thumbnailDataUrl = typeof request?.thumbnailDataUrl === 'string' ? request.thumbnailDataUrl : undefined
       if (thumbnailDataUrl && isPathInside(project, metadata.path)) {
         dependencies.file.writeProjectUiDesignerThumbnail(project, document.meta.sceneName, thumbnailDataUrl)
       }
-      if (mode === 'save' && sourcePath && sourcePath !== targetPath) {
+      if (mode === 'save' && sourcePath && !sameScenePath(sourcePath, targetPath)) {
         fs.rmSync(sourcePath)
         store.removeRecentFile(sourcePath)
       }
@@ -459,6 +459,15 @@ export function registerUiDesignerIpcHandlers(
   ipcMain.handle('ui-designer:recent:remove', (_event, filePath: string) => safeStoreCall(dependencies, 'remove-recent', (store) => { store.removeRecentFile(String(filePath)); return null }))
   ipcMain.handle('ui-designer:preferences:read', () => safeStoreCall(dependencies, 'read-preferences', (store) => store.readPreferences()))
   ipcMain.handle('ui-designer:preferences:write', (_event, value: Record<string, unknown>) => safeStoreCall(dependencies, 'write-preferences', (store) => { store.writePreferences(value); return value }))
+}
+
+function sameScenePath(left: string, right: string): boolean {
+  if (!left || !right) return false
+  const resolvedLeft = path.resolve(left)
+  const resolvedRight = path.resolve(right)
+  return process.platform === 'win32'
+    ? resolvedLeft.toLowerCase() === resolvedRight.toLowerCase()
+    : resolvedLeft === resolvedRight
 }
 
 function isPathInside(root: string, candidate: string): boolean {

@@ -33,6 +33,7 @@ test('scene IPC saves directly in the current project and keeps overwrite semant
   let cleanupFailure = false
   let runtimeInstalls = 0
   let selectedImportPath: string | null = null
+  const saveForceFlags: boolean[] = []
   const store = {
     isWorkingDocumentPath: () => false,
     saveWorkingDocument: () => { throw new Error('Working-document storage is not part of project scene saves.') },
@@ -58,7 +59,8 @@ test('scene IPC saves directly in the current project and keeps overwrite semant
     trashItem: async (sourcePath) => { trashed.push(path.resolve(sourcePath)); fs.rmSync(sourcePath) },
     file: {
       readUiDesignerFile: (filePath) => ({ document: JSON.parse(fs.readFileSync(filePath, 'utf8')), metadata: metadata(filePath) }),
-      saveUiDesignerFile: (filePath, document) => {
+      saveUiDesignerFile: (filePath, document, options) => {
+        saveForceFlags.push(options?.force === true)
         fs.mkdirSync(path.dirname(filePath), { recursive: true })
         fs.writeFileSync(filePath, JSON.stringify(document), 'utf8')
         return metadata(filePath)
@@ -117,6 +119,12 @@ test('scene IPC saves directly in the current project and keeps overwrite semant
   assert.equal(imported.value.meta.sceneName, 'Scene_Outside')
   assert.equal(imported.sourcePath, undefined)
   selectedImportPath = null
+  writeScene('Scene_Outside', 'existing imported name')
+  const importConflict = await handlers.get('ui-designer:file:save')!(null, { project }, imported.value)
+  assert.equal(importConflict.code, 'UI_DESIGNER_OVERWRITE_REQUIRED')
+  assert.equal(JSON.parse(fs.readFileSync(scenePath('Scene_Outside'), 'utf8')).marker, 'existing imported name')
+  const importOverwrite = await handlers.get('ui-designer:file:save')!(null, { project, force: true }, imported.value)
+  assert.equal(importOverwrite.status, 'success')
 
   writeScene('Scene_Sample', 'original')
   const opened = await handlers.get('ui-designer:file:open')!(null, { project, path: scenePath('Scene_Sample') })
@@ -131,9 +139,18 @@ test('scene IPC saves directly in the current project and keeps overwrite semant
   assert.equal(secondSave.status, 'success')
   assert.equal(JSON.parse(fs.readFileSync(scenePath('Scene_Sample'), 'utf8')).marker, 'second update')
 
+  const firstSaveDocument = { ...opened.value, meta: { ...opened.value.meta, sceneName: 'Scene_FirstSave' }, marker: 'new' }
+  const firstSaveNew = await handlers.get('ui-designer:file:save')!(null, { project }, firstSaveDocument)
+  assert.equal(firstSaveNew.status, 'success')
+  assert.equal(saveForceFlags.at(-1), false)
+  assert.equal(JSON.parse(fs.readFileSync(scenePath('Scene_FirstSave'), 'utf8')).marker, 'new')
   writeScene('Scene_FirstSave', 'old')
-  const directOverwrite = await handlers.get('ui-designer:file:save')!(null, { project }, { ...opened.value, meta: { ...opened.value.meta, sceneName: 'Scene_FirstSave' }, marker: 'new' })
+  const directOverwriteConflict = await handlers.get('ui-designer:file:save')!(null, { project }, firstSaveDocument)
+  assert.equal(directOverwriteConflict.code, 'UI_DESIGNER_OVERWRITE_REQUIRED')
+  assert.equal(JSON.parse(fs.readFileSync(scenePath('Scene_FirstSave'), 'utf8')).marker, 'old')
+  const directOverwrite = await handlers.get('ui-designer:file:save')!(null, { project, force: true }, firstSaveDocument)
   assert.equal(directOverwrite.status, 'success')
+  assert.equal(saveForceFlags.at(-1), true)
   assert.equal(JSON.parse(fs.readFileSync(scenePath('Scene_FirstSave'), 'utf8')).marker, 'new')
 
   writeScene('Scene_Copy', 'existing')
@@ -150,6 +167,28 @@ test('scene IPC saves directly in the current project and keeps overwrite semant
   assert.equal(fs.existsSync(scenePath('Scene_Sample')), false)
   assert.equal(fs.existsSync(scenePath('Scene_Renamed')), true)
   assert.deepEqual(removedRecent, [path.resolve(scenePath('Scene_Sample'))])
+  assert.equal(saveForceFlags.at(-1), false)
+
+  writeScene('Scene_Collision', 'existing target')
+  const collisionDocument = { ...renameDocument, meta: { ...renameDocument.meta, sceneName: 'Scene_Collision' }, marker: 'renamed source' }
+  const renameConflict = await handlers.get('ui-designer:file:save')!(null, { project, path: scenePath('Scene_Renamed'), expected: renamed.metadata }, collisionDocument)
+  assert.equal(renameConflict.code, 'UI_DESIGNER_OVERWRITE_REQUIRED')
+  assert.equal(JSON.parse(fs.readFileSync(scenePath('Scene_Collision'), 'utf8')).marker, 'existing target')
+  assert.equal(fs.existsSync(scenePath('Scene_Renamed')), true)
+  const renameOverwrite = await handlers.get('ui-designer:file:save')!(null, { project, path: scenePath('Scene_Renamed'), expected: renamed.metadata, force: true }, collisionDocument)
+  assert.equal(renameOverwrite.status, 'success')
+  assert.equal(JSON.parse(fs.readFileSync(scenePath('Scene_Collision'), 'utf8')).marker, 'renamed source')
+  assert.equal(fs.existsSync(scenePath('Scene_Renamed')), false)
+  assert.equal(saveForceFlags.at(-1), true)
+
+  if (process.platform === 'win32') {
+    writeScene('Scene_Case', 'original case')
+    const caseDocument = { ...opened.value, meta: { ...opened.value.meta, sceneName: 'Scene_CASE' }, marker: 'updated case' }
+    const caseSave = await handlers.get('ui-designer:file:save')!(null, { project, path: scenePath('Scene_Case'), expected: metadata(scenePath('Scene_Case')) }, caseDocument)
+    assert.equal(caseSave.status, 'success')
+    assert.equal(fs.existsSync(scenePath('Scene_Case')), true)
+    assert.equal(JSON.parse(fs.readFileSync(scenePath('Scene_Case'), 'utf8')).marker, 'updated case')
+  }
 
   writeScene('Scene_Delete', 'delete me')
   const inspectedDelete = await handlers.get('ui-designer:scene-delete:inspect')!(null, { project, path: scenePath('Scene_Delete') })
@@ -182,7 +221,7 @@ test('scene IPC saves directly in the current project and keeps overwrite semant
   const globalSaved = await handlers.get('ui-designer:global-data:save')!(null, { project }, { menuList: [] })
   assert.equal(globalSaved.status, 'success')
   assert.equal(fs.existsSync(path.join(project, 'data', 'GlobalUI.json')), true)
-  assert.equal(runtimeInstalls, 6)
+  assert.equal(runtimeInstalls, process.platform === 'win32' ? 10 : 9)
   assert.equal(handlers.has('ui-designer:scene:stage'), false)
   assert.equal(handlers.has('ui-designer:global-data:stage'), false)
   assert.equal(handlers.has('ui-designer:runtime:export'), false)

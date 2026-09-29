@@ -1,6 +1,7 @@
 // 数据库迁移管理
 import fs from 'node:fs';
 import path from 'node:path';
+import { assertLegacyStagingReadyForRemoval } from './legacy-staging-upgrade.ts';
 import { getDatabase, type WorkflowDatabase } from './pool.ts';
 
 interface Migration {
@@ -632,10 +633,11 @@ function getMigrations(): Migration[] {
     {
       version: 14,
       name: 'remove_project_staging_manifests',
-      up: `
-        DROP INDEX IF EXISTS idx_staging_manifests_project;
-        DROP TABLE IF EXISTS staging_manifests;
-      `,
+      up: (db) => {
+        assertLegacyStagingReadyForRemoval(db);
+        db.exec('DROP INDEX IF EXISTS idx_staging_manifests_project');
+        db.exec('DROP TABLE IF EXISTS staging_manifests');
+      },
     },
   ];
 }

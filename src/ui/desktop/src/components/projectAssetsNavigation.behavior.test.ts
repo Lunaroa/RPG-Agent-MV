@@ -35,7 +35,7 @@ function navigationHarness(browse: (id: string) => Promise<unknown>) {
     favorites: ref(new Set(['img/pictures:favorite.png'])), favoriteListingNodes: () => ['img/pictures'],
     boundedAsyncMap: (items: string[], _limit: number, mapper: (id: string) => Promise<unknown>) => Promise.all(items.map(mapper)),
   }
-  const functions = workspaceFunctions(['loadCategory', 'loadFavoritesListing', 'selectCategory', 'onTreeNodeClick'], bindings)
+  const functions = workspaceFunctions(['loadCategory', 'loadFavoritesListing', 'selectCategory', 'onTreeNodeClick', 'rememberSelectionFolder'], bindings)
   return { ...bindings, ...functions }
 }
 

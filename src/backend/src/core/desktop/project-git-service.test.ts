@@ -243,5 +243,3 @@ test('file diff shows line-level add and del entries, and flags binary files', a
     fs.rmSync(projectRoot, { recursive: true, force: true });
   }
 }));
-
-

@@ -590,10 +590,13 @@ function addExtraTileLayer(): void {
 
 async function removeExtraTileLayer(): Promise<void> {
   const index = extraLayerSelectionIndex(layer.value);
-  if (index == null || !tileLayersPluginEnabled.value) return;
+  const entry = index == null ? null : extraTileLayers.value[index];
+  if (!entry || !tileLayersPluginEnabled.value || busy.value) return;
   try {
     await ElMessageBox.confirm(t('editor.toolbar.extraLayerRemoveConfirm'), t('editor.toolbar.extraLayerRemoveTitle'), { type: 'warning' });
   } catch { return; }
+  if (busy.value || extraTileLayers.value[index] !== entry) return;
+  canvasEditor.invalidateExtraLayerHistory();
   extraTileLayers.value = extraTileLayers.value.filter((_, entryIndex) => entryIndex !== index);
   layer.value = 0;
   void saveExtraTileLayers().catch(() => {});

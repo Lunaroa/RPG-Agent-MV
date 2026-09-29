@@ -1882,8 +1882,8 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
   // the host through saveExtraTileLayers (map note write).
   async function commitExtraEdits(tiles: number[], snapshot: number[] | null) {
     if (!map || !options.saveExtraTileLayers) return;
-    const index = extraLayerSelectionIndex(options.layer.value);
-    if (index == null) return;
+    const index = options.extraTileLayers?.value.findIndex((entry) => entry.tiles === tiles) ?? -1;
+    if (index < 0) return;
     options.busy.value = true;
     options.setStatus(t('mapcanvas.status.savingPaint'), 'busy');
     try {
@@ -1918,6 +1918,13 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
       }
       renderMap();
     } finally { options.busy.value = false; }
+  }
+  function invalidateExtraLayerHistory() {
+    if (extraStrokeTiles) cancelStrokePreview();
+    const isExtraLayerChange = (changes: TileChange[]) => changes.some((change) => Number(change.layer) >= EXTRA_LAYER_SENTINEL);
+    undoStack = undoStack.filter((changes) => !isExtraLayerChange(changes));
+    redoStack = redoStack.filter((changes) => !isExtraLayerChange(changes));
+    syncStackLengths();
   }
   async function undo() { await replayHistory('undo'); }
   async function redo() { await replayHistory('redo'); }
@@ -2081,6 +2088,6 @@ export function useMapCanvasEditor(options: CanvasEditorOptions) {
     setMap, replaceMap, clearMap, setPaletteCanvas, setCanvasElement, setOverlayElement, setRegionLabelElement, setScrollElement, selectTileTab, selectMapTool, selectTileMode, selectShadowMode, canvasCell, eventAtCell,
     onPaletteMouseDown, onPaletteMouseMove, onPaletteMouseUp, onPaletteMouseLeave,
     onCanvasMouseDown, onCanvasMouseMove, onCanvasMouseLeave, onCanvasDoubleClick, onCanvasWheel, onCanvasScroll,
-    renderMap, renderOverlay, zoomIn, zoomOut, resetZoom, setZoom, undo, redo, getPlacementCell, getLastEventClickCell, ensureMapCellVisible,
+    renderMap, renderOverlay, zoomIn, zoomOut, resetZoom, setZoom, undo, redo, invalidateExtraLayerHistory, getPlacementCell, getLastEventClickCell, ensureMapCellVisible,
   };
 }

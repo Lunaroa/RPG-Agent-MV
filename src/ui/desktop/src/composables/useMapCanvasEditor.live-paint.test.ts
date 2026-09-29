@@ -8,7 +8,7 @@ describe('map canvas live paint wiring', () => {
   test('renders the first pencil cell synchronously and batches the release into one commit', () => {
     assert.match(source, /beginStroke\(cell\);[\s\S]{0,360}applyPreviewEdits\(rectangularBrushPathEdits\(\[cell\], cell\), true\)/);
     assert.match(source, /else applyToolAt\(cell\.x, cell\.y, true\)/);
-    assert.match(source, /const edits = \[\.\.\.strokeEdits\.values\(\)\];[\s\S]{0,180}await commitEdits\(edits, rollback\)/);
+    assert.match(source, /const edits = \[\.\.\.strokeEdits\.values\(\)\];[\s\S]{0,220}await commitEdits\(edits, rollback, extraTiles, extraRollback\)/);
   });
 
   test('uses affected-neighbour shared rules without collecting a whole-map diff during pointer movement', () => {
@@ -52,7 +52,7 @@ describe('map canvas live paint wiring', () => {
   test('locks exact autotile sampling on right press and still allows Shift while painting', () => {
     assert.match(source, /eyedropPreserveAutotileShapes = event\.shiftKey \|\| shiftPressed/);
     assert.match(source, /const preserveAutotileShapes = eyedropPreserveAutotileShapes;[\s\S]{0,220}pickMapRange\(from, to, preserveAutotileShapes\)/);
-    assert.match(source, /buildMapRangeBrush\(map, from, to, options\.layer\.value, preserveAutotileShapes\)/);
+    assert.match(source, /buildMapRangeBrush\(map, from, to, options\.layer\.value, preserveAutotileShapes, extendedTilesetSheets\)/);
     assert.match(source, /buildLayerStackEdits\(x, y, options\.layer\.value, cell\.layerStack, shiftPressed\)/);
   });
 
